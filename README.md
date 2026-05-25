@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![CI](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-88_passing-brightgreen)](./test)
+[![Tests](https://img.shields.io/badge/tests-95_passing-brightgreen)](./test)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
@@ -12,7 +12,7 @@
 [![Avito API snapshot](https://img.shields.io/badge/Avito_API_snapshot-2026--05--25-orange)](./swaggers)
 
 > **Give your AI agents hands and feet on Avito.**
-> Local MCP server that lets Claude, Cursor, Cline and any other AI assistant **do real work on Avito for you** — answer customers, manage listings, run promotions, fulfil orders, analyse stats. **139 tools** across **18 official Avito APIs**, one `npx` command to install.
+> Local MCP server that lets Claude, Cursor, Cline and any other AI assistant **do real work on Avito for you** — answer customers, manage listings, run promotions, fulfil orders, analyse stats. **138 Avito API tools** + **4 local/meta tools** = up to **142 MCP tools** across **18 official Avito APIs**, one `npx` command to install.
 
 🇷🇺 **[Русская версия / Russian version →](./README.ru.md)**
 
@@ -77,7 +77,19 @@ The stdio transport keeps every credential and API response on your machine. No 
 
 ---
 
-## What's included — 139 tools
+## What's included — up to 142 tools
+
+| Configuration | Tools visible |
+|---|---|
+| Default (`AVITO_MCP_MODE=full_access`, no opt-ins) | **138** |
+| + `AVITO_MCP_EXPOSE_AUTH_TOOLS=1` | 141 (+3 auth) |
+| + `AVITO_MCP_ALLOWED_UPLOAD_DIRS=…` | 139 (+1 upload) |
+| + Both opt-ins | **142** |
+| `AVITO_MCP_CONFIRMATION_MODE=off` | −3 (hides meta_*_action) |
+| `AVITO_MCP_MODE=read_only` | ~77 (only `risk=read`) |
+| `AVITO_MCP_MODE=guarded` | ~120 (adds `write`, hides `money`/`public`) |
+
+138 wrap Avito API endpoints; 4 are local (`meta_get_rate_limits`, plus three `meta_*_action` for confirmation flow when enabled). Run `npm run generate:manifest` to dump the full inventory to `dist/manifest.json`.
 
 Every public endpoint from Avito's 18 OpenAPI specs is exposed. Click any group to expand.
 
@@ -435,14 +447,14 @@ Also out of scope: `authorization_code` OAuth flow (no public redirect URI on a 
   - Windows: `%APPDATA%\avito-mcp\token.json`
   - Override with `AVITO_TOKEN_FILE`. Delete the file to force a refresh.
 - **Three-layer safety model** (every layer opt-in via env vars; defaults preserve v0.1.x behaviour for trivial calls but harden everything destructive):
-  - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — registration-time gate. Hidden tools never appear in `tools/list`. `read_only` ≈ 77 tools, `guarded` adds writes (~120 tools), `full_access` is all 139.
+  - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — registration-time gate. Hidden tools never appear in `tools/list`. `read_only` ≈ 77 tools, `guarded` adds writes (~120 tools), `full_access` is the full 138 (+ opt-in extras).
   - **`AVITO_MCP_ALLOW_TOOLS` / `AVITO_MCP_DENY_TOOLS`** — per-tool gating. Deny wins over allow.
   - **`AVITO_MCP_CONFIRMATION_MODE`** (`off` / `money_public` (default) / `all_destructive`) — runtime gate. Destructive tools return `{requires_confirmation: true, confirmation_id: ...}`; agent must call `meta_confirm_action` to execute. Pending state is in-memory, TTL'd (default 15 min), one-shot.
   - **`AVITO_MCP_EXPOSE_AUTH_TOOLS`** (default: `0`) — `auth_*` tools return OAuth tokens; classed as `sensitive` and hidden by default even in `full_access`.
   - **`AVITO_MCP_ALLOWED_UPLOAD_DIRS`** — `messenger_upload_images` reads files from disk; without an explicit directory allowlist it doesn't register at all. Path validation uses `realpath` (symlink-escape proof), extension allowlist (jpg/jpeg/png/webp), size cap (`AVITO_MCP_MAX_UPLOAD_MB`, default 15), magic-byte sniff with extension cross-check.
 - Every tool is tagged with one of five risks (`sensitive` / `read` / `write` / `money` / `public`), exposed as MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`) and as `_meta.risk`, and listed in [`dist/manifest.json`](./dist/manifest.json). Well-behaved MCP clients warn before destructive calls.
 - See [`docs/safety.md`](./docs/safety.md) for ready-to-paste configs (analytics-only, customer-support with confirmation, listings-only, full admin) and a frank discussion of what the confirmation flow is and isn't (it's a server-side two-step + audit layer, not a cryptographic human-approval mechanism).
-- **All 139 tools hit production** — Avito has no sandbox. Write methods cost real money or are visible to real customers. Safe read-only tools for first runs: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
+- **All 138 Avito tools hit production** — Avito has no sandbox. Write methods cost real money or are visible to real customers. Safe read-only tools for first runs: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
 - **Found a security issue?** Private reporting via [SECURITY.md](./SECURITY.md) — don't open a public issue.
 
 ---

@@ -390,3 +390,57 @@ describe('hard-confirmation (AVITO_MCP_CONFIRMATION_SECRET)', () => {
     await rig.client.close();
   });
 });
+
+describe('v0.5.1: meta_* tools go through allow/deny policy', () => {
+  let cfg: Config;
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    if (cfg) await fs.rm(cfg.tokenFile, { force: true });
+  });
+
+  it('allowlist that excludes meta_confirm_action hides it', async () => {
+    const rig = await makeRig('money_public', 900, { allowTools: ['money_tool'] });
+    cfg = rig.cfg;
+    const names = (await rig.client.listTools()).tools.map((t) => t.name);
+    expect(names).toContain('money_tool');
+    expect(names).not.toContain('meta_confirm_action');
+    expect(names).not.toContain('meta_cancel_action');
+    expect(names).not.toContain('meta_list_pending_actions');
+    await rig.client.close();
+  });
+
+  it('denylist that includes meta_confirm_action hides it (deny wins)', async () => {
+    const rig = await makeRig('money_public', 900, { denyTools: ['meta_confirm_action'] });
+    cfg = rig.cfg;
+    const names = (await rig.client.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain('meta_confirm_action');
+    // Cancel and list still visible — they weren't denied.
+    expect(names).toContain('meta_cancel_action');
+    expect(names).toContain('meta_list_pending_actions');
+    await rig.client.close();
+  });
+
+  it('denylist on all three confirmation tools hides them all', async () => {
+    const rig = await makeRig('money_public', 900, {
+      denyTools: ['meta_confirm_action', 'meta_cancel_action', 'meta_list_pending_actions'],
+    });
+    cfg = rig.cfg;
+    const names = (await rig.client.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain('meta_confirm_action');
+    expect(names).not.toContain('meta_cancel_action');
+    expect(names).not.toContain('meta_list_pending_actions');
+    await rig.client.close();
+  });
+
+  it('read_only mode hides write meta tools (confirm + cancel) but keeps read meta_list', async () => {
+    // money_public confirmation is the ONLY reason confirm tools are even potentially registered;
+    // read_only mode then filters out write-class ones. list_pending is risk=read so survives.
+    const rig = await makeRig('money_public', 900, { mode: 'read_only' });
+    cfg = rig.cfg;
+    const names = (await rig.client.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain('meta_confirm_action');
+    expect(names).not.toContain('meta_cancel_action');
+    expect(names).toContain('meta_list_pending_actions');
+    await rig.client.close();
+  });
+});

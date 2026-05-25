@@ -80,10 +80,28 @@ export const register: DomainRegister = (server, ctx) => {
     return;
   }
 
+  // v0.5.1: каждый confirmation tool ОТДЕЛЬНО проходит через evaluatePolicy.
+  // До v0.5.0 они проскакивали мимо allow/deny — это нарушало контракт.
+  // Теперь allowlist/denylist полностью охватывает реестр.
+  const confirmDecision = evaluatePolicy('meta_confirm_action', 'write', ctx.config);
+  const cancelDecision = evaluatePolicy('meta_cancel_action', 'write', ctx.config);
+  const listDecision = evaluatePolicy('meta_list_pending_actions', 'read', ctx.config);
+
+  // DX warning: если confirmation включён, money/public tools будут возвращать pending,
+  // но если meta_confirm_action заблокирован — pending некому подтвердить.
+  if (!confirmDecision.allowed) {
+    logger.warn(
+      { reason: confirmDecision.reason, confirmationMode: ctx.config.confirmationMode },
+      'AVITO_MCP_CONFIRMATION_MODE is enabled but meta_confirm_action is hidden by policy — ' +
+        'pending actions will be unconfirmable. Either add meta_confirm_action to your allowlist ' +
+        'or set AVITO_MCP_CONFIRMATION_MODE=off.',
+    );
+  }
+
   // ───────────────── meta_confirm_action ─────────────────
 
   const requireSecret = !!ctx.config.confirmationSecret;
-  server.registerTool(
+  if (confirmDecision.allowed) server.registerTool(
     'meta_confirm_action',
     {
       description:
@@ -186,9 +204,16 @@ export const register: DomainRegister = (server, ctx) => {
     },
   );
 
+  if (!confirmDecision.allowed) {
+    logger.info(
+      { tool: 'meta_confirm_action', risk: 'write', reason: confirmDecision.reason },
+      'tool hidden by policy',
+    );
+  }
+
   // ───────────────── meta_cancel_action ─────────────────
 
-  server.registerTool(
+  if (cancelDecision.allowed) server.registerTool(
     'meta_cancel_action',
     {
       description:
@@ -223,9 +248,16 @@ export const register: DomainRegister = (server, ctx) => {
     },
   );
 
+  if (!cancelDecision.allowed) {
+    logger.info(
+      { tool: 'meta_cancel_action', risk: 'write', reason: cancelDecision.reason },
+      'tool hidden by policy',
+    );
+  }
+
   // ───────────────── meta_list_pending_actions ─────────────────
 
-  server.registerTool(
+  if (listDecision.allowed) server.registerTool(
     'meta_list_pending_actions',
     {
       description:
@@ -274,4 +306,10 @@ export const register: DomainRegister = (server, ctx) => {
       };
     },
   );
+  if (!listDecision.allowed) {
+    logger.info(
+      { tool: 'meta_list_pending_actions', risk: 'read', reason: listDecision.reason },
+      'tool hidden by policy',
+    );
+  }
 };

@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![CI](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-88_passing-brightgreen)](./test)
+[![Tests](https://img.shields.io/badge/tests-95_passing-brightgreen)](./test)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
@@ -12,7 +12,7 @@
 [![Avito API snapshot](https://img.shields.io/badge/Avito_API_snapshot-2026--05--25-orange)](./swaggers)
 
 > **Дайте вашим AI-агентам руки и ноги в Avito.**
-> Локальный MCP-сервер, через который Claude, Cursor, Cline и любой другой AI-ассистент **делает реальную работу на Avito за вас** — отвечает клиентам, ведёт объявления, запускает продвижение, обрабатывает заказы, анализирует статистику. **139 инструментов** из **18 официальных API Avito**. Установка одной командой.
+> Локальный MCP-сервер, через который Claude, Cursor, Cline и любой другой AI-ассистент **делает реальную работу на Avito за вас** — отвечает клиентам, ведёт объявления, запускает продвижение, обрабатывает заказы, анализирует статистику. **138 Avito API tools** + **4 локальных meta-tools** = до **142 MCP tools** из **18 официальных API Avito**. Установка одной командой.
 
 🇬🇧 **[English version →](./README.md)**
 
@@ -77,7 +77,19 @@ stdio-транспорт оставляет credentials и ответы API на
 
 ---
 
-## Что включено — 139 инструментов
+## Что включено — до 142 инструментов
+
+| Конфигурация | Видимо tools |
+|---|---|
+| По умолчанию (`AVITO_MCP_MODE=full_access`, без opt-in) | **138** |
+| + `AVITO_MCP_EXPOSE_AUTH_TOOLS=1` | 141 (+3 auth) |
+| + `AVITO_MCP_ALLOWED_UPLOAD_DIRS=…` | 139 (+1 upload) |
+| + Оба opt-in | **142** |
+| `AVITO_MCP_CONFIRMATION_MODE=off` | −3 (скрывает meta_*_action) |
+| `AVITO_MCP_MODE=read_only` | ~77 (только `risk=read`) |
+| `AVITO_MCP_MODE=guarded` | ~120 (добавляет `write`, скрывает `money`/`public`) |
+
+138 — обёртки над эндпойнтами Avito API; 4 — локальные (`meta_get_rate_limits` + три `meta_*_action` для confirmation flow). Полный реестр — в `dist/manifest.json` (`npm run generate:manifest`).
 
 Каждый публичный endpoint из 18 OpenAPI-спецификаций Avito. Раскрывайте любую группу.
 
@@ -435,14 +447,14 @@ Settings → MCP Servers → Add. Поля UI: name `avito`, command `npx`, args
   - Windows: `%APPDATA%\avito-mcp\token.json`
   - Изменить путь — через `AVITO_TOKEN_FILE`. Удалите файл — следующий запрос автоматически выпишет новый.
 - **Три слоя безопасности** (каждый opt-in через env vars; defaults сохраняют v0.1.x для тривиальных вызовов, но харднят всё destructive):
-  - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — фильтр на регистрации. Скрытые tools не появляются в `tools/list`. `read_only` ≈ 77 tools, `guarded` добавляет writes (~120), `full_access` — все 139.
+  - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — фильтр на регистрации. Скрытые tools не появляются в `tools/list`. `read_only` ≈ 77 tools, `guarded` добавляет writes (~120), `full_access` — все 138 (+ opt-in расширения).
   - **`AVITO_MCP_ALLOW_TOOLS` / `AVITO_MCP_DENY_TOOLS`** — per-tool фильтр. Deny всегда побеждает allow.
   - **`AVITO_MCP_CONFIRMATION_MODE`** (`off` / `money_public` (default) / `all_destructive`) — runtime gate. Destructive tools возвращают `{requires_confirmation: true, confirmation_id: ...}`; агент должен вызвать `meta_confirm_action` чтобы выполнить. Pending хранится in-memory, с TTL (default 15 мин), одноразовый.
   - **`AVITO_MCP_EXPOSE_AUTH_TOOLS`** (default: `0`) — `auth_*` tools возвращают OAuth токены; помечены как `sensitive` и скрыты по default даже в `full_access`.
   - **`AVITO_MCP_ALLOWED_UPLOAD_DIRS`** — `messenger_upload_images` читает файлы с диска; без явного списка директорий tool вообще не регистрируется. Валидация пути через `realpath` (защита от symlink escape), allowlist расширений (jpg/jpeg/png/webp), лимит размера (`AVITO_MCP_MAX_UPLOAD_MB`, default 15), magic-byte sniff с cross-check на extension.
 - Каждый tool помечен одной из пяти категорий риска (`sensitive` / `read` / `write` / `money` / `public`), отдаётся клиенту как MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`) и как `_meta.risk`, плюс перечислен в [`dist/manifest.json`](./dist/manifest.json). Поведенческие MCP-клиенты предупредят перед деструктивным вызовом.
 - Готовые конфигурации в [`docs/safety.md`](./docs/safety.md) (analytics-only, customer-support с confirmation, listings-only, full admin) + честный разбор что есть и чего нет в confirmation flow (server-side two-step + audit layer, а НЕ криптографический human-approval).
-- **Все 139 tools работают с production** — sandbox у Avito нет. Write-методы тратят деньги или видны клиентам. Безопасные read-only для первого знакомства: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
+- **Все 138 Avito tools работают с production** — sandbox у Avito нет. Write-методы тратят деньги или видны клиентам. Безопасные read-only для первого знакомства: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
 - **Нашли уязвимость?** Приватный канал — [SECURITY.md](./SECURITY.md). Не открывайте публичный issue.
 
 ---
@@ -512,7 +524,7 @@ src/domains/<имя>.ts                ← один файл = один swagger,
         ↓
 src/meta/domain-registry.ts         ← одна строка регистрации
         ↓
-139 MCP tools через stdio
+138 Avito + 4 local meta tools через stdio
 ```
 
 Сердце — `src/core/tool-factory.ts`: `defineTool(server, ctx, spec)` превращает декларативную spec в работающий MCP tool с HTTP, OAuth-токеном, retry, маппингом ошибок и автоподстановкой `Profile_id`. Никаких `fetch()` внутри handler'ов.

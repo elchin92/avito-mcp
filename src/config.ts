@@ -94,6 +94,7 @@ const ConfigSchema = z.object({
   confirmationMode: z.enum(['off', 'money_public', 'all_destructive']).default('money_public'),
   confirmationTtlSec: z.number().int().positive().default(900),
   confirmationSecret: z.string().optional(),
+  maxBinaryMb: z.number().int().positive().default(20),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -115,6 +116,7 @@ function load(): Config {
     confirmationMode: (process.env.AVITO_MCP_CONFIRMATION_MODE as ConfirmationMode | undefined) ?? 'money_public',
     confirmationTtlSec: parsePositiveInt(process.env.AVITO_MCP_CONFIRMATION_TTL_SEC, 900),
     confirmationSecret: process.env.AVITO_MCP_CONFIRMATION_SECRET,
+    maxBinaryMb: parsePositiveInt(process.env.AVITO_MCP_MAX_BINARY_MB, 20),
   };
 
   const parsed = ConfigSchema.safeParse(raw);

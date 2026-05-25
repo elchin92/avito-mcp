@@ -76,6 +76,8 @@ function makeFakeConfig(): Config {
     // are included in the manifest — they exist only when confirmation is enabled.
     confirmationMode: 'money_public',
     confirmationTtlSec: 900,
+    confirmationSecret: undefined,
+    maxBinaryMb: 20,
   };
 }
 
@@ -109,23 +111,34 @@ async function main(): Promise<void> {
     name: string;
     domain: string;
     risk: Risk;
+    environment: string;
+    accessesLocalFiles?: boolean;
     description: string;
     annotations: unknown;
   }> = [];
 
   for (const t of tools) {
-    const risk = ((t._meta as { risk?: string } | undefined)?.risk ?? 'unknown') as Risk;
+    const meta = (t._meta ?? {}) as {
+      risk?: string;
+      environment?: string;
+      accessesLocalFiles?: boolean;
+    };
+    const risk = (meta.risk ?? 'unknown') as Risk;
+    const environment = meta.environment ?? 'prod';
     const dom = domainOf(t.name);
     byRisk[risk].push(t.name);
     byDomain[dom] = byDomain[dom] ?? [];
     byDomain[dom].push(t.name);
-    flat.push({
+    const entry: (typeof flat)[number] = {
       name: t.name,
       domain: dom,
       risk,
+      environment,
       description: t.description ?? '',
       annotations: t.annotations ?? null,
-    });
+    };
+    if (meta.accessesLocalFiles) entry.accessesLocalFiles = true;
+    flat.push(entry);
   }
   for (const arr of Object.values(byRisk)) arr.sort();
   for (const arr of Object.values(byDomain)) arr.sort();

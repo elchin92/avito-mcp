@@ -33,6 +33,7 @@ function printHelp(): void {
       `  AVITO_MCP_EXPOSE_AUTH_TOOLS     1 to expose sensitive auth_* tools (default: hidden)\n` +
       `  AVITO_MCP_ALLOWED_UPLOAD_DIRS   Comma-separated dirs that messenger_upload_images may read\n` +
       `  AVITO_MCP_MAX_UPLOAD_MB         Max per-file upload size in MB (default: 15)\n` +
+      `  AVITO_MCP_MAX_BINARY_MB         Max binary response size in MB (default: 20)\n` +
       `  AVITO_SAFE_MODE         DEPRECATED: use AVITO_MCP_MODE=read_only instead\n` +
       `  LOG_LEVEL               pino log level (default: info)\n` +
       `\n` +

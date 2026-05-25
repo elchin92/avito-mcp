@@ -95,7 +95,7 @@ AVITO_MCP_MODE=full_access
 AVITO_MCP_CONFIRMATION_MODE=off    # opt out of the runtime gate
 ```
 
-That's it. All 139 swagger tools available, no confirmation friction. Well-behaved MCP clients (Claude Desktop, Cursor) will still warn you before any `destructiveHint: true` tool runs — that's the `money` and `public` set — because those annotations are on every tool.
+That's it. All 138 Avito tools available + 1 `meta_get_rate_limits`, no confirmation friction. Well-behaved MCP clients (Claude Desktop, Cursor) will still warn you before any `destructiveHint: true` tool runs — that's the `money` and `public` set — because those annotations are on every tool.
 
 This is the closest to the v0.1.x default behaviour. **Don't use this for unattended cron jobs.**
 

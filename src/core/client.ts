@@ -140,8 +140,9 @@ export class AvitoClient {
       return this.doRequest<T>(opts, url, reqInfo, allowRefresh, retries429, retries5xx + 1);
     }
 
-    // Парсим body
-    const data = await safeParseResponse<T>(resp);
+    // Парсим body — для бинарей применяется лимит из config.maxBinaryMb.
+    const maxBinaryBytes = (this.config.maxBinaryMb ?? 20) * 1024 * 1024;
+    const data = await safeParseResponse<T>(resp, maxBinaryBytes);
 
     if (!resp.ok) {
       throw new AvitoApiError({
@@ -278,11 +279,32 @@ function isBinaryContent(ct: string): boolean {
   return true;
 }
 
-async function safeParseResponse<T>(resp: Response): Promise<T | string | BinaryResponse | null> {
+async function safeParseResponse<T>(
+  resp: Response,
+  maxBinaryBytes: number = 20 * 1024 * 1024,
+): Promise<T | string | BinaryResponse | null> {
   const ct = resp.headers.get('content-type') ?? '';
   if (isBinaryContent(ct)) {
+    // v0.5.1: fail-closed на размере. Сначала проверяем заявленный Content-Length,
+    // если есть. Так мы избегаем чтения мегабайт в память впустую.
+    const cl = resp.headers.get('content-length');
+    const declared = cl ? Number.parseInt(cl, 10) : NaN;
+    if (Number.isFinite(declared) && declared > maxBinaryBytes) {
+      // drain body чтобы не висел socket
+      try { await resp.arrayBuffer(); } catch { /* ignore */ }
+      throw new Error(
+        `Binary response too large: Content-Length=${declared} bytes > AVITO_MCP_MAX_BINARY_MB limit (${maxBinaryBytes} bytes). ` +
+          `Increase AVITO_MCP_MAX_BINARY_MB or fetch this file via direct HTTP (curl).`,
+      );
+    }
     const ab = await resp.arrayBuffer();
     if (ab.byteLength === 0) return null;
+    if (ab.byteLength > maxBinaryBytes) {
+      throw new Error(
+        `Binary response too large: ${ab.byteLength} bytes > AVITO_MCP_MAX_BINARY_MB limit (${maxBinaryBytes} bytes). ` +
+          `Increase AVITO_MCP_MAX_BINARY_MB or fetch this file via direct HTTP (curl).`,
+      );
+    }
     return {
       __binary: true,
       mimeType: ct.split(';')[0]!.trim(),

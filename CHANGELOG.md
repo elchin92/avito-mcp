@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-05-25
+
+External audit pass. Closes the four remaining polish items the v0.5.0 reviewer flagged.
+
+### Fixed
+- **Policy was not applied to `meta_confirm_action`, `meta_cancel_action`, `meta_list_pending_actions`.** They bypassed `AVITO_MCP_ALLOW_TOOLS` / `AVITO_MCP_DENY_TOOLS`, breaking the documented "deny wins" / "allowlist is literal" contract. Each confirmation tool now goes through `evaluatePolicy` individually. Tests added for: allowlist excludes confirm tools, denylist hides them (deny wins), `read_only` mode hides write meta tools but keeps the read-class `meta_list_pending_actions`.
+- **DX warning at startup**: if confirmation is enabled but `meta_confirm_action` is hidden by policy, the server logs a warning that pending actions will be unconfirmable, with the fix recipe (add to allowlist or set `AVITO_MCP_CONFIRMATION_MODE=off`).
+- **`dist/manifest.json` now includes `environment` and `accessesLocalFiles`** on every tool entry. Previously these were only in runtime `_meta` but the manifest had only `risk`. Now `messenger_upload_images` shows `environment: "prod", accessesLocalFiles: true`; `meta_*` tools show `environment: "local"`. CHANGELOG claim ↔ artifact now match.
+- **CHANGELOG v0.4.0 typo**: "24 new tests (74 → 98 total)" → "24 new tests (50 → 74 total)".
+- **README counts**: replaced the imprecise "139 tools" with an honest breakdown — "138 Avito API tools + 4 local/meta = up to 142 MCP tools" — plus a configuration→count table.
+- **`docs/` added to npm `files` whitelist** so the README link to `docs/safety.md` resolves inside the published package, not just on GitHub.
+
+### Added
+- **`AVITO_MCP_MAX_BINARY_MB`** (default `20`) — caps the size of binary responses (PDF labels, audio recordings). Fails fast on `Content-Length` header if available; falls back to checking actual body size. Drains the response to avoid lingering sockets. Audit-recommended production hardening for `orders_download_label` and `calltracking_get_record_by_call_id`.
+- 7 new tests (95 total, +7 from v0.5.0): 4 for meta-tool policy gating, 3 for binary size limit (Content-Length reject, body-size reject, accepts under-limit).
+
 ## [0.5.0] - 2026-05-25
 
 Final hardening pass. Closes the last items on the v0.3.0 audit's path to 10/10: hard-confirmation, binary endpoint UX, richer safety metadata. No breaking changes for default configs.
@@ -85,7 +101,7 @@ sensitive-class hiding for auth tools, fail-closed file-access guard for the mul
   - `meta_list_pending_actions()` — sanitized list (no args dump, no execute closure) for "what did I just queue?" diagnostics.
   - Pending store is **in-memory only** — rebooting the server loses all pending. Deliberate: better than accidentally confirming an old action.
   - All three meta tools are registered **only** when `AVITO_MCP_CONFIRMATION_MODE != off` — no clutter when flow is disabled.
-- **24 new tests** (74 → 98 total): 10 for confirmation flow (pending creation, one-shot confirm, double-confirm rejected, cancel, expiry, list, mode toggles, policy re-evaluation), 14 for upload guard (every reason path: outside dirs, symlink escape, extension mismatch, magic-byte mismatch, size limit, directory disguised as file, naive prefix attack, empty allowlist, path traversal).
+- **24 new tests** (50 → 74 total): 10 for confirmation flow (pending creation, one-shot confirm, double-confirm rejected, cancel, expiry, list, mode toggles, policy re-evaluation), 14 for upload guard (every reason path: outside dirs, symlink escape, extension mismatch, magic-byte mismatch, size limit, directory disguised as file, naive prefix attack, empty allowlist, path traversal).
 - New module `src/core/pending-actions.ts` (TTL'd in-memory store, sanitised list view).
 - New module `src/core/upload-guard.ts` (`validateUpload`, `UploadGuardError`).
 
@@ -254,6 +270,7 @@ Avito provides separate APIs for the following verticals; their swagger specs ar
 ### Fixed
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
 
+[0.5.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.5.1
 [0.5.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.5.0
 [0.4.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.4.1
 [0.4.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.4.0
