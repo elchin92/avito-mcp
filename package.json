@@ -1,6 +1,6 @@
 {
   "name": "avito-mcp",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "MCP server for Avito API — 139 tools across 18 domains. Give your AI agents hands and feet on Russia's largest classifieds marketplace.",
   "type": "module",
   "bin": {
@@ -25,13 +25,14 @@
     "build": "tsc",
     "smoke": "tsx scripts/smoke.ts",
     "list-tools": "tsx scripts/list-tools.ts",
+    "generate:manifest": "tsx scripts/generate-manifest.ts",
     "inspect": "npx @modelcontextprotocol/inspector npx tsx src/server.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "prepack": "npm run build",
-    "prepublishOnly": "npm run lint && npm run build && npm test"
+    "prepack": "npm run build && npm run generate:manifest",
+    "prepublishOnly": "npm run lint && npm run build && npm test && npm run generate:manifest"
   },
   "engines": {
     "node": ">=20.10.0"

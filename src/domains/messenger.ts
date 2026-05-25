@@ -21,8 +21,10 @@ import { basename } from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
+import { logger } from '../logger.js';
 import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 import { errorToMcpContent } from '../core/errors.js';
+import { evaluatePolicy } from '../core/policy.js';
 
 export const register: DomainRegister = (server, ctx) => {
   // ────────────────────────────── READ ──────────────────────────────
@@ -276,6 +278,16 @@ export const register: DomainRegister = (server, ctx) => {
 
   // ────────────────────────────── CUSTOM (multipart upload) ──────────────────────────────
 
+  // Custom tool (not via defineTool because it reads from local disk). Same policy gate
+  // applies — risk='write' means: blocked by mode=read_only, allowed by mode=guarded.
+  const uploadDecision = evaluatePolicy('messenger_upload_images', 'write', ctx.config);
+  if (!uploadDecision.allowed) {
+    logger.info(
+      { tool: 'messenger_upload_images', risk: 'write', reason: uploadDecision.reason },
+      'tool hidden by policy',
+    );
+    return;
+  }
   server.registerTool(
     'messenger_upload_images',
     {
@@ -301,21 +313,9 @@ export const register: DomainRegister = (server, ctx) => {
         idempotentHint: false,
         openWorldHint: true,
       },
+      _meta: { risk: 'write' },
     },
     async (args): Promise<CallToolResult> => {
-      if (process.env.AVITO_SAFE_MODE === 'read-only') {
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text',
-              text:
-                "Tool 'messenger_upload_images' (risk=write) blocked by AVITO_SAFE_MODE=read-only. " +
-                'Unset AVITO_SAFE_MODE or set it to a different value to allow non-read tools.',
-            },
-          ],
-        };
-      }
       try {
         const userId = (args.user_id as number | undefined) ?? ctx.config.profileId;
         const paths = args.paths as string[];

@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![CI](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-39_passing-brightgreen)](./test)
+[![Tests](https://img.shields.io/badge/tests-50_passing-brightgreen)](./test)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
@@ -434,8 +434,12 @@ Settings → MCP Servers → Add. Поля UI: name `avito`, command `npx`, args
   - macOS: `~/Library/Application Support/avito-mcp/token.json`
   - Windows: `%APPDATA%\avito-mcp\token.json`
   - Изменить путь — через `AVITO_TOKEN_FILE`. Удалите файл — следующий запрос автоматически выпишет новый.
-- **`AVITO_SAFE_MODE=read-only`** — установите эту env-переменную и сервер заблокирует любой tool, который пишет данные, тратит деньги или виден клиентам. Сработают только `read` tools (GET и POST-as-query — статистика, аналитика). Рекомендуется для автономных агентов и первого знакомства.
-- Каждый tool помечен одной из четырёх категорий риска (`read` / `write` / `money` / `public`) и отдаётся клиенту как MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`) — поведенческие MCP-клиенты предупредят пользователя перед деструктивным вызовом.
+- **Три режима безопасности через `AVITO_MCP_MODE`** (default: `full_access`):
+  - `read_only` — регистрируются только ~79 `read` tools; всё что пишет, тратит или говорит с клиентами агент даже не видит
+  - `guarded` — добавляет `write` tools (+41), всё ещё скрывает `money` и `public`
+  - `full_access` — все 139 tools, поведение v0.1.x. Старая `AVITO_SAFE_MODE=read-only` продолжает работать как deprecated alias на `AVITO_MCP_MODE=read_only`.
+- **Allowlist / denylist по именам:** `AVITO_MCP_ALLOW_TOOLS=foo,bar` регистрирует только эти tools. `AVITO_MCP_DENY_TOOLS=baz` скрывает их, deny всегда побеждает. Полезно для агентов-персон — готовые конфигурации в [`docs/safety.md`](./docs/safety.md) (analytics-only, support, listings-only, full admin).
+- Каждый tool помечен одной из четырёх категорий риска (`read` / `write` / `money` / `public`) и отдаётся клиенту как MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`), плюс есть в `dist/manifest.json`. Поведенческие MCP-клиенты предупредят перед деструктивным вызовом.
 - **Все 139 tools работают с production** — sandbox у Avito нет. Write-методы тратят деньги или видны клиентам. Безопасные read-only для первого знакомства: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
 - **Нашли уязвимость?** Приватный канал — [SECURITY.md](./SECURITY.md). Не открывайте публичный issue.
 

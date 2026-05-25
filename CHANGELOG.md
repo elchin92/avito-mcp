@@ -3,6 +3,45 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-05-25
+
+"Defence in depth" — three safety modes, per-tool allowlist/denylist, generated tool manifest, and registry-invariant tests. Plus a `docs/safety.md` with ready-to-paste configurations for common agent personas.
+
+### Added
+- **`AVITO_MCP_MODE`** env var with three values, replacing the binary `AVITO_SAFE_MODE`:
+  - `read_only`   — registers only `risk='read'` tools (~79 tools). Agent literally cannot see anything else in `tools/list`.
+  - `guarded`     — registers `read` + `write` (~120 tools); hides `money` and `public`. Agent can edit own data but can't spend or talk to customers.
+  - `full_access` — all 139 tools; legacy behaviour. **Default.**
+- **`AVITO_MCP_ALLOW_TOOLS`** — comma-separated tool names; if set, only these register, regardless of mode. Lets you build narrow agent personas.
+- **`AVITO_MCP_DENY_TOOLS`** — comma-separated tool names that are always hidden. Deny wins over allow.
+- **Policy hides tools at registration time, not at call time** — they don't appear in `tools/list` at all. Removes the temptation for an agent to attempt the call. (v0.2.x blocked at call time with an isError response; v0.3.0 hides entirely.)
+- **`dist/manifest.json`** — generated catalogue of every tool with name, domain, risk, description and annotations. Built by `npm run generate:manifest` (now part of `prepack` so it ships in every published tarball). Useful for documentation, programmatic agent runtimes, and CI invariant checks.
+- **Tool `_meta.risk` field** — every tool exposes its risk classification via MCP `_meta` in addition to the derived `ToolAnnotations`. MCP-aware clients can read it for fine-grained UI.
+- **Registry invariant tests** (`test/registry.test.ts`) — mount the full domain registry against an InMemoryTransport and assert:
+  - ≥139 tools registered
+  - All names unique
+  - All names match `^[a-z][a-z0-9_]*$`
+  - All names start with a known domain prefix
+  - All tools have a non-empty description
+  - All descriptions contain Cyrillic (convention)
+  - Every tool has both `readOnlyHint` and `destructiveHint` set explicitly
+
+  Catches future regressions like the `messenger_upload_images` slip-through that affected v0.2.0.
+- **`docs/safety.md`** — long-form safety guide with four ready-to-paste agent personas:
+  - Persona 1 (analytics-only): `AVITO_MCP_MODE=read_only`
+  - Persona 2 (customer-support): guarded + allowlist with the messenger subset
+  - Persona 3 (listings & stock, no messaging or spending): `full_access` with denylist over money + public
+  - Persona 4 (full admin, interactive): defaults
+
+### Changed
+- **`AVITO_SAFE_MODE=read-only`** is now deprecated. It still works (mapped to `AVITO_MCP_MODE=read_only`) and emits a one-line stderr warning at startup. Will be removed in v1.0.0.
+- Server startup log now records `mode`, `allowToolsCount`, `denyToolsCount` so you can verify policy at a glance.
+- `--help` documents all new env vars; `.env.example` documents all new env vars; both READMEs (EN + RU) Security sections document modes + allowlist/denylist and link to `docs/safety.md`.
+- `prepublishOnly` and `prepack` now run `generate:manifest` so the manifest in npm tarballs matches the source.
+
+### Tests
+- 50 passing (up from 39 in v0.2.x): added 9 registry-invariants tests and refactored the safe-mode tests to use the new mode-based config instead of `process.env.AVITO_SAFE_MODE` mutation.
+
 ## [0.2.1] - 2026-05-25
 
 Hotfix release: v0.2.0 missed one tool, plus several doc tune-ups.
@@ -107,6 +146,7 @@ Avito provides separate APIs for the following verticals; their swagger specs ar
 ### Fixed
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
 
+[0.3.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.3.0
 [0.2.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.2.1
 [0.2.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.2.0
 [0.1.4]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.4

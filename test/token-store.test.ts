@@ -85,9 +85,14 @@ describe('TokenStore', () => {
     const p2 = store.getToken();
     const p3 = store.getToken();
 
-    // дать всем трём async getToken() дойти до общего refresh()
-    await new Promise((r) => setImmediate(r));
-    await new Promise((r) => setImmediate(r));
+    // Wait for all three async getToken() calls to reach the shared refresh().
+    // Each one does an async readFile() first, then awaits refresh(); on slow CI
+    // (GitHub Actions Node 20.x) two setImmediate ticks isn't enough — poll the
+    // fetcher mock with a 2s deadline instead.
+    const deadline = Date.now() + 2000;
+    while (fetcher.mock.calls.length === 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
 
     expect(fetcher).toHaveBeenCalledOnce();
     expect(resolveFetcher).not.toBeNull();

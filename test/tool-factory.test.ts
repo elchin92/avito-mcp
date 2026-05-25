@@ -10,9 +10,11 @@ import { promises as fs } from 'node:fs';
 
 import { AvitoClient } from '../src/core/client.js';
 import { defineTool, type ToolContext } from '../src/core/tool-factory.js';
-import type { Config } from '../src/config.js';
+import type { Config, SafetyMode } from '../src/config.js';
 
-function makeConfig(): Config {
+function makeConfig(
+  overrides: Partial<Pick<Config, 'mode' | 'allowTools' | 'denyTools'>> = {},
+): Config {
   return {
     clientId: 'cid',
     clientSecret: 'sec',
@@ -20,6 +22,10 @@ function makeConfig(): Config {
     baseUrl: 'https://api.test.example',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
+    mode: 'full_access',
+    allowTools: [],
+    denyTools: [],
+    ...overrides,
   };
 }
 
@@ -49,6 +55,13 @@ async function makeRig(ctx: ToolContext) {
     path: '/anything',
   });
   defineTool(server, ctx, {
+    name: 'broadcaster',
+    risk: 'public',
+    description: 'Visible to customers',
+    method: 'POST',
+    path: '/anything',
+  });
+  defineTool(server, ctx, {
     name: 'unclassified',
     description: 'No risk specified — defaults to write',
     method: 'POST',
@@ -61,27 +74,38 @@ async function makeRig(ctx: ToolContext) {
   return { server, client };
 }
 
-describe('defineTool — risk classification', () => {
+async function listNames(client: Client): Promise<string[]> {
+  const { tools } = await client.listTools();
+  return tools.map((t) => t.name).sort();
+}
+
+function makeCtx(mode: SafetyMode, allow: string[] = [], deny: string[] = []): { ctx: ToolContext; cfg: Config; fetchMock: ReturnType<typeof vi.fn> } {
+  const cfg = makeConfig({ mode, allowTools: allow, denyTools: deny });
+  const fetchMock = vi.fn(async () =>
+    new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  );
+  vi.stubGlobal('fetch', fetchMock);
+  const avito = new AvitoClient(cfg, {
+    retry: { retry429BaseMs: 1, max429Retries: 0, retry5xxBackoffMs: 1, max5xxRetries: 0 },
+  });
+  return { ctx: { client: avito, config: cfg }, cfg, fetchMock };
+}
+
+describe('defineTool — risk annotations', () => {
   let cfg: Config;
-  let fetchMock: ReturnType<typeof vi.fn>;
   let ctx: ToolContext;
 
   beforeEach(() => {
-    cfg = makeConfig();
-    fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-    const avito = new AvitoClient(cfg, { retry: { retry429BaseMs: 1, max429Retries: 0, retry5xxBackoffMs: 1, max5xxRetries: 0 } });
-    ctx = { client: avito, config: cfg };
+    const setup = makeCtx('full_access');
+    cfg = setup.cfg;
+    ctx = setup.ctx;
   });
 
   afterEach(async () => {
     vi.unstubAllGlobals();
-    delete process.env.AVITO_SAFE_MODE;
     await fs.rm(cfg.tokenFile, { force: true });
   });
 
@@ -108,22 +132,24 @@ describe('defineTool — risk classification', () => {
     await client.close();
   });
 
-  it('annotates money tools with destructiveHint=true', async () => {
+  it('annotates money + public tools with destructiveHint=true', async () => {
     const { client } = await makeRig(ctx);
     const { tools } = await client.listTools();
-    const spender = tools.find((t) => t.name === 'spender')!;
-    expect(spender.annotations).toMatchObject({
+    expect(tools.find((t) => t.name === 'spender')!.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(tools.find((t) => t.name === 'broadcaster')!.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: true,
     });
     await client.close();
   });
 
-  it('treats unclassified tools as write (fail-closed default)', async () => {
+  it('defaults unclassified tools to write semantics', async () => {
     const { client } = await makeRig(ctx);
     const { tools } = await client.listTools();
-    const t = tools.find((x) => x.name === 'unclassified')!;
-    expect(t.annotations).toMatchObject({
+    expect(tools.find((t) => t.name === 'unclassified')!.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: false,
     });
@@ -131,76 +157,125 @@ describe('defineTool — risk classification', () => {
   });
 });
 
-describe('defineTool — AVITO_SAFE_MODE=read-only', () => {
+describe('defineTool — AVITO_MCP_MODE=read_only', () => {
   let cfg: Config;
-  let fetchMock: ReturnType<typeof vi.fn>;
   let ctx: ToolContext;
 
   beforeEach(() => {
-    cfg = makeConfig();
-    fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-    const avito = new AvitoClient(cfg, { retry: { retry429BaseMs: 1, max429Retries: 0, retry5xxBackoffMs: 1, max5xxRetries: 0 } });
-    ctx = { client: avito, config: cfg };
-    process.env.AVITO_SAFE_MODE = 'read-only';
+    const setup = makeCtx('read_only');
+    cfg = setup.cfg;
+    ctx = setup.ctx;
   });
 
   afterEach(async () => {
     vi.unstubAllGlobals();
-    delete process.env.AVITO_SAFE_MODE;
     await fs.rm(cfg.tokenFile, { force: true });
   });
 
-  it('allows read tools (no Avito call made — but tool succeeds at MCP layer)', async () => {
-    // fetch is mocked to return token + data, so the read call goes through
-    fetchMock.mockImplementation(async (url: string) => {
-      if (url.endsWith('/token')) {
-        return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
-    });
+  it('hides every non-read tool from tools/list (not just blocks at runtime)', async () => {
     const { client } = await makeRig(ctx);
-    const r = await client.callTool({ name: 'reader', arguments: {} });
-    expect(r.isError).not.toBe(true);
+    const names = await listNames(client);
+    expect(names).toEqual(['reader']);
+    await client.close();
+  });
+});
+
+describe('defineTool — AVITO_MCP_MODE=guarded', () => {
+  let cfg: Config;
+  let ctx: ToolContext;
+
+  beforeEach(() => {
+    const setup = makeCtx('guarded');
+    cfg = setup.cfg;
+    ctx = setup.ctx;
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    await fs.rm(cfg.tokenFile, { force: true });
+  });
+
+  it('hides money and public, keeps read and write (incl. unclassified default)', async () => {
+    const { client } = await makeRig(ctx);
+    const names = await listNames(client);
+    expect(names).toEqual(['reader', 'unclassified', 'writer']);
+    await client.close();
+  });
+});
+
+describe('defineTool — AVITO_MCP_MODE=full_access', () => {
+  let cfg: Config;
+  let ctx: ToolContext;
+
+  beforeEach(() => {
+    const setup = makeCtx('full_access');
+    cfg = setup.cfg;
+    ctx = setup.ctx;
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    await fs.rm(cfg.tokenFile, { force: true });
+  });
+
+  it('exposes all five tools', async () => {
+    const { client } = await makeRig(ctx);
+    const names = await listNames(client);
+    expect(names).toEqual(['broadcaster', 'reader', 'spender', 'unclassified', 'writer']);
+    await client.close();
+  });
+});
+
+describe('defineTool — AVITO_MCP_ALLOW_TOOLS', () => {
+  let cfg: Config;
+  let ctx: ToolContext;
+
+  beforeEach(() => {
+    const setup = makeCtx('full_access', ['reader', 'spender']);
+    cfg = setup.cfg;
+    ctx = setup.ctx;
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    await fs.rm(cfg.tokenFile, { force: true });
+  });
+
+  it('narrows registration to listed names regardless of mode', async () => {
+    const { client } = await makeRig(ctx);
+    expect(await listNames(client)).toEqual(['reader', 'spender']);
+    await client.close();
+  });
+});
+
+describe('defineTool — AVITO_MCP_DENY_TOOLS', () => {
+  let cfg: Config;
+  let ctx: ToolContext;
+
+  beforeEach(() => {
+    const setup = makeCtx('full_access', [], ['spender', 'broadcaster']);
+    cfg = setup.cfg;
+    ctx = setup.ctx;
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    await fs.rm(cfg.tokenFile, { force: true });
+  });
+
+  it('blocks listed names, lets others through', async () => {
+    const { client } = await makeRig(ctx);
+    expect(await listNames(client)).toEqual(['reader', 'unclassified', 'writer']);
     await client.close();
   });
 
-  it('blocks write tools with isError + explanation', async () => {
-    const { client } = await makeRig(ctx);
-    const r = await client.callTool({ name: 'writer', arguments: { x: 1 } });
-    expect(r.isError).toBe(true);
-    const text = (r.content as Array<{ type: string; text: string }>)[0]!.text;
-    expect(text).toContain('AVITO_SAFE_MODE=read-only');
-    expect(text).toContain('writer');
-    expect(text).toContain('write');
-    expect(fetchMock).not.toHaveBeenCalled(); // never reached Avito
-    await client.close();
-  });
-
-  it('blocks money tools', async () => {
-    const { client } = await makeRig(ctx);
-    const r = await client.callTool({ name: 'spender', arguments: {} });
-    expect(r.isError).toBe(true);
-    const text = (r.content as Array<{ type: string; text: string }>)[0]!.text;
-    expect(text).toContain('money');
-    await client.close();
-  });
-
-  it('blocks unclassified tools (fail-closed)', async () => {
-    const { client } = await makeRig(ctx);
-    const r = await client.callTool({ name: 'unclassified', arguments: {} });
-    expect(r.isError).toBe(true);
+  it('deny wins over allow when both contain the same name', async () => {
+    const setup = makeCtx('full_access', ['spender', 'reader'], ['spender']);
+    vi.unstubAllGlobals();
+    const { ctx: ctx2, cfg: cfg2 } = setup;
+    cfg = cfg2;
+    const { client } = await makeRig(ctx2);
+    expect(await listNames(client)).toEqual(['reader']); // spender blocked by deny
     await client.close();
   });
 });

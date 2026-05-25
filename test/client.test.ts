@@ -15,6 +15,9 @@ function makeConfig(): Config {
     baseUrl: 'https://api.test.example',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
+    mode: 'full_access',
+    allowTools: [],
+    denyTools: [],
   };
 }
 

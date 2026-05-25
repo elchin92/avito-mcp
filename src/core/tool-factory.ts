@@ -3,8 +3,10 @@ import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/
 import type { ZodRawShape } from 'zod';
 
 import type { Config } from '../config.js';
+import { logger } from '../logger.js';
 import type { AvitoClient, BodyContentType, HttpMethod } from './client.js';
 import { errorToMcpContent } from './errors.js';
+import { evaluatePolicy } from './policy.js';
 import type { Primitive, QueryValue } from './url.js';
 
 /**
@@ -126,20 +128,19 @@ export function defineTool<I extends ZodRawShape>(
   const risk: ToolRisk = spec.risk ?? 'write';
   const annotations = riskToAnnotations(risk);
 
+  // Policy gate: hide tools that violate mode / allowlist / denylist BEFORE registration.
+  // Hiding (rather than blocking at call time) means the agent never sees the tool in
+  // tools/list — removes the temptation entirely.
+  const decision = evaluatePolicy(spec.name, risk, ctx.config);
+  if (!decision.allowed) {
+    logger.info(
+      { tool: spec.name, risk, reason: decision.reason },
+      'tool hidden by policy',
+    );
+    return;
+  }
+
   const handler = async (rawArgs: Record<string, unknown>): Promise<CallToolResult> => {
-    if (process.env.AVITO_SAFE_MODE === 'read-only' && risk !== 'read') {
-      return {
-        isError: true,
-        content: [
-          {
-            type: 'text',
-            text:
-              `Tool '${spec.name}' (risk=${risk}) blocked by AVITO_SAFE_MODE=read-only. ` +
-              `Unset AVITO_SAFE_MODE or set it to a different value to allow non-read tools.`,
-          },
-        ],
-      };
-    }
     try {
       const args = rawArgs ?? {};
       const { pathParams, query, body } = splitArgs(args, spec, ctx);
@@ -170,7 +171,7 @@ export function defineTool<I extends ZodRawShape>(
   // несовместимым с публичным CallToolResult-типом. Касаемся только сигнатуры — runtime OK.
   server.registerTool(
     spec.name,
-    { description: spec.description, inputSchema, annotations },
+    { description: spec.description, inputSchema, annotations, _meta: { risk } },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     handler as any,
   );

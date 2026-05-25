@@ -13,8 +13,11 @@ src/domains/<name>.ts                  ← one file per swagger, declarative too
        ↓
 src/meta/domain-registry.ts            ← one line registers the domain
        ↓
-139+ MCP tools exposed via stdio
+139 MCP tools exposed via stdio (138 swagger + 1 meta)
 ```
+
+Run `npm run generate:manifest` to produce an up-to-date `dist/manifest.json` with the
+authoritative list, including the `risk` classification of every tool.
 
 The heart of the project is `src/core/tool-factory.ts` — `defineTool(server, ctx, spec)`. It turns a 7-line declarative spec into a full MCP tool with HTTP, OAuth, retry, error mapping and Profile_id auto-injection. **You should never write a `fetch()` call inside a tool handler.**
 

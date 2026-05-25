@@ -21,7 +21,13 @@ function printHelp(): void {
       `  AVITO_BASE_URL          Override Avito API base URL (default: https://api.avito.ru)\n` +
       `  AVITO_TOKEN_FILE        Override OAuth token cache path\n` +
       `  AVITO_ENV_FILE          Path to .env file (default: ./.env)\n` +
-      `  AVITO_SAFE_MODE         Set to "read-only" to block all write / money / public tools\n` +
+      `  AVITO_MCP_MODE          read_only | guarded | full_access (default: full_access)\n` +
+      `                          - read_only:   only risk='read' tools are registered\n` +
+      `                          - guarded:     blocks risk='money' and risk='public'\n` +
+      `                          - full_access: all tools (default; legacy behaviour)\n` +
+      `  AVITO_MCP_ALLOW_TOOLS   Comma-separated tool names; if set, only these register\n` +
+      `  AVITO_MCP_DENY_TOOLS    Comma-separated tool names; always blocked (wins over allow)\n` +
+      `  AVITO_SAFE_MODE         DEPRECATED: use AVITO_MCP_MODE=read_only instead\n` +
       `  LOG_LEVEL               pino log level (default: info)\n` +
       `\n` +
       `Docs: https://github.com/elchin92/avito-mcp\n`,
@@ -58,7 +64,9 @@ async function startServer(): Promise<void> {
       baseUrl: config.baseUrl,
       profileId: config.profileId,
       domains: domains.length,
-      safeMode: process.env.AVITO_SAFE_MODE ?? 'off',
+      mode: config.mode,
+      allowToolsCount: config.allowTools.length,
+      denyToolsCount: config.denyTools.length,
     },
     'avito-mcp started',
   );
