@@ -23,6 +23,21 @@ Initial public release.
 ### Not supported in this release
 Avito provides separate APIs for the following verticals; their swagger specs are not bundled: Auction, Autostrategy, Autoteka, Jobs/Vacancies, Realty Reports, Short-term rent (STR).
 
+## [0.1.3] - 2026-05-25
+
+### Changed
+- **README major rewrite (EN + RU)** for adoption. New collapsible `<details>` sections for every tool group and every supported AI client. Less technical jargon, more concrete use cases.
+- **Expanded AI client coverage from 8 to 16+**: added ChatGPT Desktop (Connectors), Codex CLI, VS Code (Copilot Chat), JetBrains AI Assistant, Goose, Roo Code, Kilo Code, LibreChat, Cherry Studio. Generic stdio fallback still listed.
+- Added **"Built for autonomous workflows"** section pointing at multi-agent runtimes and cron-scheduled agents as the intended deployment pattern.
+- Added **12+ example prompts** organised by use case (analyse, communicate, promote, fulfil, automate) to help users see what's possible at a glance.
+- Reworded tool descriptions to be action-oriented rather than implementation-oriented.
+
+### Added
+- Documented the **Avito API snapshot date** (`2026-05-25`) in README header (badge) and in the "What's included" section, so users know which point-in-time of Avito's public spec the bundled swaggers reflect.
+
+### Confirmed
+- 138/138 swagger endpoints remain fully covered as MCP tools (+1 meta tool = 139). No code, no swagger, no test changes in this release — docs only.
+
 ## [0.1.2] - 2026-05-25
 
 ### Fixed
@@ -33,6 +48,7 @@ Avito provides separate APIs for the following verticals; their swagger specs ar
 ### Fixed
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
 
+[0.1.3]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.3
 [0.1.2]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.0
