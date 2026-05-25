@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![CI](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-95_passing-brightgreen)](./test)
+[![Tests](https://img.shields.io/badge/tests-110_passing-brightgreen)](./test)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
@@ -15,6 +15,8 @@
 > Локальный MCP-сервер, через который Claude, Cursor, Cline и любой другой AI-ассистент **делает реальную работу на Avito за вас** — отвечает клиентам, ведёт объявления, запускает продвижение, обрабатывает заказы, анализирует статистику. **138 Avito API tools** + **4 локальных meta-tools** = до **142 MCP tools** из **18 официальных API Avito**. Установка одной командой.
 
 🇬🇧 **[English version →](./README.md)**
+
+> **Новое в v0.6.0** — полное выравнивание под **MCP-спеку 2025-11-25**: 6 MCP-ресурсов (`avito://docs/safety`, `avito://manifest`, live `state/*`, шаблоны swagger), 5 готовых prompt-ов, structured-выводы tool-ов (`structuredContent`), зеркалирование логов в MCP, подписки на `state/pending-actions`. Без новых env-переменных, без breaking changes. См. [CHANGELOG](./CHANGELOG.md#060---2026-05-25).
 
 ---
 
@@ -202,6 +204,48 @@ stdio-транспорт оставляет credentials и ответы API на
 </details>
 
 > ⚠️ — методы которые **тратят деньги или меняют боевые данные** (цены, платные услуги, сообщения клиентам, блокировки). Безопасные read-only методы для первого знакомства: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
+
+---
+
+## MCP-ресурсы и промпты (v0.6.0)
+
+Кроме tool-ов сервер теперь отдаёт MCP **resources** (данные, доступные агенту без вызова API) и **prompts** (готовые сценарии, которые сами оркестрируют нужные tool-ы в нужном порядке).
+
+### Resources
+
+| URI | Тип | Что внутри |
+|---|---|---|
+| `avito://docs/safety` | `text/markdown` | Гайд по safety-режимам + confirmation |
+| `avito://manifest` | `application/json` | Live-реестр tools (risk / domain / title / annotations) |
+| `avito://state/config` | `application/json` | Снимок активного config — секреты redacted |
+| `avito://state/rate-limits` | `application/json` | Последние `X-RateLimit-*` по доменам Avito |
+| `avito://state/pending-actions` | `application/json` | Pending-confirmations — **subscribable**, шлёт `notifications/resources/updated` |
+| `avito://swaggers/{slug}` | `application/json` | По одному resource на каждый файл из `swaggers/` (с автодополнением через `complete`) |
+
+Подписавшись на `avito://state/pending-actions`, клиент видит каждое создание/подтверждение/отмену/истечение в реальном времени — идеально для UI с индикатором «жду подтверждения».
+
+### Prompts
+
+| Имя | Аргументы | Что делает |
+|---|---|---|
+| `avito_daily_overview` | `days?` (default 7) | Баланс + активные объявления + расходы (read-only, без confirmation) |
+| `avito_check_unread_chats` | `limit?` (default 20) | Резюме непрочитанных чатов; явный guard "не отправлять / не блокировать" |
+| `avito_safety_report` | — | Самоописание через `state/config` + `manifest` + `docs/safety` |
+| `avito_explain_tool` | `tool_name` | Развёрнутое описание одного tool: запись в manifest + соответствующий swagger |
+| `avito_promote_item` | `item_id` | Собрать всё нужное перед платной VAS-покупкой; явный guard «не покупай» |
+
+### Структурированный вывод tool-ов
+
+Каждый tool теперь возвращает `structuredContent` параллельно с текстовым блоком — клиенты могут парсить Avito-ответы как JSON без regex:
+
+- Объекты → `{ status, ...data }`
+- Массивы → `{ status, items, count }`
+- Бинарные (PDF этикетки, аудио) → `{ status, mimeType, sizeBytes, base64 }`
+- Ошибки → `{ error_kind, status?, request, body? }` с `isError: true`
+
+### MCP-logging
+
+Избранные pino-события (смена режима, скрытые tools, lifecycle confirmation, warning-и rate-limit) дублируются клиенту как `notifications/message` с `logger: "avito-mcp"`. Клиенты, регулирующие уровень через `logging/setLevel`, работают как ожидается. Pino → stderr сохраняется.
 
 ---
 

@@ -109,6 +109,7 @@ async function main(): Promise<void> {
   const byDomain: Record<string, string[]> = {};
   const flat: Array<{
     name: string;
+    title?: string;
     domain: string;
     risk: Risk;
     environment: string;
@@ -137,6 +138,8 @@ async function main(): Promise<void> {
       description: t.description ?? '',
       annotations: t.annotations ?? null,
     };
+    // v0.6.0: title — необязательное человекочитаемое имя.
+    if (typeof t.title === 'string' && t.title.length > 0) entry.title = t.title;
     if (meta.accessesLocalFiles) entry.accessesLocalFiles = true;
     flat.push(entry);
   }

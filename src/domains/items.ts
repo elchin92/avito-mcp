@@ -23,6 +23,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_get_items_info',
+    title: 'Список объявлений',
     risk: 'read',
     description:
       'Список объявлений авторизованного пользователя — статус, категория, ссылка на сайте. ' +
@@ -55,6 +56,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_get_item_info',
+    title: 'Информация об объявлении',
     risk: 'read',
     description:
       'Детальная информация по одному объявлению: заголовок, цена, статус, адрес, фото и др.',
@@ -254,6 +256,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_update_price',
+    title: '⚠️ Изменить цену',
     risk: 'public',
     description:
       '⚠️ ИЗМЕНЯЕТ ЦЕНУ объявления (целое число в рублях). ' +

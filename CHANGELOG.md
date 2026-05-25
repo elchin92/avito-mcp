@@ -3,6 +3,49 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-25
+
+MCP **2025-11-25 alignment release**. Adds first-class **Resources**, **Prompts**, **structured tool outputs**, **MCP logging** and a richer **server `Implementation`**. Pure additive on the protocol layer — every v0.5.x client continues to work unchanged; clients that understand the new MCP fields just see more.
+
+### Added
+
+- **MCP Resources** — new module `src/resources.ts` registers 5 static resources + 1 dynamic template:
+  - `avito://docs/safety` — markdown guide for safety modes / confirmation / hard-confirmation (same body as `docs/safety.md`).
+  - `avito://manifest` — live `dist/manifest.json` (tool catalogue with risk / domain / annotations / titles).
+  - `avito://state/config` — sanitized snapshot of the active config. Secrets (`clientId`, `clientSecret`, `confirmationSecret`, `tokenFile`) replaced with `'[redacted]'` or `null` — never leak.
+  - `avito://state/rate-limits` — latest `X-RateLimit-*` per logical Avito API domain.
+  - `avito://state/pending-actions` — **subscribable**: clients can `resources/subscribe` and get `notifications/resources/updated` on every create/confirm/cancel/expire in the in-memory pending store. Backed by a new `onChange` hook on `PendingActionStore`.
+  - `avito://swaggers/{slug}` — ResourceTemplate over `swaggers/*.json` with `list` + autocomplete via `complete`. Path-traversal guarded (no `..`, `/`, `\0`; resolved path must stay under `swaggers/`).
+- **MCP Prompts** — new module `src/prompts.ts` exposes 5 ready prompts:
+  - `avito_daily_overview` (`days?`) — orchestrates balance + active items + spendings.
+  - `avito_check_unread_chats` (`limit?`) — read-only triage of unread chats; explicit guard "do not send / blacklist".
+  - `avito_safety_report` — consult `state/config` + `manifest` + `docs/safety` to explain current mode.
+  - `avito_explain_tool` (`tool_name`) — cross-reference manifest entry + matching swagger.
+  - `avito_promote_item` (`item_id`) — gather everything needed before a paid VAS purchase; explicit "не покупай" guard.
+- **`structuredContent`** on every tool response — the standard `content[]` text block is preserved, and a parallel JSON `structuredContent` is added for clients that prefer to parse without regex:
+  - Object responses → `{ status, ...data }`.
+  - Array responses → `{ status, items, count }`.
+  - Binary responses (PDF labels, audio recordings) → `{ status, mimeType, sizeBytes, base64 }`.
+  - Errors (`AvitoApiError` / `AvitoTransportError`) → `{ error_kind, status?, request, body? }` with `isError: true`.
+- **MCP logging** — `bindMcpLogger(server)` in `src/logger.ts` mirrors pino events to MCP `notifications/message` (`debug`/`info`/`warning`/`error`/`critical`) so connected clients can stream logs without reading stderr. Pino → stderr behaviour preserved. Capability declared as `logging: {}` in `ServerCapabilities`.
+- **Tool `title`** — new optional `ToolSpec.title` plumbed through `registerTool`. Russian human-readable display names on the highest-traffic tools (user / items / messenger / meta). MCP display precedence: `title` → `annotations.title` → `name`. Manifest now carries `title` per entry; snapshot test asserts ≥7 tools with Cyrillic titles.
+- **Server `Implementation`** enrichment — `McpServer` now ships with `title: 'Avito MCP'`, a multi-line `description`, `websiteUrl`, declared capabilities (`tools`/`resources`/`prompts`/`logging`), and `instructions` pointing to `avito://docs/safety` + `avito://manifest`. Inspector-class clients render these in the connection picker.
+- **Resource subscribe/unsubscribe handlers** — SDK doesn't auto-register them when `resources.subscribe: true` is declared, so `src/resources.ts` adds tiny handlers that track subscribers per URI and route `sendResourceUpdated` only to subscribed URIs.
+- **New tests** — `test/resources.test.ts` (5 cases: listing, sanitized config, live pending-actions, subscribe→notify roundtrip, swagger template + path-traversal reject), `test/prompts.test.ts` (4 cases: list, daily_overview substitution, promote_item guards, unread_chats read-only guard), `test/structured-content.test.ts` (5 cases: object, array, binary, error, text). Manifest snapshot test gained a "titles are Cyrillic" assertion. **Total: 110 passing (was 95, +15).**
+
+### Changed
+
+- `dist/manifest.json` entries now include optional `title` field. Same `tool_count: 142` and same `counts_by_risk`. Snapshot test unchanged (inventory is `risk + domain + name`).
+- `PendingActionStore` emits change events through a new `onChange(listener)` subscription. Existing call sites (`meta_confirm_action`, `meta_cancel_action`) unchanged — events are fan-out only.
+- `errorToMcpContent` always returns `structuredContent` alongside `isError: true` text.
+- `ToolContext` gained optional `server?: McpServer` so resources/prompts modules can reach `sendResourceUpdated`, `sendLoggingMessage`.
+
+### Compatibility
+
+- No new env vars. No tool removals or renames. Defaults unchanged.
+- Same 142 tools, same `risk` classification, same safety contract.
+- Clients that don't understand the new MCP fields ignore them; structured/text content remains backward-compatible.
+
 ## [0.5.1] - 2026-05-25
 
 External audit pass. Closes the four remaining polish items the v0.5.0 reviewer flagged.

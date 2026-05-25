@@ -29,6 +29,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_chats_v2',
+    title: 'Список чатов',
     risk: 'read',
     description:
       'Список чатов пользователя. Поддерживает фильтры: только непрочитанные, по объявлениям, ' +
@@ -72,6 +73,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_messages_v3',
+    title: 'Сообщения чата',
     risk: 'read',
     description:
       'Список сообщений чата (V3) с пагинацией. Возвращает массив сообщений ' +
@@ -128,6 +130,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_send_message',
+    title: '⚠️ Отправить сообщение',
     risk: 'public',
     description:
       '⚠️ ОТПРАВЛЯЕТ РЕАЛЬНОЕ сообщение клиенту в чат. text до 1000 символов. ' +
@@ -193,6 +196,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_chat_read',
+    title: 'Отметить чат прочитанным',
     risk: 'write',
     description: 'Помечает все непрочитанные сообщения чата как прочитанные.',
     method: 'POST',

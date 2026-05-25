@@ -42,8 +42,19 @@ export interface PendingActionInfo {
  * Конфирмация одноразовая: после успешного confirm запись удаляется.
  * Cancel и expiry тоже удаляют. Cleanup ленивый — при каждом get/list.
  */
+/**
+ * Подписчик на изменения store. v0.6.0 — нужен MCP resource
+ * `avito://state/pending-actions`, чтобы клиенты могли подписаться через
+ * resources/subscribe и получать notifications/resources/updated.
+ */
+export type PendingChangeListener = (
+  event: 'created' | 'deleted' | 'expired',
+  action?: PendingActionInfo,
+) => void;
+
 export class PendingActionStore {
   private actions = new Map<string, PendingAction>();
+  private listeners: PendingChangeListener[] = [];
 
   constructor(private readonly ttlMs: number) {}
 
@@ -67,6 +78,7 @@ export class PendingActionStore {
       expiresAt: now + this.ttlMs,
     };
     this.actions.set(id, action);
+    this.emit('created', action);
     return action;
   }
 
@@ -78,20 +90,16 @@ export class PendingActionStore {
 
   /** Возвращает true если запись была и удалилась, false если её и не было. */
   delete(id: string): boolean {
-    return this.actions.delete(id);
+    const had = this.actions.get(id);
+    const existed = this.actions.delete(id);
+    if (existed && had) this.emit('deleted', had);
+    return existed;
   }
 
   /** Безопасный list — без args, без execute. */
   list(): PendingActionInfo[] {
     this.cleanupExpired();
-    return [...this.actions.values()].map((a) => ({
-      id: a.id,
-      toolName: a.toolName,
-      risk: a.risk,
-      summary: a.summary,
-      createdAt: a.createdAt,
-      expiresAt: a.expiresAt,
-    }));
+    return [...this.actions.values()].map(toInfo);
   }
 
   /** Для тестов — текущий размер. */
@@ -100,10 +108,43 @@ export class PendingActionStore {
     return this.actions.size;
   }
 
+  /** Подписка на изменения store. Возвращает unsubscribe. */
+  onChange(listener: PendingChangeListener): () => void {
+    this.listeners.push(listener);
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== listener);
+    };
+  }
+
+  private emit(event: 'created' | 'deleted' | 'expired', action: PendingAction): void {
+    const info = toInfo(action);
+    for (const l of this.listeners) {
+      try {
+        l(event, info);
+      } catch {
+        // Подписчик не должен ломать store. Глотаем.
+      }
+    }
+  }
+
   private cleanupExpired(): void {
     const now = Date.now();
     for (const [id, a] of this.actions) {
-      if (a.expiresAt < now) this.actions.delete(id);
+      if (a.expiresAt < now) {
+        this.actions.delete(id);
+        this.emit('expired', a);
+      }
     }
   }
+}
+
+function toInfo(a: PendingAction): PendingActionInfo {
+  return {
+    id: a.id,
+    toolName: a.toolName,
+    risk: a.risk,
+    summary: a.summary,
+    createdAt: a.createdAt,
+    expiresAt: a.expiresAt,
+  };
 }

@@ -50,21 +50,42 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 /**
  * Формирует payload для MCP-tool ответа из ошибки.
  * SDK ожидает isError + content[].text для пользовательского сообщения.
+ * v0.6.0: добавлен structuredContent — клиенты могут парсить error_kind/status/url
+ * без regex по тексту.
  */
 export function errorToMcpContent(err: unknown): CallToolResult {
   let text: string;
+  let structured: Record<string, unknown>;
   if (err instanceof AvitoApiError) {
     const bodyStr = typeof err.body === 'string' ? err.body : JSON.stringify(err.body, null, 2);
     text =
       `Avito API error ${err.status}\n` +
       `request: ${err.request.method} ${err.request.url}\n` +
       `response body: ${bodyStr}`;
+    structured = {
+      error_kind: 'avito_api_error',
+      status: err.status,
+      request: err.request,
+      body: err.body,
+    };
+    if (err.retryAfter !== undefined) structured.retry_after_sec = err.retryAfter;
   } else if (err instanceof AvitoTransportError) {
     text = `Transport error: ${err.message}`;
+    structured = {
+      error_kind: 'transport_error',
+      request: err.request,
+      message: err.message,
+    };
   } else if (err instanceof Error) {
     text = `Unexpected error: ${err.name}: ${err.message}`;
+    structured = { error_kind: 'internal_error', name: err.name, message: err.message };
   } else {
     text = `Unexpected error: ${String(err)}`;
+    structured = { error_kind: 'internal_error', message: String(err) };
   }
-  return { isError: true, content: [{ type: 'text', text }] };
+  return {
+    isError: true,
+    content: [{ type: 'text', text }],
+    structuredContent: structured,
+  };
 }

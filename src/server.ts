@@ -43,30 +43,73 @@ function printHelp(): void {
 
 async function startServer(): Promise<void> {
   // Deferred so --version / --help don't trigger dotenv loading or config validation.
-  const [{ config }, { logger }, { AvitoClient }, { domains }, { PendingActionStore }] =
-    await Promise.all([
-      import('./config.js'),
-      import('./logger.js'),
-      import('./core/client.js'),
-      import('./meta/domain-registry.js'),
-      import('./core/pending-actions.js'),
-    ]);
+  const [
+    { config },
+    { logger, bindMcpLogger },
+    { AvitoClient },
+    { domains },
+    { PendingActionStore },
+    { registerResources },
+    { registerPrompts },
+  ] = await Promise.all([
+    import('./config.js'),
+    import('./logger.js'),
+    import('./core/client.js'),
+    import('./meta/domain-registry.js'),
+    import('./core/pending-actions.js'),
+    import('./resources.js'),
+    import('./prompts.js'),
+  ]);
 
-  const server = new McpServer({
-    name: PACKAGE_NAME,
-    version: VERSION,
-  });
+  // Server metadata — title/description/websiteUrl are MCP-2025-11-25 Implementation fields.
+  // Aware MCP clients (Inspector, Claude Desktop) render these in the connection picker.
+  const server = new McpServer(
+    {
+      name: PACKAGE_NAME,
+      title: 'Avito MCP',
+      version: VERSION,
+      description:
+        '142 инструментов для работы с Avito API: объявления, мессенджер, заказы, доставка, ' +
+        'продвижение, автозагрузка, аналитика. С политикой безопасности (read_only / guarded / ' +
+        'full_access), confirmation-flow для money/public операций и hard-confirmation через ' +
+        'AVITO_MCP_CONFIRMATION_SECRET.',
+      websiteUrl: 'https://github.com/elchin92/avito-mcp',
+    },
+    {
+      // Declare capabilities we explicitly support. Tools/resources/prompts are also
+      // auto-detected by the SDK from registrations, but logging is opt-in.
+      capabilities: {
+        logging: {},
+        resources: { subscribe: true, listChanged: true },
+        prompts: { listChanged: false },
+        tools: { listChanged: false },
+      },
+      instructions:
+        'Avito MCP — сервер для работы с боевым Avito API. Перед write/money/public операциями ' +
+        'обязательно подтверждайте действия с человеком; в режиме confirmation_mode=money_public ' +
+        '(default) сервер сам вернёт confirmation_id и потребует вызвать meta_confirm_action. ' +
+        'Полная справка по safety-режимам — в ресурсе avito://docs/safety. Список tools с ' +
+        'классификацией риска — в avito://manifest. Pending-actions — в avito://state/pending-actions ' +
+        '(можно подписаться через resources/subscribe).',
+    },
+  );
 
   const client = new AvitoClient(config);
   const pendingStore = new PendingActionStore(config.confirmationTtlSec * 1000);
-  const ctx: ToolContext = { client, config, pendingStore };
+  const ctx: ToolContext = { client, config, pendingStore, server };
 
   for (const register of domains) {
     register(server, ctx);
   }
+  registerResources(server, ctx);
+  registerPrompts(server, ctx);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // After connect: pipe selected pino events to the MCP client as logging/message
+  // notifications. Pino keeps writing to stderr; MCP-clients now see them too.
+  bindMcpLogger(server);
 
   logger.info(
     {
@@ -81,6 +124,7 @@ async function startServer(): Promise<void> {
       uploadDirsCount: config.allowedUploadDirs.length,
       confirmationMode: config.confirmationMode,
       hardConfirmation: !!config.confirmationSecret,
+      capabilities: ['tools', 'resources', 'prompts', 'logging'],
     },
     'avito-mcp started',
   );

@@ -13,6 +13,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'user_get_user_info_self',
+    title: 'Профиль пользователя',
     risk: 'read',
     description:
       'Возвращает идентификатор пользователя и его регистрационные данные (email, имя, телефоны, profile_url).',
@@ -24,6 +25,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'user_get_user_balance',
+    title: 'Баланс кошелька',
     risk: 'read',
     description:
       'Возвращает баланс кошелька авторизованного пользователя: сумму реальных денег (real) ' +
@@ -47,6 +49,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'user_post_operations_history',
+    title: 'История операций',
     risk: 'read',
     description:
       'Возвращает список операций (списания/пополнение кошелька) за период. ' +

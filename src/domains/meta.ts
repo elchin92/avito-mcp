@@ -40,6 +40,7 @@ export const register: DomainRegister = (server, ctx) => {
     server.registerTool(
       'meta_get_rate_limits',
       {
+        title: 'Состояние rate-limits',
         description:
           'Возвращает последние увиденные значения X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset, ' +
           'сгруппированные по логическим доменам API (core, messenger, items и т.д.). ' +
@@ -60,10 +61,12 @@ export const register: DomainRegister = (server, ctx) => {
             content: [
               { type: 'text', text: 'Нет данных: ни одного запроса к Avito ещё не сделано.' },
             ],
+            structuredContent: { snapshots: [], count: 0 },
           };
         }
         return {
           content: [{ type: 'text', text: JSON.stringify(snaps, null, 2) }],
+          structuredContent: { snapshots: snaps, count: snaps.length },
         };
       },
     );
@@ -104,6 +107,7 @@ export const register: DomainRegister = (server, ctx) => {
   if (confirmDecision.allowed) server.registerTool(
     'meta_confirm_action',
     {
+      title: '✓ Подтвердить отложенное действие',
       description:
         '⚠️ Выполняет ранее отложенное действие по его confirmation_id. ' +
         'Применять ТОЛЬКО после явного подтверждения человеком — flow задуман как server-side ' +
@@ -216,6 +220,7 @@ export const register: DomainRegister = (server, ctx) => {
   if (cancelDecision.allowed) server.registerTool(
     'meta_cancel_action',
     {
+      title: '✗ Отменить отложенное действие',
       description:
         'Отменяет ранее отложенное действие. После cancel confirmation_id перестаёт быть валидным.',
       inputSchema: {
@@ -244,6 +249,7 @@ export const register: DomainRegister = (server, ctx) => {
               : `Pending action '${id}' не найден (возможно, уже истёк, был подтверждён или отменён).`,
           },
         ],
+        structuredContent: { confirmation_id: id, cancelled: existed },
       };
     },
   );
@@ -260,6 +266,7 @@ export const register: DomainRegister = (server, ctx) => {
   if (listDecision.allowed) server.registerTool(
     'meta_list_pending_actions',
     {
+      title: 'Pending actions: список',
       description:
         'Список текущих pending actions, ожидающих подтверждения. Args не показываются — ' +
         'только tool name, risk, краткое summary, времена создания и истечения. ' +
@@ -278,6 +285,7 @@ export const register: DomainRegister = (server, ctx) => {
       if (items.length === 0) {
         return {
           content: [{ type: 'text', text: 'Нет pending actions.' }],
+          structuredContent: { pending: [], count: 0, confirmation_mode: ctx.config.confirmationMode },
         };
       }
       const view = items.map((a) => ({
@@ -303,6 +311,11 @@ export const register: DomainRegister = (server, ctx) => {
             text: JSON.stringify(view, null, 2) + requiresHint,
           },
         ],
+        structuredContent: {
+          pending: view,
+          count: view.length,
+          confirmation_mode: ctx.config.confirmationMode,
+        },
       };
     },
   );

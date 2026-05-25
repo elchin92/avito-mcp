@@ -23,7 +23,13 @@ interface Manifest {
   counts_by_domain: Record<string, number>;
   by_risk: Record<string, string[]>;
   by_domain: Record<string, string[]>;
-  tools: Array<{ name: string; domain: string; risk: string; description: string }>;
+  tools: Array<{
+    name: string;
+    title?: string;
+    domain: string;
+    risk: string;
+    description: string;
+  }>;
 }
 
 let manifest: Manifest;
@@ -87,5 +93,15 @@ describe('manifest snapshot', () => {
   it('snapshot: full tool roster (name, risk, domain)', () => {
     const inventory = manifest.tools.map((t) => `${t.risk.padEnd(9)} ${t.domain.padEnd(15)} ${t.name}`);
     expect(inventory).toMatchSnapshot();
+  });
+
+  it('v0.6.0: at least 7 tools have human-readable Russian title', () => {
+    const withTitle = manifest.tools.filter((t) => typeof t.title === 'string' && t.title.length > 0);
+    // Initial wave (user/items/messenger/meta). New domains добавят свои titles постепенно.
+    expect(withTitle.length).toBeGreaterThanOrEqual(7);
+    // Sanity: titles содержат русские буквы (cyrillic) — то ради чего поле и добавлялось.
+    const cyrillic = /[А-Яа-яЁё]/;
+    const localizedCount = withTitle.filter((t) => cyrillic.test(t.title!)).length;
+    expect(localizedCount).toBeGreaterThanOrEqual(7);
   });
 });

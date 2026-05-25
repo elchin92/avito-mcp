@@ -13,12 +13,15 @@ import type { Primitive, QueryValue } from './url.js';
 /**
  * Контекст, передаваемый в register-функции доменов.
  * Объединяет всё, что нужно tool-handler'у: HTTP-клиент, конфиг и pending-store
- * для confirmation flow.
+ * для confirmation flow. С v0.6.0 также пробрасывается McpServer — нужен resources/
+ * prompts/sendLoggingMessage, регистрируемым в src/resources.ts и src/prompts.ts.
+ * Поле `server` опционально, чтобы существующие тесты не пришлось править.
  */
 export interface ToolContext {
   client: AvitoClient;
   config: Config;
   pendingStore: PendingActionStore;
+  server?: McpServer;
 }
 
 export type ProfileIdKey = 'user_id' | 'userId';
@@ -53,6 +56,13 @@ export type ToolRisk = 'sensitive' | 'read' | 'write' | 'money' | 'public';
 export interface ToolSpec<I extends ZodRawShape = ZodRawShape> {
   /** Полное имя tool (с префиксом домена). Должно быть snake_case. */
   name: string;
+  /**
+   * Опциональное человекочитаемое имя (MCP 2025-11-25 — поле `title` у Tool).
+   * Display-приоритет на клиенте: title → annotations.title → name. Если не задан,
+   * клиент показывает name (snake_case). Для русскоязычных пользователей сильно
+   * улучшает UX в Inspector / Claude Desktop.
+   */
+  title?: string;
   /** Описание для LLM. Пишется на русском, кратко и явно (как в swagger summary). */
   description: string;
   method: HttpMethod;
@@ -173,7 +183,7 @@ export function defineTool<I extends ZodRawShape>(
         auth: spec.auth ?? true,
         domain: spec.domain,
       });
-      return {
+      const result: CallToolResult = {
         content: [
           {
             type: 'text',
@@ -181,6 +191,12 @@ export function defineTool<I extends ZodRawShape>(
           },
         ],
       };
+      // v0.6.0: structuredContent — поле MCP 2025-11-25 для клиентов, умеющих парсить JSON.
+      // Дублирует text, но без необходимости в regex/parse на стороне агента. Не задаём
+      // outputSchema → клиент валидирует не строго, поэтому смело отдаём любую форму.
+      const structured = toStructuredContent(response.status, response.data);
+      if (structured !== undefined) result.structuredContent = structured;
+      return result;
     } catch (err) {
       return errorToMcpContent(err);
     }
@@ -234,10 +250,49 @@ export function defineTool<I extends ZodRawShape>(
   if (spec.accessesLocalFiles) metaRecord.accessesLocalFiles = true;
   server.registerTool(
     spec.name,
-    { description: spec.description, inputSchema, annotations, _meta: metaRecord },
+    {
+      title: spec.title,
+      description: spec.description,
+      inputSchema,
+      annotations,
+      _meta: metaRecord,
+    },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     handler as any,
   );
+}
+
+/**
+ * Превращает HTTP-ответ Avito в structuredContent для CallToolResult.
+ *
+ * MCP-2025-11-25 требует, чтобы structuredContent был JSON-объектом (top-level).
+ * - object → как есть
+ * - array  → {items: array, count, status} (объект-обёртка)
+ * - binary → {mimeType, sizeBytes, base64, status} (без __binary флага)
+ * - null / string → undefined (только text-content имеет смысл)
+ */
+function toStructuredContent(status: number, data: unknown): Record<string, unknown> | undefined {
+  if (data === null || data === undefined) return undefined;
+  if (typeof data === 'string') return undefined;
+  if (
+    typeof data === 'object' &&
+    (data as { __binary?: unknown }).__binary === true
+  ) {
+    const b = data as { mimeType: string; sizeBytes: number; base64: string };
+    return {
+      status,
+      mimeType: b.mimeType,
+      sizeBytes: b.sizeBytes,
+      base64: b.base64,
+    };
+  }
+  if (Array.isArray(data)) {
+    return { status, items: data, count: data.length };
+  }
+  if (typeof data === 'object') {
+    return { status, ...(data as Record<string, unknown>) };
+  }
+  return undefined;
 }
 
 function splitArgs(
