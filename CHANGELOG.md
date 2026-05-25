@@ -23,10 +23,16 @@ Initial public release.
 ### Not supported in this release
 Avito provides separate APIs for the following verticals; their swagger specs are not bundled: Auction, Autostrategy, Autoteka, Jobs/Vacancies, Realty Reports, Short-term rent (STR).
 
+## [0.1.2] - 2026-05-25
+
+### Fixed
+- README.ru.md: replaced broken 404 link `https://www.avito.ru/profile/settings/api` (used in the "How to get Profile_id" instructions) with a working description pointing to the main API page and to `user_get_user_info_self` as a programmatic alternative.
+
 ## [0.1.1] - 2026-05-25
 
 ### Fixed
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
 
+[0.1.2]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.0

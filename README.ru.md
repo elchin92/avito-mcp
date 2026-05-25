@@ -28,7 +28,7 @@
 1. Зайдите в [личный кабинет API Авито](https://www.avito.ru/professionals/api).
 2. Нажмите «Создать приложение» — придумайте название (любое).
 3. Скопируйте **Client_id** и **Client_secret** — они появятся после создания.
-4. **Profile_id** — ваш ID пользователя на Авито: откройте свой профиль на avito.ru, скопируйте число из URL вида `/user/<hash>/profile` (или зайдите в [настройки → API](https://www.avito.ru/profile/settings/api) — там тоже видно).
+4. **Profile_id** — числовой ID вашего аккаунта. Виден на той же странице [личного кабинета API](https://www.avito.ru/professionals/api) рядом с `Client_id`/`Client_secret`. Также его возвращает endpoint `GET /core/v1/accounts/self` в поле `id` — после первой успешной авторизации tool `user_get_user_info_self` покажет ваш Profile_id.
 
 ## Подключение к AI-клиентам
 
