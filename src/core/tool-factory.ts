@@ -100,6 +100,13 @@ export interface ToolSpec<I extends ZodRawShape = ZodRawShape> {
    * Все GET-tool'ы и POST-as-query (analytics, статистика) должны быть явно `'read'`.
    */
   risk?: ToolRisk;
+  /**
+   * v0.5.0: дополнительные safety-измерения, ортогональные risk.
+   * Выводятся в `_meta` и в `dist/manifest.json` для UI клиента и для аудита.
+   * Не влияют на policy/confirmation решения — это аналитика, не enforcement.
+   */
+  accessesLocalFiles?: boolean;
+  environment?: 'prod' | 'sandbox' | 'local';
 }
 
 /** MCP ToolAnnotations выводятся из ToolRisk детерминированно. */
@@ -218,9 +225,16 @@ export function defineTool<I extends ZodRawShape>(
 
   // SDK типизирует callback через internal BaseToolCallback с собственными inferred CallToolResult,
   // несовместимым с публичным CallToolResult-типом. Касаемся только сигнатуры — runtime OK.
+  // Build _meta with optional extra safety dimensions. Default environment='prod'
+  // unless overridden (delivery sandbox tools, meta_*).
+  const metaRecord: Record<string, unknown> = {
+    risk,
+    environment: spec.environment ?? 'prod',
+  };
+  if (spec.accessesLocalFiles) metaRecord.accessesLocalFiles = true;
   server.registerTool(
     spec.name,
-    { description: spec.description, inputSchema, annotations, _meta: { risk } },
+    { description: spec.description, inputSchema, annotations, _meta: metaRecord },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     handler as any,
   );
@@ -288,6 +302,23 @@ function formatResponse(status: number, data: unknown): string {
   }
   if (typeof data === 'string') {
     return `status=${status}\n${data}`;
+  }
+  // Binary responses come from client.ts as { __binary: true, mimeType, sizeBytes, base64 }.
+  // We pre-format them so the LLM sees a clean structured payload and isn't surprised by a
+  // multi-MB base64 string buried inside a regular JSON-stringify.
+  if (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as { __binary?: unknown }).__binary === true
+  ) {
+    const b = data as { mimeType: string; sizeBytes: number; base64: string };
+    return (
+      `status=${status}\n` +
+      `Binary response:\n` +
+      `  mimeType:  ${b.mimeType}\n` +
+      `  sizeBytes: ${b.sizeBytes}\n` +
+      `  base64:    ${b.base64}\n`
+    );
   }
   return `status=${status}\n${JSON.stringify(data, null, 2)}`;
 }

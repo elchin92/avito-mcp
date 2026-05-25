@@ -67,7 +67,9 @@ export const register: DomainRegister = (server, ctx) => {
     risk: 'read',
     description:
       'Скачать сгенерированный PDF-файл этикетки по taskID (из generateLabels/Extended). ' +
-      'Возвращает raw-bytes как text — для бинарного PDF используйте прямой curl с токеном.',
+      'С v0.5.0 возвращает структурированный binary-ответ: ' +
+      '{mimeType: "application/pdf", sizeBytes, base64}. ' +
+      'Декодируйте base64 чтобы сохранить файл локально или напечатать.',
     method: 'GET',
     path: '/order-management/1/orders/labels/{taskID}/download',
     domain: 'order-management',

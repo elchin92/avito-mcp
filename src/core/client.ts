@@ -255,8 +255,41 @@ interface TokenResponse {
   token_type?: string;
 }
 
-async function safeParseResponse<T>(resp: Response): Promise<T | string | null> {
+/**
+ * Структурированный binary-ответ от Avito (PDF labels, audio recordings и т.п.).
+ * Превращается в строку через formatResponse — агент видит mime/size и base64,
+ * может сохранить байты в файл через свой клиент.
+ */
+export interface BinaryResponse {
+  __binary: true;
+  mimeType: string;
+  sizeBytes: number;
+  base64: string;
+}
+
+function isBinaryContent(ct: string): boolean {
+  const lower = ct.toLowerCase();
+  if (!lower) return false;
+  if (lower.includes('application/json')) return false;
+  if (lower.startsWith('text/')) return false;
+  if (lower.includes('application/xml') || lower.includes('+xml')) return false;
+  if (lower.includes('application/x-www-form-urlencoded')) return false;
+  // Всё остальное (application/pdf, audio/*, image/*, application/octet-stream, ...) — бинарь.
+  return true;
+}
+
+async function safeParseResponse<T>(resp: Response): Promise<T | string | BinaryResponse | null> {
   const ct = resp.headers.get('content-type') ?? '';
+  if (isBinaryContent(ct)) {
+    const ab = await resp.arrayBuffer();
+    if (ab.byteLength === 0) return null;
+    return {
+      __binary: true,
+      mimeType: ct.split(';')[0]!.trim(),
+      sizeBytes: ab.byteLength,
+      base64: Buffer.from(ab).toString('base64'),
+    };
+  }
   const text = await resp.text();
   if (!text) return null;
   if (ct.includes('application/json')) {

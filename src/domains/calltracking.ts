@@ -3,8 +3,8 @@
  * Колл-трекинг: получение информации о звонках и аудиозаписях.
  *
  * Quirks:
- *   - getRecordByCallId возвращает БИНАРНОЕ audio (mp3/wav). MCP-tool отдаст raw как text.
- *     Для бинарных файлов используйте прямой curl с токеном.
+ *   - getRecordByCallId возвращает БИНАРНОЕ audio (mp3/wav). С v0.5.0 client.ts
+ *     детектит non-JSON/non-text content и оборачивает в { mimeType, sizeBytes, base64 }.
  */
 import { z } from 'zod';
 
@@ -49,8 +49,9 @@ export const register: DomainRegister = (server, ctx) => {
     name: 'calltracking_get_record_by_call_id',
     risk: 'read',
     description:
-      'Получение аудиозаписи звонка по callId. Возвращает БИНАРНЫЕ данные (mp3/wav) ' +
-      'как text — используйте прямой curl с токеном для сохранения файла.',
+      'Получение аудиозаписи звонка по callId. С v0.5.0 возвращает структурированный ' +
+      'binary-ответ: {mimeType: "audio/mpeg" (или wav), sizeBytes, base64}. ' +
+      'Декодируйте base64 чтобы сохранить файл локально. Внимание: запись может быть несколько MB.',
     method: 'GET',
     path: '/calltracking/v1/getRecordByCallId/',
     domain: 'calltracking',

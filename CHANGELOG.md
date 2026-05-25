@@ -3,6 +3,35 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-05-25
+
+Final hardening pass. Closes the last items on the v0.3.0 audit's path to 10/10: hard-confirmation, binary endpoint UX, richer safety metadata. No breaking changes for default configs.
+
+### Added
+- **`AVITO_MCP_CONFIRMATION_SECRET`** — turns the confirmation flow from soft (any caller can confirm) into **hard** (caller must supply the secret). When set, `meta_confirm_action` requires a `confirmation_secret` parameter, compared in constant time via `crypto.timingSafeEqual`. Wrong or missing secret returns `isError: true` and **does not delete the pending action** — agent can retry within TTL with the correct secret. Bridges the gap between two-step UX and actual human-in-the-loop guarantees when paired with an MCP client that asks the user to type the secret.
+- **Binary endpoint UX** — `safeParseResponse` in `src/core/client.ts` now detects non-JSON, non-text content-types (PDF, audio, octet-stream) and returns a structured envelope: `{ __binary: true, mimeType, sizeBytes, base64 }`. Affects `orders_download_label` (PDF labels) and `calltracking_get_record_by_call_id` (audio recordings). `formatResponse` renders binaries as a clean readable block instead of dumping bytes-as-text. Agents can now decode `base64` to save the file locally or upload elsewhere.
+- **Richer ToolSpec safety metadata** — two new optional fields:
+  - `accessesLocalFiles?: boolean` — currently set on `messenger_upload_images`.
+  - `environment?: 'prod' | 'sandbox' | 'local'` — `meta_*` tools tagged `'local'`. Default `'prod'`. Surfaces in `_meta` and `dist/manifest.json`. Doesn't change runtime behaviour — it's analytics + auditable signal for clients.
+- New tests (88 total, +9 from v0.4.1): 4 hard-confirmation (no secret rejected, wrong secret rejected, correct secret executes, length-mismatch rejected), 5 binary-response (PDF, audio, JSON-not-affected, text-not-affected, empty body).
+
+### Changed
+- Server startup log adds `hardConfirmation: true/false` so the active safety profile is fully auditable in one line.
+- `--help` documents `AVITO_MCP_CONFIRMATION_SECRET` and all v0.4.x env vars (some were missing from earlier help output).
+- `.env.example` documents `AVITO_MCP_CONFIRMATION_SECRET` with explanation of soft vs hard confirmation.
+- `orders_download_label` and `calltracking_get_record_by_call_id` descriptions updated — they now correctly describe the structured `{mimeType, sizeBytes, base64}` envelope instead of the old "raw bytes as text" warning.
+
+### Notes on the audit
+This release closes the last items on the path to 10/10 from the v0.3.0 audit:
+- ✅ Confirmation secret (audit's "10/10 safety" recommendation)
+- ✅ Binary endpoint UX (audit P2)
+- ✅ Richer safety metadata as first-class fields (audit P3)
+
+Still deferred to future minor releases (none are 10/10-blockers — they're polish):
+- Per-tool spending caps (requires Avito price oracle we don't have)
+- Persist manifest to repo (vs. ship-only — current approach is sufficient)
+- `delivery_*` sandbox tools manually tagged `environment: 'sandbox'`
+
 ## [0.4.1] - 2026-05-25
 
 CI hygiene release. No code changes, no breaking changes.
@@ -225,6 +254,7 @@ Avito provides separate APIs for the following verticals; their swagger specs ar
 ### Fixed
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
 
+[0.5.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.5.0
 [0.4.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.4.1
 [0.4.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.4.0
 [0.3.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.3.0

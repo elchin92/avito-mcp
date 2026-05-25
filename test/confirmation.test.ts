@@ -41,12 +41,17 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     maxUploadMb: 15,
     confirmationMode: 'money_public',
     confirmationTtlSec: 900,
+    confirmationSecret: undefined,
     ...overrides,
   };
 }
 
-async function makeRig(confirmationMode: ConfirmationMode, ttlSec = 900) {
-  const cfg = makeConfig({ confirmationMode, confirmationTtlSec: ttlSec });
+async function makeRig(
+  confirmationMode: ConfirmationMode,
+  ttlSec = 900,
+  extra: Partial<Config> = {},
+) {
+  const cfg = makeConfig({ confirmationMode, confirmationTtlSec: ttlSec, ...extra });
   const fetchMock = vi.fn(async (url: string) => {
     if (url.endsWith('/token')) {
       return new Response(
@@ -294,6 +299,94 @@ describe('confirmation flow', () => {
     expect(names).toContain('meta_confirm_action');
     expect(names).toContain('meta_cancel_action');
     expect(names).toContain('meta_list_pending_actions');
+    await rig.client.close();
+  });
+});
+
+describe('hard-confirmation (AVITO_MCP_CONFIRMATION_SECRET)', () => {
+  let cfg: Config;
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    if (cfg) await fs.rm(cfg.tokenFile, { force: true });
+  });
+
+  it('confirm without secret is rejected and pending NOT deleted', async () => {
+    const rig = await makeRig('money_public', 900, { confirmationSecret: 'topsecret123' });
+    cfg = rig.cfg;
+    const first = await rig.client.callTool({
+      name: 'money_tool',
+      arguments: { item_id: 1, vas_id: 'highlight' },
+    });
+    const id = extractConfirmationId(parseText(first.content));
+    expect(rig.pendingStore.size()).toBe(1);
+
+    const noSecret = await rig.client.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: id },
+    });
+    expect(noSecret.isError).toBe(true);
+    expect(parseText(noSecret.content)).toMatch(/AVITO_MCP_CONFIRMATION_SECRET/);
+    // Pending action should still exist — bad secret doesn't burn it (allows retry).
+    expect(rig.pendingStore.size()).toBe(1);
+    await rig.client.close();
+  });
+
+  it('confirm with wrong secret is rejected, pending NOT deleted', async () => {
+    const rig = await makeRig('money_public', 900, { confirmationSecret: 'real-secret' });
+    cfg = rig.cfg;
+    const first = await rig.client.callTool({
+      name: 'money_tool',
+      arguments: { item_id: 1, vas_id: 'x' },
+    });
+    const id = extractConfirmationId(parseText(first.content));
+    const r = await rig.client.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: id, confirmation_secret: 'wrong-guess' },
+    });
+    expect(r.isError).toBe(true);
+    expect(rig.pendingStore.size()).toBe(1);
+    await rig.client.close();
+  });
+
+  it('confirm with correct secret executes and burns pending', async () => {
+    const rig = await makeRig('money_public', 900, { confirmationSecret: 'a-strong-secret' });
+    cfg = rig.cfg;
+    const first = await rig.client.callTool({
+      name: 'money_tool',
+      arguments: { item_id: 1, vas_id: 'x' },
+    });
+    const id = extractConfirmationId(parseText(first.content));
+    const fetchBefore = rig.fetchMock.mock.calls.length;
+    const r = await rig.client.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: id, confirmation_secret: 'a-strong-secret' },
+    });
+    expect(r.isError).not.toBe(true);
+    expect(rig.fetchMock.mock.calls.length).toBeGreaterThan(fetchBefore);
+    expect(rig.pendingStore.size()).toBe(0);
+    await rig.client.close();
+  });
+
+  it('rejects length-mismatch without timing leak (different-length secret)', async () => {
+    const rig = await makeRig('money_public', 900, { confirmationSecret: 'same-length-12' });
+    cfg = rig.cfg;
+    const first = await rig.client.callTool({
+      name: 'money_tool',
+      arguments: { item_id: 1, vas_id: 'x' },
+    });
+    const id = extractConfirmationId(parseText(first.content));
+    // Same length, different content
+    const sameLen = await rig.client.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: id, confirmation_secret: 'WRONG-LEN12_X'.slice(0, 14) },
+    });
+    expect(sameLen.isError).toBe(true);
+    // Different length
+    const diffLen = await rig.client.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: id, confirmation_secret: 'short' },
+    });
+    expect(diffLen.isError).toBe(true);
     await rig.client.close();
   });
 });

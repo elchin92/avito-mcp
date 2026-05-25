@@ -27,6 +27,12 @@ function printHelp(): void {
       `                          - full_access: all tools (default; legacy behaviour)\n` +
       `  AVITO_MCP_ALLOW_TOOLS   Comma-separated tool names; if set, only these register\n` +
       `  AVITO_MCP_DENY_TOOLS    Comma-separated tool names; always blocked (wins over allow)\n` +
+      `  AVITO_MCP_CONFIRMATION_MODE     off | money_public (default) | all_destructive\n` +
+      `  AVITO_MCP_CONFIRMATION_TTL_SEC  Pending action TTL in seconds (default: 900)\n` +
+      `  AVITO_MCP_CONFIRMATION_SECRET   v0.5.0: enables hard-confirmation (human-typed secret)\n` +
+      `  AVITO_MCP_EXPOSE_AUTH_TOOLS     1 to expose sensitive auth_* tools (default: hidden)\n` +
+      `  AVITO_MCP_ALLOWED_UPLOAD_DIRS   Comma-separated dirs that messenger_upload_images may read\n` +
+      `  AVITO_MCP_MAX_UPLOAD_MB         Max per-file upload size in MB (default: 15)\n` +
       `  AVITO_SAFE_MODE         DEPRECATED: use AVITO_MCP_MODE=read_only instead\n` +
       `  LOG_LEVEL               pino log level (default: info)\n` +
       `\n` +
@@ -73,6 +79,7 @@ async function startServer(): Promise<void> {
       exposeAuthTools: config.exposeAuthTools,
       uploadDirsCount: config.allowedUploadDirs.length,
       confirmationMode: config.confirmationMode,
+      hardConfirmation: !!config.confirmationSecret,
     },
     'avito-mcp started',
   );

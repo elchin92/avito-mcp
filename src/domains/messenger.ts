@@ -327,7 +327,7 @@ export const register: DomainRegister = (server, ctx) => {
         idempotentHint: false,
         openWorldHint: true,
       },
-      _meta: { risk: 'write' },
+      _meta: { risk: 'write', environment: 'prod', accessesLocalFiles: true },
     },
     async (args): Promise<CallToolResult> => {
       try {

@@ -93,6 +93,7 @@ const ConfigSchema = z.object({
   maxUploadMb: z.number().int().positive().default(15),
   confirmationMode: z.enum(['off', 'money_public', 'all_destructive']).default('money_public'),
   confirmationTtlSec: z.number().int().positive().default(900),
+  confirmationSecret: z.string().optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -113,6 +114,7 @@ function load(): Config {
     maxUploadMb: parsePositiveInt(process.env.AVITO_MCP_MAX_UPLOAD_MB, 15),
     confirmationMode: (process.env.AVITO_MCP_CONFIRMATION_MODE as ConfirmationMode | undefined) ?? 'money_public',
     confirmationTtlSec: parsePositiveInt(process.env.AVITO_MCP_CONFIRMATION_TTL_SEC, 900),
+    confirmationSecret: process.env.AVITO_MCP_CONFIRMATION_SECRET,
   };
 
   const parsed = ConfigSchema.safeParse(raw);
