@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-05-25
+
+CI hygiene release. No code changes, no breaking changes.
+
+### Added
+- **`npm audit` job in CI** (`audit-level=high`, `--omit=dev`, `continue-on-error: true`). Runs only on push to main — non-blocking by design, just a warning signal in the Actions tab.
+- **`gitleaks` job in CI** — scans every push and PR for committed secrets. Uses the official `gitleaks/gitleaks-action@v2`. `continue-on-error` so it doesn't block obviously-clean PRs but always reports.
+- **`tsconfig.scripts.json`** + `npm run typecheck:scripts` — type-checks `scripts/` (was excluded from the main `tsconfig.json`). Now wired into CI before `npm run build`. Catches type errors in `scripts/generate-manifest.ts` which is critical for the publish pipeline.
+- **Manifest snapshot test** (`test/manifest-snapshot.test.ts`) — asserts exact `tool_count`, `counts_by_risk` (sensitive: 3, read: 77, write: 43, money: 9, public: 10, unknown: 0) and snapshots the full tool roster. Silent drift now fails CI loudly. Re-snapshot with `npm test -- -u` after intentional tool additions/reclassifications.
+- **CI now generates the manifest** before tests, and the tarball-verify step **fails if `dist/manifest.json` is missing** from the published artifact.
+
+### Tests
+79 passing (was 74). +5 snapshot/invariant assertions.
+
 ## [0.4.0] - 2026-05-25
 
 "Sensitive surface + upload guard + confirmation flow" — the safety hardening pass recommended by the v0.3.0 audit. Three new gates added on top of v0.3.0's mode + allow/deny system:
@@ -211,6 +225,7 @@ Avito provides separate APIs for the following verticals; their swagger specs ar
 ### Fixed
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
 
+[0.4.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.4.1
 [0.4.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.4.0
 [0.3.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.3.0
 [0.2.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.2.1

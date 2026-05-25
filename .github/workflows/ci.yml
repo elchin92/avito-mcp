@@ -21,7 +21,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
+      - run: npm run typecheck:scripts
       - run: npm run build
+      - run: npm run generate:manifest
       - run: npm test
       - name: Verify npm tarball contents
         run: |
@@ -31,3 +33,37 @@ jobs:
             echo "ERROR: sensitive file would be published to npm"
             exit 1
           fi
+          # Fail if dist/manifest.json missing (must be regenerated in prepack)
+          if ! grep -q 'dist/manifest.json' /tmp/pack.log; then
+            echo "ERROR: dist/manifest.json missing from tarball"
+            exit 1
+          fi
+
+  audit:
+    runs-on: ubuntu-latest
+    # Non-blocking — supply-chain warning, not gate. Run only on push to main
+    # to avoid blocking external PRs on transient registry/dep issues.
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+      - run: npm ci
+      - name: npm audit (production deps)
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    # Light secret scan on every push and PR — catches credentials accidentally
+    # committed to source. Uses gitleaks-action which is widely used and free.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
