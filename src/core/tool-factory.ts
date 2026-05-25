@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { ZodRawShape } from 'zod';
 
 import type { Config } from '../config.js';
@@ -17,6 +17,24 @@ export interface ToolContext {
 }
 
 export type ProfileIdKey = 'user_id' | 'userId';
+
+/**
+ * Семантика воздействия tool на боевой аккаунт. Используется для:
+ *   - AVITO_SAFE_MODE=read-only — блокирует всё, что не `read`
+ *   - MCP ToolAnnotations (readOnlyHint / destructiveHint / idempotentHint) — клиенты типа
+ *     Claude Desktop / Cursor показывают эти подсказки в UI и могут спросить подтверждение
+ *
+ * Категории:
+ *   - `read`   — только чтение, без побочных эффектов. GET и POST-as-query (analytics).
+ *   - `write`  — меняет данные пользователя, но без денежных затрат и без visibility клиентам.
+ *                Drafts, settings, internal stock, разрешения и пр.
+ *   - `money`  — тратит деньги с баланса (VAS, promotion, CPA bids).
+ *   - `public` — видно клиентам или внешним сторонам: отправка сообщения, ответ на отзыв,
+ *                смена цены/статуса объявления.
+ *
+ * Default if omitted: `write` (fail-closed для safe-mode).
+ */
+export type ToolRisk = 'read' | 'write' | 'money' | 'public';
 
 /**
  * Декларативное описание одного MCP tool, обёртывающего HTTP-вызов Avito API.
@@ -68,6 +86,24 @@ export interface ToolSpec<I extends ZodRawShape = ZodRawShape> {
   injectProfileId?: ProfileIdKey;
   /** Имя для группировки в rate-limiter (по умолчанию — первый сегмент пути). */
   domain?: string;
+  /**
+   * Семантика воздействия. См. {@link ToolRisk}. Default — `'write'` (fail-closed для safe-mode).
+   * Все GET-tool'ы и POST-as-query (analytics, статистика) должны быть явно `'read'`.
+   */
+  risk?: ToolRisk;
+}
+
+/** MCP ToolAnnotations выводятся из ToolRisk детерминированно. */
+function riskToAnnotations(risk: ToolRisk): ToolAnnotations {
+  switch (risk) {
+    case 'read':
+      return { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
+    case 'write':
+      return { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
+    case 'money':
+    case 'public':
+      return { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
+  }
 }
 
 /**
@@ -87,8 +123,23 @@ export function defineTool<I extends ZodRawShape>(
   spec: ToolSpec<I>,
 ): void {
   const inputSchema = spec.input ?? ({} as I);
+  const risk: ToolRisk = spec.risk ?? 'write';
+  const annotations = riskToAnnotations(risk);
 
   const handler = async (rawArgs: Record<string, unknown>): Promise<CallToolResult> => {
+    if (process.env.AVITO_SAFE_MODE === 'read-only' && risk !== 'read') {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text:
+              `Tool '${spec.name}' (risk=${risk}) blocked by AVITO_SAFE_MODE=read-only. ` +
+              `Unset AVITO_SAFE_MODE or set it to a different value to allow non-read tools.`,
+          },
+        ],
+      };
+    }
     try {
       const args = rawArgs ?? {};
       const { pathParams, query, body } = splitArgs(args, spec, ctx);
@@ -117,8 +168,12 @@ export function defineTool<I extends ZodRawShape>(
 
   // SDK типизирует callback через internal BaseToolCallback с собственными inferred CallToolResult,
   // несовместимым с публичным CallToolResult-типом. Касаемся только сигнатуры — runtime OK.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  server.registerTool(spec.name, { description: spec.description, inputSchema }, handler as any);
+  server.registerTool(
+    spec.name,
+    { description: spec.description, inputSchema, annotations },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handler as any,
+  );
 }
 
 function splitArgs(

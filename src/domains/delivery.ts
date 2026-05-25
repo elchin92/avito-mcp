@@ -25,6 +25,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_create_announcement_3pl',
+    risk: 'write',
     description: 'Создание анонса посылки в СД (для партнёров служб доставки).',
     method: 'POST',
     path: '/createAnnouncement',
@@ -46,6 +47,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_cancel_announcement_3pl',
+    risk: 'write',
     description: 'Отмена анонса посылки в СД.',
     method: 'POST',
     path: '/cancelAnnouncement',
@@ -59,6 +61,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_create_parcel',
+    risk: 'write',
     description: 'Создание посылки в боевой системе доставки. barcodes — штрихкоды.',
     method: 'POST',
     path: '/createParcel',
@@ -73,6 +76,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_sandbox_create_announcement',
+    risk: 'write',
     description: '[SANDBOX] Создание анонса в тестовой среде Avito.',
     method: 'POST',
     path: '/delivery-sandbox/announcements/create',
@@ -94,6 +98,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_sandbox_track_announcement',
+    risk: 'read',
     description: '[SANDBOX] Трекинг события анонса.',
     method: 'POST',
     path: '/delivery-sandbox/announcements/track',
@@ -110,6 +115,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_custom_area_schedule',
+    risk: 'write',
     description:
       '[SANDBOX] Установка графика работы зоны доставки на определённый день. ' +
       'Перезаливка перезаписывает старое расписание.',
@@ -128,6 +134,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_sandbox_cancel_parcel',
+    risk: 'write',
     description: '[SANDBOX] Отмена тестовой посылки. actor: sender/receiver.',
     method: 'POST',
     path: '/delivery-sandbox/cancelParcel',
@@ -141,6 +148,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_check_confirmation_code',
+    risk: 'read',
     description: '[SANDBOX] Проверка кода подтверждения посылки.',
     method: 'POST',
     path: '/delivery-sandbox/order/checkConfirmationCode',
@@ -154,6 +162,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_set_order_properties',
+    risk: 'write',
     description: '[SANDBOX] Изменение параметров доставки (свойств) посылки.',
     method: 'POST',
     path: '/delivery-sandbox/order/properties',
@@ -167,6 +176,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_set_order_real_address',
+    risk: 'write',
     description: '[SANDBOX] Установка фактического адреса приёма/возврата посылки.',
     method: 'POST',
     path: '/delivery-sandbox/order/realAddress',
@@ -180,6 +190,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_tracking',
+    risk: 'read',
     description: '[SANDBOX] Отправка события трекинга в систему Avito.',
     method: 'POST',
     path: '/delivery-sandbox/order/tracking',
@@ -202,6 +213,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_prohibit_order_acceptance',
+    risk: 'write',
     description: '[SANDBOX] Запрет приёма посылки от отправителя.',
     method: 'POST',
     path: '/delivery-sandbox/prohibitOrderAcceptance',
@@ -214,6 +226,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_get_sorting_center',
+    risk: 'read',
     description: '[SANDBOX] Список сортировочных центров.',
     method: 'GET',
     path: '/delivery-sandbox/sorting-center',
@@ -223,6 +236,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_sorting_center',
+    risk: 'write',
     description: '[SANDBOX] Загрузка сортировочных центров.',
     method: 'POST',
     path: '/delivery-sandbox/tariffs/sorting-center',
@@ -235,6 +249,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_areas_sandbox',
+    risk: 'write',
     description: '[SANDBOX] Загрузка областей доставки для тарифа.',
     method: 'POST',
     path: '/delivery-sandbox/tariffs/{tariff_id}/areas',
@@ -249,6 +264,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_tags_to_sorting_center',
+    risk: 'write',
     description: '[SANDBOX] Установка тегов сортировочным центрам (своим/чужим).',
     method: 'POST',
     path: '/delivery-sandbox/tariffs/{tariff_id}/tagged-sorting-centers',
@@ -263,6 +279,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_terminals_sandbox',
+    risk: 'write',
     description: '[SANDBOX] Загрузка терминалов (ПВЗ) для тарифа.',
     method: 'POST',
     path: '/delivery-sandbox/tariffs/{tariff_id}/terminals',
@@ -277,6 +294,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_update_terms',
+    risk: 'write',
     description: '[SANDBOX] Обновление зон сроков по тарифу.',
     method: 'POST',
     path: '/delivery-sandbox/tariffs/{tariff_id}/terms',
@@ -291,6 +309,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_tariff_sandbox_v2',
+    risk: 'write',
     description: '[SANDBOX] Загрузка нового тарифа (v2).',
     method: 'POST',
     path: '/delivery-sandbox/tariffsV2',
@@ -313,6 +332,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_get_task',
+    risk: 'read',
     description: '[SANDBOX] Информация по задаче (taskID из ответа async-операций).',
     method: 'GET',
     path: '/delivery-sandbox/tasks/{task_id}',
@@ -327,6 +347,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_cancel_announcement',
+    risk: 'write',
     description: '[SANDBOX v1] Отправка события об отмене тестового анонса.',
     method: 'POST',
     path: '/delivery-sandbox/v1/cancelAnnouncement',
@@ -341,6 +362,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_cancel_parcel',
+    risk: 'write',
     description: '[SANDBOX v1] Отмена тестовой посылки.',
     method: 'POST',
     path: '/delivery-sandbox/v1/cancelParcel',
@@ -354,6 +376,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_change_parcel',
+    risk: 'write',
     description: '[SANDBOX v1] Создание заявки на изменение данных тестовой посылки.',
     method: 'POST',
     path: '/delivery-sandbox/v1/changeParcel',
@@ -369,6 +392,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_create_announcement',
+    risk: 'write',
     description: '[SANDBOX v1] Создание тестового анонса.',
     method: 'POST',
     path: '/delivery-sandbox/v1/createAnnouncement',
@@ -391,6 +415,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_get_announcement_event',
+    risk: 'read',
     description: '[SANDBOX v1] Последнее событие тестового анонса по ID.',
     method: 'POST',
     path: '/delivery-sandbox/v1/getAnnouncementEvent',
@@ -401,6 +426,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_get_change_parcel_info',
+    risk: 'read',
     description: '[SANDBOX v1] Информация об изменении тестовой посылки по ID заявки.',
     method: 'POST',
     path: '/delivery-sandbox/v1/getChangeParcelInfo',
@@ -411,6 +437,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_get_parcel_info',
+    risk: 'read',
     description: '[SANDBOX v1] Информация о тестовой посылке по ID.',
     method: 'POST',
     path: '/delivery-sandbox/v1/getParcelInfo',
@@ -421,6 +448,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_get_registered_parcel_id',
+    risk: 'read',
     description: '[SANDBOX v1] ID зарегистрированной тестовой посылки по orderID.',
     method: 'POST',
     path: '/delivery-sandbox/v1/getRegisteredParcelID',
@@ -431,6 +459,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_create_sandbox_parcel_v2',
+    risk: 'write',
     description: '[SANDBOX v2] Создание тестовой посылки.',
     method: 'POST',
     path: '/delivery-sandbox/v2/createParcel',
@@ -449,6 +478,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_change_parcel_result',
+    risk: 'write',
     description: 'Отправка результата исполнения заявки на изменение посылки.',
     method: 'POST',
     path: '/delivery/order/changeParcelResult',
@@ -464,6 +494,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_change_parcels',
+    risk: 'write',
     description: '[SANDBOX] Массовое обновление свойств посылок.',
     method: 'POST',
     path: '/sandbox/changeParcels',

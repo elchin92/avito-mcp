@@ -28,6 +28,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_get_orders',
+    risk: 'read',
     description:
       'Список заказов с фильтрами. ids/statuses — массивы строк. dateFrom — Unix timestamp (сек). ' +
       'Пагинация: page+limit.',
@@ -49,6 +50,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_get_courier_delivery_range',
+    risk: 'read',
     description: 'Доступные временные промежутки приезда курьера для заказа.',
     method: 'GET',
     path: '/order-management/1/order/getCourierDeliveryRange',
@@ -62,6 +64,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_download_label',
+    risk: 'read',
     description:
       'Скачать сгенерированный PDF-файл этикетки по taskID (из generateLabels/Extended). ' +
       'Возвращает raw-bytes как text — для бинарного PDF используйте прямой curl с токеном.',
@@ -78,6 +81,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_markings',
+    risk: 'write',
     description:
       '⚠️ ПЕРЕДАЁТ "честный знак" (DataMatrix) для маркировки товара в заказе.',
     method: 'POST',
@@ -97,6 +101,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_accept_return_order',
+    risk: 'public',
     description:
       '⚠️ Выбирает отделение Почты России для получения возврата товара.',
     method: 'POST',
@@ -115,6 +120,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_apply_transition',
+    risk: 'public',
     description:
       '⚠️ ИЗМЕНЯЕТ СТАТУС заказа через transition (например "confirm", "ship", "cancel"). ' +
       'Состав transitions зависит от текущего статуса — см. swagger Управление заказами.json.',
@@ -139,6 +145,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_check_confirmation_code',
+    risk: 'read',
     description:
       'Проверка кода подтверждения заказа (при выдаче через ПВЗ/пункт самовывоза).',
     method: 'POST',
@@ -156,6 +163,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_cnc_set_details',
+    risk: 'write',
     description:
       '⚠️ Подготовка заказа с самовывозом (CnC = click-and-collect). ' +
       'bookingPeriod — период бронирования (часов).',
@@ -177,6 +185,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_set_courier_delivery_range',
+    risk: 'write',
     description:
       '⚠️ Выбор временного промежутка для приезда курьера. Сначала вызовите ' +
       'orders_get_courier_delivery_range для списка доступных интервалов.',
@@ -210,6 +219,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_set_tracking_number',
+    risk: 'public',
     description: '⚠️ Передача трек-номера курьерской службы для заказа.',
     method: 'POST',
     path: '/order-management/1/order/setTrackingNumber',
@@ -226,6 +236,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_generate_labels',
+    risk: 'write',
     description:
       'Создать задачу на генерацию этикеток (до 100 заказов). ' +
       'Возвращает taskID для последующего скачивания через orders_download_label.',
@@ -243,6 +254,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_generate_labels_extended',
+    risk: 'write',
     description:
       'Создать задачу на генерацию этикеток для большого числа заказов (до 1000). ' +
       'Возвращает taskID для последующего скачивания через orders_download_label.',

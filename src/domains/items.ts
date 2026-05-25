@@ -23,6 +23,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_get_items_info',
+    risk: 'read',
     description:
       'Список объявлений авторизованного пользователя — статус, категория, ссылка на сайте. ' +
       'Лимит: 25 запросов в минуту. Не работает с объявлениями сотрудников ' +
@@ -54,6 +55,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_get_item_info',
+    risk: 'read',
     description:
       'Детальная информация по одному объявлению: заголовок, цена, статус, адрес, фото и др.',
     method: 'GET',
@@ -74,6 +76,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_calls_stats',
+    risk: 'read',
     description:
       'Статистика звонков по объявлениям за период (всего/новые/отвеченные/новые отвеченные, ' +
       'в разрезе дней). Период dateFrom..dateTo в формате YYYY-MM-DD. ' +
@@ -100,6 +103,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_vas_prices',
+    risk: 'read',
     description:
       'Информация о стоимости услуг продвижения (VAS) и доступных значках для заданных объявлений. ' +
       'Принимает массив ID объявлений. Используйте перед покупкой VAS, чтобы узнать цену.',
@@ -123,6 +127,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_item_stats_shallow',
+    risk: 'read',
     description:
       'Поверхностная статистика по объявлениям за период (просмотры, контакты). ' +
       'dateFrom/dateTo — YYYY-MM-DD. periodGrouping: day|week|month. ' +
@@ -157,6 +162,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_item_analytics',
+    risk: 'read',
     description:
       'Расширенная аналитика по объявлениям (views, contacts, presenceSpending и др.) с группировкой и сортировкой. ' +
       'Поддерживает фильтры по категориям и сотрудникам. limit ≤ 1000.',
@@ -206,6 +212,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_account_spendings',
+    risk: 'read',
     description:
       'Статистика расходов профиля (по типам услуг — vas/cpa/tariff и т.п.) за период. ' +
       'Поддерживает группировку и фильтры по категориям/сотрудникам.',
@@ -247,6 +254,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_update_price',
+    risk: 'public',
     description:
       '⚠️ ИЗМЕНЯЕТ ЦЕНУ объявления (целое число в рублях). ' +
       'Подтверждайте у пользователя перед вызовом на боевом аккаунте.',
@@ -266,6 +274,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_put_item_vas',
+    risk: 'money',
     description:
       '⚠️ ПЛАТНОЕ. Применяет одну дополнительную услугу (VAS) к объявлению — тратит деньги с баланса. ' +
       'vas_id — slug услуги (highlight, xl, premium, vip, ...). Сначала вызовите items_post_vas_prices.',
@@ -287,6 +296,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_put_item_vas_package_v2',
+    risk: 'money',
     description:
       '⚠️ ПЛАТНОЕ. Применяет пакет услуг VAS к объявлению — тратит деньги. ' +
       'package_id — идентификатор пакета.',
@@ -308,6 +318,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_apply_vas',
+    risk: 'money',
     description:
       '⚠️ ПЛАТНОЕ. Применяет несколько услуг продвижения (slugs) и/или стикеры (stickers) ' +
       'к одному объявлению — тратит деньги.',

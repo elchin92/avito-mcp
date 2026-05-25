@@ -17,6 +17,7 @@ export const register: DomainRegister = (server, ctx) => {
   // 1. client_credentials — получение app-токена (то же, что делает TokenStore автоматически).
   defineTool(server, ctx, {
     name: 'auth_get_access_token',
+    risk: 'read',
     description:
       'OAuth 2.0 client_credentials: получить access_token приложения. ' +
       'Возвращает {access_token, expires_in (сек), token_type}. ' +
@@ -40,6 +41,7 @@ export const register: DomainRegister = (server, ctx) => {
   // 2. authorization_code — обмен кода авторизации на токен пользователя.
   defineTool(server, ctx, {
     name: 'auth_get_access_token_authorization_code',
+    risk: 'read',
     description:
       'OAuth 2.0 authorization_code: обмен кода авторизации (полученного после редиректа ' +
       'с https://avito.ru/oauth) на access_token + refresh_token для работы от лица пользователя. ' +
@@ -69,6 +71,7 @@ export const register: DomainRegister = (server, ctx) => {
   // 3. refresh_token — обновление токена пользователя.
   defineTool(server, ctx, {
     name: 'auth_refresh_access_token_authorization_code',
+    risk: 'read',
     description:
       'OAuth 2.0 refresh_token: обновление истёкшего access_token пользователя через refresh_token. ' +
       'Возвращает новые {access_token, refresh_token, expires_in, scope, token_type}. ' +

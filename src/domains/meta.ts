@@ -15,6 +15,12 @@ export const register: DomainRegister = (server, ctx) => {
         'сгруппированные по логическим доменам API (core, messenger, items и т.д.). ' +
         'Полезно для диагностики "почему меня троттлят" — Avito выставляет лимит на минуту.',
       inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async (): Promise<CallToolResult> => {
       const snaps = ctx.client.rateLimiter.getStatus();

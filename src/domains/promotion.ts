@@ -18,6 +18,7 @@ const ItemBudget = z
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'promotion_get_bbip_forecasts_by_items_v1',
+    risk: 'read',
     description: 'BBIP. Прогноз эффекта продвижения для списка объявлений (просмотры, контакты).',
     method: 'POST',
     path: '/promotion/v1/items/services/bbip/forecasts/get',
@@ -30,6 +31,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'promotion_get_bbip_suggests_by_items_v1',
+    risk: 'read',
     description: 'BBIP. Рекомендуемые варианты бюджета продвижения для списка объявлений.',
     method: 'POST',
     path: '/promotion/v1/items/services/bbip/suggests/get',
@@ -42,6 +44,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'promotion_create_bbip_order_for_items_v1',
+    risk: 'money',
     description:
       '⚠️ ПЛАТНОЕ. BBIP — подключение услуги продвижения для объявлений. ' +
       'Списывает деньги с баланса. Подтверждайте у пользователя.',
@@ -56,6 +59,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'promotion_get_dict_of_services_v1',
+    risk: 'read',
     description: 'Справочник всех типов услуг продвижения (slug, название, описание).',
     method: 'POST',
     path: '/promotion/v1/items/services/dict',
@@ -65,6 +69,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'promotion_get_services_by_items_v1',
+    risk: 'read',
     description: 'Список доступных услуг продвижения для конкретных объявлений.',
     method: 'POST',
     path: '/promotion/v1/items/services/get',
@@ -77,6 +82,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'promotion_list_orders_by_user_v1',
+    risk: 'read',
     description: 'Список заявок (orders) на продвижение пользователя с пагинацией.',
     method: 'POST',
     path: '/promotion/v1/items/services/orders/get',
@@ -96,6 +102,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'promotion_get_order_status_v1',
+    risk: 'read',
     description: 'Статус заявки на продвижение по orderId (UUID).',
     method: 'POST',
     path: '/promotion/v1/items/services/orders/status',

@@ -10,6 +10,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'reviews_get_ratings_info_v1',
+    risk: 'read',
     description: 'Информация о рейтинге пользователя (общая оценка, количество отзывов).',
     method: 'GET',
     path: '/ratings/v1/info',
@@ -19,6 +20,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'reviews_get_reviews_v1',
+    risk: 'read',
     description: 'Список активных отзывов на пользователя с пагинацией (offset+limit).',
     method: 'GET',
     path: '/ratings/v1/reviews',
@@ -32,6 +34,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'reviews_create_review_answer_v1',
+    risk: 'public',
     description:
       '⚠️ ПУБЛИЧНЫЙ ответ на отзыв — будет виден покупателям. Подтверждайте у пользователя.',
     method: 'POST',
@@ -46,6 +49,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'reviews_remove_review_answer_v1',
+    risk: 'public',
     description: '⚠️ УДАЛЯЕТ ответ на отзыв.',
     method: 'DELETE',
     path: '/ratings/v1/answers/{answer_id}',

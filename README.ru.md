@@ -425,7 +425,13 @@ Settings → MCP Servers → Add. Поля UI: name `avito`, command `npx`, args
 
 - **Только локальное stdio** — никаких прокси, remote-эндпоинтов, телеметрии.
 - Credentials живут в блоке `env` MCP-клиента или в локальном `.env`. Никуда не отправляются кроме `api.avito.ru`.
-- OAuth-токены кешируются в `$cwd/.avito-token.json` (chmod 600). Удалите файл — следующий запрос автоматически выпишет новый.
+- OAuth-токены кешируются в персональной директории (chmod 600):
+  - Linux: `$XDG_STATE_HOME/avito-mcp/token.json` (≈ `~/.local/state/avito-mcp/token.json`)
+  - macOS: `~/Library/Application Support/avito-mcp/token.json`
+  - Windows: `%APPDATA%\avito-mcp\token.json`
+  - Изменить путь — через `AVITO_TOKEN_FILE`. Удалите файл — следующий запрос автоматически выпишет новый.
+- **`AVITO_SAFE_MODE=read-only`** — установите эту env-переменную и сервер заблокирует любой tool, который пишет данные, тратит деньги или виден клиентам. Сработают только `read` tools (GET и POST-as-query — статистика, аналитика). Рекомендуется для автономных агентов и первого знакомства.
+- Каждый tool помечен одной из четырёх категорий риска (`read` / `write` / `money` / `public`) и отдаётся клиенту как MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`) — поведенческие MCP-клиенты предупредят пользователя перед деструктивным вызовом.
 - **Все 139 tools работают с production** — sandbox у Avito нет. Write-методы тратят деньги или видны клиентам. Безопасные read-only для первого знакомства: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
 - **Нашли уязвимость?** Приватный канал — [SECURITY.md](./SECURITY.md). Не открывайте публичный issue.
 
@@ -459,6 +465,15 @@ npm run build
 ```
 
 Шаблон конфига — в [.mcp.json.example](./.mcp.json.example).
+
+### CLI-флаги
+
+```bash
+npx avito-mcp --version    # вывести текущую версию
+npx avito-mcp --help       # показать env-переменные и usage
+```
+
+Других флагов сознательно нет — все настройки через env (см. вывод `--help`).
 
 ---
 

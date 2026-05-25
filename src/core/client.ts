@@ -1,5 +1,6 @@
 import { logger } from '../logger.js';
 import type { Config } from '../config.js';
+import { USER_AGENT } from '../version.js';
 import { AvitoApiError, AvitoTransportError, type RequestInfo } from './errors.js';
 import { TokenStore } from './token-store.js';
 import { RateLimiter, sleep } from './rate-limiter.js';
@@ -160,7 +161,7 @@ export class AvitoClient {
   }> {
     const headers: Record<string, string> = {
       Accept: 'application/json',
-      'User-Agent': 'avito-mcp/0.1.0',
+      'User-Agent': USER_AGENT,
     };
 
     if (opts.auth !== false) {
@@ -217,7 +218,7 @@ export class AvitoClient {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
           Accept: 'application/json',
-          'User-Agent': 'avito-mcp/0.1.0',
+          'User-Agent': USER_AGENT,
         },
         body: params.toString(),
         signal: ctl.signal,

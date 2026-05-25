@@ -12,6 +12,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'stock_get_stocks_info',
+    risk: 'read',
     description:
       'Получение текущих остатков для списка объявлений. strong_consistency — гарантия свежих данных.',
     method: 'POST',
@@ -33,6 +34,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'stock_update_stocks',
+    risk: 'public',
     description:
       '⚠️ ИЗМЕНЯЕТ остатки в объявлениях. stocks — массив {item_id, stock} (количество товара).',
     method: 'PUT',

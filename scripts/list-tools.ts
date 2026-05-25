@@ -11,16 +11,17 @@ import { config } from '../src/config.js';
 import { AvitoClient } from '../src/core/client.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import { domains } from '../src/meta/domain-registry.js';
+import { PACKAGE_NAME, VERSION } from '../src/version.js';
 
 async function main() {
-  const server = new McpServer({ name: 'avito-mcp', version: '0.1.0' });
+  const server = new McpServer({ name: PACKAGE_NAME, version: VERSION });
   const ctx: ToolContext = { client: new AvitoClient(config), config };
   for (const register of domains) register(server, ctx);
 
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a);
 
-  const client = new Client({ name: 'list-tools', version: '0.1.0' }, { capabilities: {} });
+  const client = new Client({ name: 'list-tools', version: VERSION }, { capabilities: {} });
   await client.connect(b);
 
   const { tools } = await client.listTools();

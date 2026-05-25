@@ -11,6 +11,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'cpa_target_get_bids',
+    risk: 'read',
     description:
       'Детализированная информация о действующих и доступных ценах за целевое действие для одного объявления.',
     method: 'GET',
@@ -24,6 +25,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_target_get_promotions_by_item_ids',
+    risk: 'read',
     description: 'Текущие цены за целевое действие и бюджеты по нескольким объявлениям (batch).',
     method: 'POST',
     path: '/cpxpromo/1/getPromotionsByItemIds',
@@ -36,6 +38,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_target_remove_promotion',
+    risk: 'write',
     description: '⚠️ ОСТАНАВЛИВАЕТ продвижение объявления по itemID.',
     method: 'POST',
     path: '/cpxpromo/1/remove',
@@ -48,6 +51,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_target_save_auto_bid',
+    risk: 'money',
     description:
       '⚠️ Применение автоматической настройки ставки. budgetPenny — бюджет в копейках, ' +
       'budgetType — тип бюджета (см. swagger). actionTypeID — тип целевого действия.',
@@ -68,6 +72,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_target_save_manual_bid',
+    risk: 'money',
     description:
       '⚠️ Применение ручной ставки. bidPenny — ставка за действие в копейках, ' +
       'limitPenny — суточный лимит бюджета в копейках.',

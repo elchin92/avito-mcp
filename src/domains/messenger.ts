@@ -29,6 +29,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_chats_v2',
+    risk: 'read',
     description:
       'Список чатов пользователя. Поддерживает фильтры: только непрочитанные, по объявлениям, ' +
       'по типам чатов (u2i/u2u), пагинация. Возвращает массив чатов с превью последнего сообщения.',
@@ -56,6 +57,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_chat_by_id_v2',
+    risk: 'read',
     description: 'Детали одного чата по chat_id: участники, объявление, контекст, последнее сообщение.',
     method: 'GET',
     path: '/messenger/v2/accounts/{user_id}/chats/{chat_id}',
@@ -70,6 +72,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_messages_v3',
+    risk: 'read',
     description:
       'Список сообщений чата (V3) с пагинацией. Возвращает массив сообщений ' +
       '(текст, изображения, голос, ссылки, дата).',
@@ -95,6 +98,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_voice_files',
+    risk: 'read',
     description:
       'Получение URL для скачивания голосовых сообщений по их идентификаторам. ' +
       'Принимает CSV-список voice_ids.',
@@ -112,6 +116,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_subscriptions',
+    risk: 'read',
     description: 'Текущие подписки на webhooks (URL получения уведомлений + статус).',
     method: 'POST',
     path: '/messenger/v1/subscriptions',
@@ -123,6 +128,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_send_message',
+    risk: 'public',
     description:
       '⚠️ ОТПРАВЛЯЕТ РЕАЛЬНОЕ сообщение клиенту в чат. text до 1000 символов. ' +
       'Подтверждайте у пользователя перед вызовом — это видит покупатель.',
@@ -149,6 +155,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_send_image_message',
+    risk: 'public',
     description:
       '⚠️ ОТПРАВЛЯЕТ изображение в чат. Сначала загрузите изображение через messenger_upload_images ' +
       'и используйте полученный image_id.',
@@ -170,6 +177,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_delete_message',
+    risk: 'public',
     description: '⚠️ УДАЛЯЕТ сообщение в чате. Подтверждайте у пользователя.',
     method: 'POST',
     path: '/messenger/v1/accounts/{user_id}/chats/{chat_id}/messages/{message_id}',
@@ -185,6 +193,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_chat_read',
+    risk: 'write',
     description: 'Помечает все непрочитанные сообщения чата как прочитанные.',
     method: 'POST',
     path: '/messenger/v1/accounts/{user_id}/chats/{chat_id}/read',
@@ -199,6 +208,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_blacklist_v2',
+    risk: 'write',
     description:
       '⚠️ БЛОКИРУЕТ пользователей. users: массив {user_id, context?:{item_id, reason_id}}. ' +
       'reason_id: 1=спам, 2=мошенничество, 3=оскорбления, 4=другое.',
@@ -232,6 +242,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_webhook_v3',
+    risk: 'write',
     description:
       '⚠️ ВКЛЮЧАЕТ webhook-уведомления о новых сообщениях. ' +
       'Требует ПУБЛИЧНЫЙ HTTPS URL, доступный из интернета. Локально не работает.',
@@ -249,6 +260,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_webhook_unsubscribe',
+    risk: 'write',
     description: 'Отключает webhook-подписку по URL.',
     method: 'POST',
     path: '/messenger/v1/webhook/unsubscribe',

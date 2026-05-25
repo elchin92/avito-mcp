@@ -11,6 +11,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'hierarchy_check_ah_user_v1',
+    risk: 'read',
     description: 'Статус пользователя в Иерархии Аккаунтов (главный аккаунт / сотрудник / нет в иерархии).',
     method: 'GET',
     path: '/checkAhUserV1',
@@ -20,6 +21,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'hierarchy_get_employees_v1',
+    risk: 'read',
     description: 'Список сотрудников в иерархии аккаунтов компании.',
     method: 'GET',
     path: '/getEmployeesV1',
@@ -29,6 +31,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'hierarchy_list_company_phones_v1',
+    risk: 'read',
     description: 'Список телефонов компании с курсорной пагинацией.',
     method: 'GET',
     path: '/listCompanyPhonesV1',
@@ -41,6 +44,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'hierarchy_link_items_v1',
+    risk: 'write',
     description:
       '⚠️ ПЕРЕПРИВЯЗЫВАЕТ объявления к сотруднику (изменяет владельца). ' +
       'employeeId — ID сотрудника из hierarchy_get_employees_v1.',
@@ -56,6 +60,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'hierarchy_list_items_by_employee_id_v1',
+    risk: 'read',
     description: 'Список объявлений конкретного сотрудника в категории (с курсорной пагинацией).',
     method: 'POST',
     path: '/listItemsByEmployeeIdV1',

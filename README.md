@@ -425,8 +425,14 @@ Also out of scope: `authorization_code` OAuth flow (no public redirect URI on a 
 
 - **Local stdio only** — no proxy, no remote endpoints, no telemetry.
 - Credentials live in your MCP client's `env` block or local `.env`. They're never sent anywhere except `api.avito.ru`.
-- OAuth tokens cached at `$cwd/.avito-token.json` (chmod 600). Delete the file to force a refresh.
-- **All 139 tools hit production** — Avito has no sandbox. Write methods cost real money or are visible to real customers. Read-only safe tools for first runs: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
+- OAuth tokens cached in a per-user state directory (chmod 600):
+  - Linux: `$XDG_STATE_HOME/avito-mcp/token.json` (≈ `~/.local/state/avito-mcp/token.json`)
+  - macOS: `~/Library/Application Support/avito-mcp/token.json`
+  - Windows: `%APPDATA%\avito-mcp\token.json`
+  - Override with `AVITO_TOKEN_FILE`. Delete the file to force a refresh.
+- **`AVITO_SAFE_MODE=read-only`** — set this env var and the server blocks every tool that writes data, costs money, or is visible to customers. Only `read` tools (GETs and POST-as-query analytics) execute. Recommended for unattended agents and first runs.
+- Every tool is marked with one of four risk levels (`read` / `write` / `money` / `public`) and exposed as MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`) so well-behaved clients can warn before destructive calls.
+- **All 139 tools hit production** — Avito has no sandbox. Write methods cost real money or are visible to real customers. Safe read-only tools for first runs: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
 - **Found a security issue?** Private reporting via [SECURITY.md](./SECURITY.md) — don't open a public issue.
 
 ---
@@ -459,6 +465,15 @@ Then point your MCP client at:
 ```
 
 A template config is in [.mcp.json.example](./.mcp.json.example).
+
+### CLI flags
+
+```bash
+npx avito-mcp --version    # print the installed version
+npx avito-mcp --help       # show env vars + usage
+```
+
+The server has no other flags by design — all knobs are env vars (see `--help` output).
 
 ---
 

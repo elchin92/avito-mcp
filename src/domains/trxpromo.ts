@@ -13,6 +13,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'trxpromo_get_commissions',
+    risk: 'read',
     description:
       'Проверка доступности продвижения и размера комиссий для объявлений. ' +
       'Это GET с body — нестандартно, но именно так в swagger Avito.',
@@ -27,6 +28,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'trxpromo_apply',
+    risk: 'money',
     description:
       '⚠️ ЗАПУСКАЕТ транзакционное продвижение для объявлений. ' +
       'items: массив {itemId, ...} — см. swagger.',
@@ -44,6 +46,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'trxpromo_cancel',
+    risk: 'write',
     description: '⚠️ ОСТАНАВЛИВАЕТ транзакционное продвижение для объявлений.',
     method: 'POST',
     path: '/trx-promo/1/cancel',

@@ -18,6 +18,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'msg_discounts_open_api_available',
+    risk: 'read',
     description:
       'Информация об объявлениях для рассылки скидок: для каких можно делать рассылку, ' +
       'и какие у них доступные параметры.',
@@ -32,6 +33,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'msg_discounts_open_api_multi_create',
+    risk: 'write',
     description:
       'Создание (черновика) массовой рассылки скидок для списка объявлений. ' +
       'После создания — узнайте цену через msg_discounts_open_api_tariff_info, ' +
@@ -47,6 +49,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'msg_discounts_open_api_multi_confirm',
+    risk: 'money',
     description:
       '⚠️ ОТПРАВЛЯЕТ и ОПЛАЧИВАЕТ рассылку скидок — клиенты получат сообщения, со счёта спишутся деньги. ' +
       'Подтверждайте у пользователя перед вызовом!',
@@ -69,6 +72,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'msg_discounts_open_api_stats',
+    risk: 'read',
     description:
       'Статистика отправленных рассылок скидок за период (показы, переходы, конверсии).',
     method: 'POST',
@@ -83,6 +87,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'msg_discounts_open_api_tariff_info',
+    risk: 'read',
     description:
       'Информация о тарифе рассылки скидок — текущая цена за отправку, доступные опции.',
     method: 'POST',

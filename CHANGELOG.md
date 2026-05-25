@@ -3,6 +3,34 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-05-25
+
+"Safe by default" — risk classification, safe-mode, and a real CLI.
+
+### Added
+- **`AVITO_SAFE_MODE=read-only`** — env var that blocks every tool with risk other than `read`. Lets you hand the MCP server to an unattended agent (cron, multi-agent runtime) without it accidentally spending money, sending messages, or changing prices. Block fires before any HTTP request — Avito never sees the call.
+- **Tool risk classification** — every one of the 138 swagger-backed tools (and the `meta_get_rate_limits` tool) is now tagged with one of four risks: `read` (78), `write` (40), `money` (9), `public` (11). Default for unclassified tools is `write` (fail-closed).
+- **MCP `ToolAnnotations`** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) — derived from the risk field and sent to the MCP client on `tools/list`. Behaving clients (Claude Desktop, Cursor, etc.) can now warn users before destructive calls.
+- **CLI flags** — `avito-mcp --version` and `avito-mcp --help`. `--help` lists every recognised env var, including the new `AVITO_SAFE_MODE`. Both flags exit without loading `.env`, so they work even before credentials are configured.
+- New `src/version.ts` — single source of truth that reads `package.json` at runtime. No more hard-coded version strings.
+- 8 new unit tests covering risk classification and the safe-mode guard (39 tests total, up from 31).
+
+### Changed
+- **Breaking-ish: default OAuth token file location moved out of `process.cwd()`.** Previously `./.avito-token.json`, which leaked tokens into whatever directory the MCP client happened to spawn the server in (project dirs, IDE workspaces, sync folders). New default is a per-user state directory:
+  - Linux: `$XDG_STATE_HOME/avito-mcp/token.json` (defaults to `~/.local/state/avito-mcp/token.json`)
+  - macOS: `~/Library/Application Support/avito-mcp/token.json`
+  - Windows: `%APPDATA%\avito-mcp\token.json`
+  Override with `AVITO_TOKEN_FILE`. If you had a token cached in cwd, the server will simply request a fresh one on first call (OAuth tokens are short-lived, no migration needed).
+- `User-Agent` header on every outbound request now reads `avito-mcp/<actual-version>` instead of the previously hardcoded `avito-mcp/0.1.0`. Same fix in `scripts/list-tools.ts` and the MCP `serverInfo` block — all version drift between `package.json` and runtime is now eliminated.
+- `.env.example` documents `AVITO_SAFE_MODE`, `AVITO_BASE_URL`, and the new token file location.
+
+### Fixed
+- **Version drift** between `package.json` and `src/server.ts` / `src/core/client.ts` / `scripts/list-tools.ts` (all three had `0.1.0` hardcoded since the original release). Fixes the misleading `serverInfo.version` field that broke issue triage.
+
+### Notes
+- The `read` classification covers GETs and POST-as-query endpoints (analytics, statistics, balance, info). Anything that mutates state, costs money, or is visible to customers is `write` / `money` / `public` respectively.
+- `AVITO_SAFE_MODE` is opt-in. Without it, every tool runs as before — this is **not** a behavioural change for existing users.
+
 ## [0.1.4] - 2026-05-25
 
 Community health files.
@@ -65,6 +93,7 @@ Avito provides separate APIs for the following verticals; their swagger specs ar
 ### Fixed
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
 
+[0.2.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.2.0
 [0.1.4]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.4
 [0.1.3]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.3
 [0.1.2]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.2
