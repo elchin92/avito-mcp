@@ -1,0 +1,419 @@
+{
+  "components": {
+    "headers": {
+      "X-RateLimit-Limit": {
+        "description": "Количество запросов в минуту",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "X-RateLimit-Remaining": {
+        "description": "Доступное количество запросов в текущем временном окне",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      }
+    },
+    "parameters": {
+      "authHeader": {
+        "description": "Токен для авторизации",
+        "in": "header",
+        "name": "Authorization",
+        "required": true,
+        "schema": {
+          "example": "Bearer ACCESS_TOKEN",
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "badRequest": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Bad request"
+      },
+      "forbidden": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Forbidden"
+      },
+      "internalError": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Internal Error"
+      },
+      "notFound": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Not found"
+      },
+      "timeout": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Timeout"
+      },
+      "tooManyRequests": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/tooManyRequestsError"
+            }
+          }
+        },
+        "description": "Too Many Requests"
+      },
+      "unauthorized": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Unauthorized"
+      }
+    },
+    "schemas": {
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "description": "Текст ошибки",
+            "example": "Что-то пошло не так",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "tooManyRequestsError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 429,
+                "format": "int32",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": {
+              "cpa-auction:bids": "Управление ставками"
+            },
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "description": "Методы для работы с сервисом CPA-аукционов.\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\n",
+    "title": "CPA-аукцион",
+    "version": "1"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/auction/1/bids": {
+      "get": {
+        "description": "Метод позволяет получать доступные ставки (ставка указана в копейках), а также показывает действующую ставку и время ее действия (если время действия не указано значит ставка действует бессрочно)по юзеру.\nМаксимальное количество запросов в минуту - 200.\n",
+        "operationId": "getUserBids",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          },
+          {
+            "description": "Идентификатор последнего объявления в предыдущей пачке (по умолчанию 0)",
+            "in": "query",
+            "name": "fromItemID",
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Кол-во объявлений в пачке (максимум 200)",
+            "in": "query",
+            "name": "batchSize",
+            "schema": {
+              "default": 200,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "description": "Информация о ставке для объявления",
+                        "properties": {
+                          "availablePrices": {
+                            "items": {
+                              "description": "Доступная ставка",
+                              "properties": {
+                                "goodness": {
+                                  "description": "Показатель \"хорошести\" цены",
+                                  "example": 0,
+                                  "type": "integer"
+                                },
+                                "pricePenny": {
+                                  "description": "Цена в копейках",
+                                  "example": 120000,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "pricePenny",
+                                "goodness"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "expirationTime": {
+                            "description": "Время истечения срока действия ставки (RFC3339)",
+                            "example": "2023-06-29T12:34:34+03:00",
+                            "type": "string"
+                          },
+                          "itemID": {
+                            "description": "Идентификатор объявления",
+                            "example": 123456789,
+                            "type": "integer"
+                          },
+                          "pricePenny": {
+                            "description": "Текущая цена в копейках",
+                            "example": 147000,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "itemID",
+                          "pricePenny",
+                          "expirationTime",
+                          "availablePrices"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/tooManyRequestsError"
+                }
+              }
+            },
+            "description": "Превышено допустимое количество запросов",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "cpa-auction:bids"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение информации о действующих и доступных ставках"
+      },
+      "post": {
+        "description": "Метод позволяет сохранить для объявлений ставку (ставка указана в копейках) и время ее действия. Доступные ставки можно получить с помощью метода getUserBids \nМаксимальное число идентификаторов объявления в запросе = 200.\nМаксимальное количество запросов в минуту - 200.\n",
+        "operationId": "saveItemBids",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "items": {
+                    "items": {
+                      "description": "Ставка по объявлению",
+                      "properties": {
+                        "expirationTime": {
+                          "description": "Время окончания действия ставки в формате RFC3339 (2022-06-29T12:34:34+03:00). Отсутствие поля либо null означает бесконечно действующую ставку",
+                          "example": "2023-06-29T12:34:34+03:00",
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "itemID": {
+                          "description": "Идентификатор объявления",
+                          "example": 123456789,
+                          "type": "integer"
+                        },
+                        "pricePenny": {
+                          "description": "Цена в копейках",
+                          "example": 147000,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "itemID",
+                        "pricePenny"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 200,
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "items"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/tooManyRequestsError"
+                }
+              }
+            },
+            "description": "Превышено допустимое количество запросов",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "cpa-auction:bids"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Сохранение новых ставок"
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "# API CPA-аукцион - это набор методов для получения действующих и доступных аукционных ставок пользователя на Авито а также их изменения Через API CPA-аукцион можно организовать интеграцию между CPA-аукцион Авито и сторонней системой в обе стороны\nОписание API произведено в формате [**Swagger 3.0**](https://github.com/OAI/OpenAPI-Specification/blob/master/versions/3.0.0.md).\nВы можете использовать данный файл для ознакомления с методами API, а также для генерации базового кода для работы с API на удобном для вас языке программирования с помощью утилиты\n[**Swagger Codegen**](https://swagger.io/swagger-codegen/) или online сервиса [**Swagger Editor**](https://editor.swagger.io/).\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\nПо всем вопросам работы с API необходимо обращаться в Службу Поддержки профессиональных инструментов:\n\n<li>телефон: <b>+7 495 777-10-66</b></li>\n<li>email: <a href=\"mailto:supportautoload@avito.ru\">supportautoload@avito.ru</a></li>\n\n# Типы авторизации\nДля использования данного API запрос должен быть авторизован. В данный момент API Авито использует следующие механизмы авторизации. <!-- ReDoc-Inject: <security-definitions> -->\n",
+      "name": "CPA-аукцион",
+      "x-displayName": "CPA-аукцион"
+    }
+  ]
+}

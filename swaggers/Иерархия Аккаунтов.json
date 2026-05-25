@@ -1,0 +1,953 @@
+{
+  "components": {
+    "parameters": {
+      "X-Oauth-Flow": {
+        "description": "Выбранный флоу авторизации по протоколу OAuth 2.0 (client_credentials/authorization_code)",
+        "example": "authorization_code",
+        "in": "header",
+        "name": "X-Oauth-Flow",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "X-Oauth-Scopes": {
+        "description": "Список зон доступа, полученных приложением",
+        "example": "ah:access",
+        "in": "header",
+        "name": "X-Oauth-Scopes",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "authHeader": {
+        "description": "Токен для авторизации",
+        "in": "header",
+        "name": "Authorization",
+        "required": true,
+        "schema": {
+          "example": "Bearer ACCESS_TOKEN",
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "CompanyPhonesResult": {
+        "properties": {
+          "result": {
+            "properties": {
+              "cursor": {
+                "description": "Курсор следующей страницы. Если не вернулся, список закончился.",
+                "nullable": true,
+                "type": "string"
+              },
+              "phones": {
+                "description": "массив номеров телефонов",
+                "items": {
+                  "example": "75003670850",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "GetEmployeesResult": {
+        "description": "Данные сотрудников иерархии для компании",
+        "items": {
+          "properties": {
+            "email": {
+              "description": "Email сотрудника иерархии",
+              "example": "aristarh@example.com",
+              "nullable": true,
+              "type": "string"
+            },
+            "employeeId": {
+              "description": "Идентификатор сотрудника иерархии",
+              "example": 10800,
+              "type": "integer"
+            },
+            "isChief": {
+              "description": "Признак того, что пользователь является руководителем",
+              "example": true,
+              "type": "boolean"
+            },
+            "name": {
+              "description": "Имя сотрудника иерархии в компании",
+              "example": "Аристарх Евгеньевич",
+              "nullable": true,
+              "type": "string"
+            },
+            "phones": {
+              "description": "номера телефонов",
+              "items": {
+                "example": "75003670850",
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "employeeId"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "LinkItems": {
+        "properties": {
+          "employeeId": {
+            "description": "Идентификатор сотрудника, к которому прилинкуются объявления",
+            "example": 10800,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "itemIds": {
+            "description": "Список идентификаторов объявлений для линковки (max 50)",
+            "example": [
+              1023900,
+              1090112,
+              3610765
+            ],
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "itemIds",
+          "employeeId"
+        ],
+        "type": "object"
+      },
+      "ListItemsByEmployeeIdBody": {
+        "properties": {
+          "categoryId": {
+            "description": "Идентификатор категории объявления",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "employeeId": {
+            "description": "Идентификатор сотрудника, к которому прилинкованы объявления",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "lastItemId": {
+            "description": "Идентификатор объявления для пагинации по курсору",
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "employeeId",
+          "categoryId"
+        ],
+        "type": "object"
+      },
+      "ListItemsByEmployeeIdResult": {
+        "description": "Список объявлений по сотруднику компании",
+        "properties": {
+          "hasNext": {
+            "description": "Можно пагинировать дальше по списку",
+            "type": "boolean"
+          },
+          "items": {
+            "description": "Список идентификаторов объявлений",
+            "items": {
+              "description": "Идентификатор объявления",
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "hasNext",
+          "items"
+        ],
+        "type": "object"
+      },
+      "OpenApiError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "message": {
+                "description": "Текст ошибки",
+                "example": "Пользователь не авторизован",
+                "type": "string"
+              },
+              "slug": {
+                "description": "Кодовое название ошибки",
+                "example": "user_unauthorized",
+                "type": "string"
+              },
+              "type": {
+                "description": "Тип ошибки",
+                "example": "authorization_error",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "slug"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](/api-catalog/auth/documentation#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": {
+              "ah:access": "Взаимодействие с иерархией аккаунтов"
+            },
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "email": "supportautoload@avito.ru"
+    },
+    "description": "API для взаимодействия с иерархией аккаунтов в Авито\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\n",
+    "title": "Иерархия Аккаунтов",
+    "version": "1"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/checkAhUserV1": {
+      "get": {
+        "description": "Ручка для получения информации по ИА для пользователя",
+        "operationId": "checkAhUserV1",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Данные пользователя о статусе в иерархии аккаунтов",
+                  "properties": {
+                    "avitoCompanyId": {
+                      "description": "ИД компании, к которой принадлежит сотрудник",
+                      "nullable": true,
+                      "type": "integer"
+                    },
+                    "isChief": {
+                      "description": "Признак того, что пользователь является руководителем",
+                      "type": "boolean"
+                    },
+                    "isCompany": {
+                      "description": "Признак того, что пользователь является компанией",
+                      "type": "boolean"
+                    },
+                    "isEmployee": {
+                      "description": "Признак того, что пользователь является сотрудником",
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "message": {
+                          "title": "Текст ошибки",
+                          "type": "string"
+                        },
+                        "slug": {
+                          "title": "Кодовое название ошибки",
+                          "type": "string"
+                        },
+                        "type": {
+                          "title": "Тип ошибки",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "slug"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "message": {
+                          "title": "Текст ошибки",
+                          "type": "string"
+                        },
+                        "slug": {
+                          "title": "Кодовое название ошибки",
+                          "type": "string"
+                        },
+                        "type": {
+                          "title": "Тип ошибки",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "slug"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка метода API"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "ah:access"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение информации о статусе пользователя в ИА"
+      },
+      "parameters": [
+        {
+          "description": "Токен для авторизации",
+          "in": "header",
+          "name": "Authorization",
+          "required": true,
+          "schema": {
+            "example": "Bearer ACCESS_TOKEN",
+            "type": "string"
+          }
+        },
+        {
+          "description": "список зон доступа, полученных приложением",
+          "example": "ah:access",
+          "in": "header",
+          "name": "X-Oauth-Scopes",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "description": "выбранный флоу авторизации по протоколу OAuth 2.0 (client_credentials/authorization_code)",
+          "example": "authorization_code",
+          "in": "header",
+          "name": "X-Oauth-Flow",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/getEmployeesV1": {
+      "get": {
+        "description": "Для взаимодействия с иерархией аккаунтов необходимо приобрести тариф в [личном кабинете](https://www.avito.ru/paid-services/listing-fees).\n",
+        "operationId": "getEmployeesV1",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetEmployeesResult"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "message": {
+                          "description": "Текст ошибки",
+                          "example": "Пользователь не авторизован",
+                          "type": "string"
+                        },
+                        "slug": {
+                          "description": "Кодовое название ошибки",
+                          "example": "user_unauthorized",
+                          "type": "string"
+                        },
+                        "type": {
+                          "description": "Тип ошибки",
+                          "example": "authorization_error",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "slug"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "message": {
+                          "description": "Текст ошибки",
+                          "example": "Error while processing request. Please, contact support",
+                          "type": "string"
+                        },
+                        "slug": {
+                          "description": "Кодовое название ошибки",
+                          "example": "server",
+                          "type": "string"
+                        },
+                        "type": {
+                          "description": "Тип ошибки",
+                          "example": "server",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "slug"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка метода API"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "ah:access"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение списка сотрудников иерархии"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/X-Oauth-Scopes"
+        },
+        {
+          "$ref": "#/components/parameters/X-Oauth-Flow"
+        }
+      ]
+    },
+    "/linkItemsV1": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/X-Oauth-Scopes"
+        },
+        {
+          "$ref": "#/components/parameters/X-Oauth-Flow"
+        }
+      ],
+      "post": {
+        "description": "Для взаимодействия с иерархией аккаунтов необходимо приобрести тариф в [личном кабинете](https://www.avito.ru/paid-services/listing-fees).\n",
+        "operationId": "linkItemsV1",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkItems"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Успешный ответ"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "message": {
+                          "description": "Текст ошибки",
+                          "example": "Некорректные данные",
+                          "type": "string"
+                        },
+                        "slug": {
+                          "description": "Кодовое название ошибки",
+                          "example": "validation",
+                          "type": "string"
+                        },
+                        "type": {
+                          "description": "Тип ошибки",
+                          "example": "bad_data",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "slug"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Ошибка валидации"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "message": {
+                          "description": "Текст ошибки",
+                          "example": "Пользователь не авторизован",
+                          "type": "string"
+                        },
+                        "slug": {
+                          "description": "Кодовое название ошибки",
+                          "example": "user_unauthorized",
+                          "type": "string"
+                        },
+                        "type": {
+                          "description": "Тип ошибки",
+                          "example": "authorization_error",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "slug"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "message": {
+                          "description": "Текст ошибки",
+                          "example": "Перелинковка айтемов не доступна",
+                          "type": "string"
+                        },
+                        "slug": {
+                          "description": "Кодовое название ошибки",
+                          "example": "forbidden_link_items",
+                          "type": "string"
+                        },
+                        "type": {
+                          "description": "Тип ошибки",
+                          "example": "link_items",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "slug"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Перелинковка айтема недоступна"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "message": {
+                          "description": "Текст ошибки",
+                          "example": "Error while processing request. Please, contact support",
+                          "type": "string"
+                        },
+                        "slug": {
+                          "description": "Кодовое название ошибки",
+                          "example": "server",
+                          "type": "string"
+                        },
+                        "type": {
+                          "description": "Тип ошибки",
+                          "example": "server",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "slug"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка метода API"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "ah:access"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Прикрепление сотрудника иерархии к объявлениям, перезакрепление объявлений между сотрудниками иерархии"
+      }
+    },
+    "/listCompanyPhonesV1": {
+      "get": {
+        "description": "Для взаимодействия с иерархией аккаунтов необходимо приобрести тариф в [личном кабинете](https://www.avito.ru/paid-services/listing-fees).\n",
+        "operationId": "listCompanyPhonesV1",
+        "parameters": [
+          {
+            "description": "Курсор для получения следующей страницы. Передается из предыдущего ответа.",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyPhonesResult"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "message": {
+                          "description": "Текст ошибки",
+                          "example": "Пользователь не авторизован",
+                          "type": "string"
+                        },
+                        "slug": {
+                          "description": "Кодовое название ошибки",
+                          "example": "user_unauthorized",
+                          "type": "string"
+                        },
+                        "type": {
+                          "description": "Тип ошибки",
+                          "example": "authorization_error",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "slug"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "message": {
+                          "description": "Текст ошибки",
+                          "example": "Error while processing request. Please, contact support",
+                          "type": "string"
+                        },
+                        "slug": {
+                          "description": "Кодовое название ошибки",
+                          "example": "server",
+                          "type": "string"
+                        },
+                        "type": {
+                          "description": "Тип ошибки",
+                          "example": "server",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "slug"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка метода API"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "ah:access"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение списка телефонов компании"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/X-Oauth-Scopes"
+        },
+        {
+          "$ref": "#/components/parameters/X-Oauth-Flow"
+        }
+      ]
+    },
+    "/listItemsByEmployeeIdV1": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/X-Oauth-Scopes"
+        },
+        {
+          "$ref": "#/components/parameters/X-Oauth-Flow"
+        },
+        {
+          "description": "Список объявлений запрашивается от имени сотрудника.",
+          "in": "header",
+          "name": "X-Is-Employee",
+          "schema": {
+            "nullable": true,
+            "type": "boolean"
+          }
+        }
+      ],
+      "post": {
+        "description": "Ручка для получения списка объявлений по сотруднику с фильтром по категории объявлений. Получение объявлений по компании недоступно.",
+        "operationId": "listItemsByEmployeeIdV1",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListItemsByEmployeeIdBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListItemsByEmployeeIdResult"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenApiError"
+                }
+              }
+            },
+            "description": "Ошибка валидации"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenApiError"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenApiError"
+                }
+              }
+            },
+            "description": "Перелинковка айтема недоступна"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenApiError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка метода API"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "ah:access"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение списка объявлений по сотруднику"
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "API для взаимодействия с иерархией аккаунтов в Авито\nОписание API произведено в формате [**Swagger 3.0**](https://github.com/OAI/OpenAPI-Specification/blob/master/versions/3.0.0.md).\nВы можете использовать данный файл для ознакомления с методами API, а также для генерации базового\nкода для работы с API на удобном для вас языке программирования с помощью утилиты\n[**Swagger Codegen**](https://swagger.io/swagger-codegen/) или online сервиса [**Swagger Editor**](https://editor.swagger.io/).\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\n\nПо всем вопросам работы с API необходимо обращаться в Службу Поддержки профессиональных инструментов:\n\n<li>телефон: <b>+7 495 777-10-66</b></li>\n<li>email: <a href=\"mailto:supportautoload@avito.ru\">supportautoload@avito.ru</a></li>\n\n# Типы авторизации\nДля использования данного API запрос должен быть авторизован. В данный момент API Авито использует следующие механизмы авторизации.\n\n<!-- ReDoc-Inject: <security-definitions> -->\n\nПодробнее о каждом механизме и его назначении можно прочитать в соответствующем разделе.\n",
+      "name": "Ah",
+      "x-displayName": "Иерархия Аккаунтов"
+    }
+  ]
+}

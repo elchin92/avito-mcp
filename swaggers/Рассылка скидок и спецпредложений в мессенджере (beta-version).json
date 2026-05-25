@@ -1,0 +1,1139 @@
+{
+  "components": {
+    "headers": {
+      "X-RateLimit-Limit": {
+        "description": "Количество запросов в минуту",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "X-RateLimit-Remaining": {
+        "description": "Доступное количество запросов в текущем временном окне",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      }
+    },
+    "parameters": {
+      "openApiAuthHeader": {
+        "description": "Токен для авторизации",
+        "in": "header",
+        "name": "Authorization",
+        "required": true,
+        "schema": {
+          "example": "Bearer ACCESS_TOKEN",
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "openApiAvailableRequestBody": {
+        "properties": {
+          "itemIds": {
+            "description": "список id объявлений",
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "itemIds"
+        ],
+        "type": "object"
+      },
+      "openApiAvailableResponseBody": {
+        "properties": {
+          "items": {
+            "description": "Список объявлений и признаков доступности для них услуги",
+            "items": {
+              "properties": {
+                "isAvailable": {
+                  "description": "доступна ли услуга",
+                  "type": "boolean"
+                },
+                "itemId": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "reason": {
+                  "description": "заполняется, если isAvailable = false",
+                  "nullable": true,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "itemId",
+                "isAvailable"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "openApiBadRequestError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "default": 400,
+                "example": 400,
+                "type": "integer"
+              },
+              "message": {
+                "example": "Bad request",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "code"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "openApiForbiddenError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "default": 403,
+                "example": 403,
+                "type": "integer"
+              },
+              "message": {
+                "example": "Access denied",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "code"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "openApiInternalError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "default": 500,
+                "example": 500,
+                "type": "integer"
+              },
+              "message": {
+                "example": "Internal error",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "code"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "openApiMultiConfirmRequestBody": {
+        "properties": {
+          "dispatches": {
+            "items": {
+              "properties": {
+                "discountValue": {
+                  "description": "Финальный размер скидки (в случае предложения скидки от стоимости)",
+                  "nullable": true,
+                  "type": "integer"
+                },
+                "dispatchId": {
+                  "description": "ID рассылки",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "offerSlug": {
+                  "description": "Slug выбранного варианта предложения для рассылки",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "recipientsCount": {
+                  "description": "Число получателей рассылки",
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "dispatchId",
+                "recipientsCount",
+                "offerSlug"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "expiresAt": {
+            "description": "Дата окончания предложения",
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "openApiMultiConfirmResponseBody": {
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "openApiMultiCreateRequestBody": {
+        "properties": {
+          "itemIds": {
+            "description": "Список id выбранных для рассылки объявлений",
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "itemIds"
+        ],
+        "type": "object"
+      },
+      "openApiMultiCreateResponseBody": {
+        "properties": {
+          "common": {
+            "description": "Общие данные для всех объявлений",
+            "properties": {
+              "offers": {
+                "description": "Список всех предложений по объявлениям",
+                "items": {
+                  "properties": {
+                    "expiresAt": {
+                      "description": "Возможные значения для срока истечения предложения. Формат Unix Timestamp",
+                      "properties": {
+                        "max": {
+                          "description": "Максимальная дата истечения предложения",
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "min": {
+                          "description": "Минимальная дата истечения предложения",
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "min",
+                        "max"
+                      ],
+                      "type": "object"
+                    },
+                    "messagePrice": {
+                      "description": "Стоимость рассылки за одно сообщение. Приходит в VAS сценарии (рассылки не из тарифа)",
+                      "nullable": true,
+                      "type": "integer"
+                    },
+                    "offerText": {
+                      "description": "Текст предложения. Если discount type, то в {{discount}} вставляется скидка",
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "slug": {
+                      "description": "Идентификатор предложения",
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "Тип предложения: discount или text. Будут добавляться новые типы предложений без версионирования метода, нужно предусмотреть фильтрацию offers с неизвестным типом",
+                      "enum": [
+                        "discount",
+                        "text"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "slug",
+                    "expiresAt"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "tariff": {
+                "description": "Информация о текущем тарифе пользователя (если существует)",
+                "nullable": true,
+                "properties": {
+                  "dueDate": {
+                    "description": "Срок действия. Формат: ISO 8601",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "sendsLeft": {
+                    "description": "Осталось рассылок",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "totalSends": {
+                    "description": "Всего рассылок в тарифе",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "dueDate",
+                  "totalSends",
+                  "sendsLeft"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "offers"
+            ],
+            "type": "object"
+          },
+          "dispatches": {
+            "description": "Список созданных рассылок",
+            "items": {
+              "description": "Рассылка и её настройки",
+              "properties": {
+                "availableAudienceCount": {
+                  "description": "Число пользователей, которым можно отправить скидку в данный момент",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "discount": {
+                  "description": "Настройки скидки. Если предложение скидки доступно для объявления",
+                  "properties": {
+                    "maxDiscount": {
+                      "description": "Максимальная сумма скидки на данное объявление. Присутствует в discount type",
+                      "type": "integer"
+                    },
+                    "minDiscount": {
+                      "description": "Минимальная сумма скидки на данное объявление. Присутствует в discount type",
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                },
+                "error": {
+                  "description": "Ошибка создания. Если status - notCreated",
+                  "properties": {
+                    "message": {
+                      "description": "Текст ошибки по объявлению",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "id": {
+                  "description": "Id созданной рассылки",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "item": {
+                  "properties": {
+                    "id": {
+                      "description": "Id объявления",
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "messagePrice": {
+                  "description": "Стоимость рассылки за одно сообщение. Приходит в VAS сценарии (рассылки не из тарифа)",
+                  "nullable": true,
+                  "type": "integer"
+                },
+                "offers": {
+                  "description": "Доступные предложения (их slug) из общего списка",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "status": {
+                  "description": "Статус создания рассылки",
+                  "enum": [
+                    "notCreated",
+                    "created"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "availableAudienceCount",
+                "offers",
+                "item",
+                "messagePrice"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "common",
+          "dispatches"
+        ],
+        "type": "object"
+      },
+      "openApiStatsRequestBody": {
+        "properties": {
+          "dateTimeFrom": {
+            "description": "Время выборки От. RFC3339",
+            "minLength": 1,
+            "type": "string"
+          },
+          "dateTimeTo": {
+            "description": "Время выборки До. RFC3339",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dateTimeFrom",
+          "dateTimeTo"
+        ],
+        "type": "object"
+      },
+      "openApiStatsResponseBody": {
+        "properties": {
+          "stats": {
+            "items": {
+              "nullable": true,
+              "properties": {
+                "accepted": {
+                  "description": "Число принятых покупателями предложений",
+                  "type": "integer"
+                },
+                "count": {
+                  "description": "Число отправленных предложений",
+                  "type": "integer"
+                },
+                "discount": {
+                  "description": "Размер скидки (может отсутствовать)",
+                  "type": "integer"
+                },
+                "expiresAt": {
+                  "description": "Дата окончания срока действия предложения",
+                  "type": "string"
+                },
+                "itemId": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "offerSlug": {
+                  "description": "Тип предложения",
+                  "type": "string"
+                },
+                "price": {
+                  "description": "Общая стоимость рассылки. Приходит 0 при рассылках из тарифа или бесплатных рассылках",
+                  "type": "integer"
+                },
+                "sentAt": {
+                  "description": "Дата отправки рассылки",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "itemId",
+                "offerSlug",
+                "price",
+                "sentAt",
+                "expiresAt",
+                "count",
+                "accepted"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "openApiTariffInfoResponseBody": {
+        "properties": {
+          "tariffInfo": {
+            "description": "Информация о текущем тарифе",
+            "nullable": true,
+            "properties": {
+              "sendsLeft": {
+                "description": "Сколько осталось рассылок в тарифе",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "totalSends": {
+                "description": "Сколько всего рассылок в тарифе (было изначально)",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "totalSends",
+              "sendsLeft"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "openApiUnauthorizedError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "default": 401,
+                "example": 401,
+                "type": "integer"
+              },
+              "message": {
+                "example": "Unauthorized access",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "code"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](/api-catalog/auth/documentation#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": {
+              "special_offers:sending": "Маркетинговые рассылки"
+            },
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {
+              "special_offers:sending": "Маркетинговые рассылки"
+            },
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "email": "supportautoload@avito.ru"
+    },
+    "description": "API для рассылки скидок и спецпредложений покупателям, которые добавили объявления в избранное, получения информации о доступных для применения услуги объявлениях, информации об остатке количества рассылок в тарифе (если тариф подключен).\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://api.avito.ru/docs/public/APITermsOfServiceV1.pdf).**\n",
+    "title": "Рассылка скидок и спецпредложений в мессенджере (beta-version)",
+    "version": "1"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/special-offers/v1/available": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/openApiAuthHeader"
+        }
+      ],
+      "post": {
+        "description": "Позволяет проверить доступность услуги по каждому из переданных объявлений\n",
+        "operationId": "openApiAvailable",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "itemIds": [
+                  392567890,
+                  492569890
+                ]
+              },
+              "schema": {
+                "$ref": "#/components/schemas/openApiAvailableRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "isAvailable": true,
+                      "itemId": 392567890
+                    },
+                    {
+                      "isAvailable": false,
+                      "itemId": 492569890,
+                      "reason": "Для данного объявления услуга недоступна"
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/openApiAvailableResponseBody"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiBadRequestError"
+                }
+              }
+            },
+            "description": "Ошибка валидации входных параметров"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiUnauthorizedError"
+                }
+              }
+            },
+            "description": "Авторизованный user не найден"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiForbiddenError"
+                }
+              }
+            },
+            "description": "Нет доступа к объявлению/-ям"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiInternalError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "special_offers:sending"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение информации об объявлениях",
+        "tags": [
+          "SpecialOffers"
+        ]
+      }
+    },
+    "/special-offers/v1/multiConfirm": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/openApiAuthHeader"
+        }
+      ],
+      "post": {
+        "description": "Подтверждение отправки рассылки и ее оплата (из кошелька Авито)\n",
+        "operationId": "openApiMultiConfirm",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "dispatches": [
+                  {
+                    "discountValue": 50000,
+                    "dispatchId": 76579,
+                    "offerSlug": "price_discount",
+                    "recipientsCount": 5
+                  },
+                  {
+                    "dispatchId": 76581,
+                    "offerSlug": "auto_tires",
+                    "recipientsCount": 5
+                  }
+                ],
+                "expiresAt": 1675976400
+              },
+              "schema": {
+                "$ref": "#/components/schemas/openApiMultiConfirmRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/openApiMultiConfirmResponseBody"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiBadRequestError"
+                }
+              }
+            },
+            "description": "Ошибка валидации входных параметров"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiUnauthorizedError"
+                }
+              }
+            },
+            "description": "Авторизованный user не найден"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": 403,
+                    "message": "Недостаточно средств. Пополните кошелек"
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/openApiForbiddenError"
+                }
+              }
+            },
+            "description": "Невозможно подтвердить оплату рассылки"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiInternalError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "special_offers:sending"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Отправка и оплата рассылки",
+        "tags": [
+          "SpecialOffers"
+        ]
+      }
+    },
+    "/special-offers/v1/multiCreate": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/openApiAuthHeader"
+        }
+      ],
+      "post": {
+        "description": "Создание рассылки по нескольким объявлениям, c фиксацией аудитории для рассылки\n",
+        "operationId": "openApiMultiCreate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "itemIds": [
+                  123890775,
+                  233890766
+                ]
+              },
+              "schema": {
+                "$ref": "#/components/schemas/openApiMultiCreateRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "common": {
+                    "offers": [
+                      {
+                        "expiresAt": {
+                          "max": 1678568399,
+                          "min": 1675976400
+                        },
+                        "offerText": "скидку {{discount}}",
+                        "slug": "price_discount",
+                        "type": "discount"
+                      },
+                      {
+                        "expiresAt": {
+                          "max": 1678568399,
+                          "min": 1675976400
+                        },
+                        "offerText": "шины в подарок к покупке автомобиля",
+                        "slug": "auto_tires",
+                        "type": "text"
+                      }
+                    ]
+                  },
+                  "dispatches": [
+                    {
+                      "availableAudienceCount": 5,
+                      "discount": {
+                        "maxDiscount": 4500,
+                        "minDiscount": 400
+                      },
+                      "error": {},
+                      "id": 76579,
+                      "item": {
+                        "id": 123890775
+                      },
+                      "messagePrice": 10,
+                      "offers": [
+                        "price_discount"
+                      ],
+                      "status": "created"
+                    },
+                    {
+                      "availableAudienceCount": 0,
+                      "discount": {
+                        "maxDiscount": 5750,
+                        "minDiscount": 500
+                      },
+                      "error": {},
+                      "id": 0,
+                      "item": {
+                        "id": 14389997
+                      },
+                      "messagePrice": 15,
+                      "offers": [
+                        "price_discount",
+                        "auto_tires"
+                      ],
+                      "status": "notCreated"
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/openApiMultiCreateResponseBody"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiBadRequestError"
+                }
+              }
+            },
+            "description": "Ошибка валидации входных параметров"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiUnauthorizedError"
+                }
+              }
+            },
+            "description": "Авторизованный user не найден"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiForbiddenError"
+                }
+              }
+            },
+            "description": "Нельзя отправить рассылку по объявлению/-ям"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiInternalError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "special_offers:sending"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Создание рассылки",
+        "tags": [
+          "SpecialOffers"
+        ]
+      }
+    },
+    "/special-offers/v1/stats": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/openApiAuthHeader"
+        }
+      ],
+      "post": {
+        "description": "Статистика по отправленным рассылкам за период\n",
+        "operationId": "openApiStats",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "dateTimeFrom": "2022-02-24T05:00:00Z",
+                "dateTimeTo": "2022-03-01T12:00:00Z"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/openApiStatsRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "stats": [
+                    {
+                      "accepted": 10,
+                      "count": 78,
+                      "expiresAt": "2022-03-01T23:59:59Z",
+                      "itemId": 392567890,
+                      "offerSlug": "subsidized_mortgage",
+                      "price": 15000,
+                      "sentAt": "2022-02-27T15:04:05Z"
+                    },
+                    {
+                      "accepted": 2,
+                      "count": 7,
+                      "discount": 3000,
+                      "expiresAt": "2022-03-05T23:59:59Z",
+                      "itemId": 492567450,
+                      "offerSlug": "price_discount",
+                      "price": 9000,
+                      "sentAt": "2022-02-28T11:18:00Z"
+                    },
+                    {
+                      "accepted": 21,
+                      "count": 200,
+                      "discount": 170000,
+                      "expiresAt": "2022-03-11T23:59:59Z",
+                      "itemId": 6992567450,
+                      "offerSlug": "price_discount",
+                      "price": 0,
+                      "sentAt": "2022-03-01T01:58:26Z"
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/openApiStatsResponseBody"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiBadRequestError"
+                }
+              }
+            },
+            "description": "Ошибка валидации входных параметров"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiUnauthorizedError"
+                }
+              }
+            },
+            "description": "Авторизованный user не найден"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiInternalError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "special_offers:sending"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение статистики",
+        "tags": [
+          "SpecialOffers"
+        ]
+      }
+    },
+    "/special-offers/v1/tariffInfo": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/openApiAuthHeader"
+        }
+      ],
+      "post": {
+        "description": "Узнать сколько осталось рассылок в тарифе (если активного тарифа нет, придет пустой ответ)\n",
+        "operationId": "openApiTariffInfo",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "tariffInfo": {
+                    "sendsLeft": 392,
+                    "totalSends": 1000
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/openApiTariffInfoResponseBody"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiUnauthorizedError"
+                }
+              }
+            },
+            "description": "Авторизованный user не найден"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openApiInternalError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "special_offers:sending"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение информации о тарифе",
+        "tags": [
+          "SpecialOffers"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "Методы API для рассылки скидок и спецпредложений в мессенджере.\n",
+      "name": "Sending special offers",
+      "x-displayName": "Рассылка скидок и спецпредложений"
+    }
+  ]
+}

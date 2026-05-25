@@ -1,0 +1,763 @@
+{
+  "components": {
+    "headers": {
+      "X-RateLimit-Limit": {
+        "description": "Количество запросов в минуту",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "X-RateLimit-Remaining": {
+        "description": "Доступное количество запросов в текущем временном окне",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      }
+    },
+    "parameters": {
+      "authHeader": {
+        "description": "Токен для авторизации",
+        "in": "header",
+        "name": "Authorization",
+        "required": true,
+        "schema": {
+          "example": "Bearer ACCESS_TOKEN",
+          "type": "string"
+        }
+      },
+      "chatId": {
+        "description": "Идентификатор чата (клиента)",
+        "in": "path",
+        "name": "chat_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "itemIds": {
+        "in": "query",
+        "name": "item_ids",
+        "schema": {
+          "example": "12345,6789",
+          "type": "string"
+        }
+      },
+      "limit": {
+        "description": "Количество сообщений на странице (положительное число больше 0 и меньше 100)",
+        "in": "query",
+        "name": "limit",
+        "schema": {
+          "default": 100,
+          "example": 50,
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "messageId": {
+        "description": "Идентификатор сообщения",
+        "in": "path",
+        "name": "message_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "offset": {
+        "in": "query",
+        "name": "offset",
+        "schema": {
+          "default": 0,
+          "example": 50,
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "page": {
+        "description": "Номер страницы",
+        "in": "query",
+        "name": "page",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "pathItemId": {
+        "description": "Идентификатор объявления на сайте",
+        "in": "path",
+        "name": "item_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "pathUserId": {
+        "description": "Номер пользователя в Личном кабинете Авито",
+        "in": "path",
+        "name": "user_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "pathVacancyId": {
+        "description": "Идентификатор вакансии на сайте",
+        "in": "path",
+        "name": "vacancy_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "perPage": {
+        "description": "Количество ресурсов на страницу",
+        "in": "query",
+        "name": "per_page",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "unreadOnly": {
+        "in": "query",
+        "name": "unread_only",
+        "schema": {
+          "example": true,
+          "type": "boolean"
+        }
+      },
+      "userId": {
+        "description": "Идентификатор пользователя (клиента)",
+        "in": "path",
+        "name": "user_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      }
+    },
+    "schemas": {
+      "Balance": {
+        "properties": {
+          "bonus": {
+            "description": "Сумма бонусных средств",
+            "format": "float",
+            "type": "number"
+          },
+          "real": {
+            "description": "Сумма реальных денежных средств",
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "RequestOperationsHistory": {
+        "properties": {
+          "dateTimeFrom": {
+            "description": "Время выборки от. Не далее одного года в прошлое от текущего момента.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "dateTimeTo": {
+            "description": "Время выборки до (диапазон между dateTimeFrom и dateTimeTo должен быть не более одной недели)",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dateTimeFrom",
+          "dateTimeTo"
+        ],
+        "type": "object"
+      },
+      "ResponseOperationsHistory": {
+        "properties": {
+          "result": {
+            "properties": {
+              "operations": {
+                "items": {
+                  "$ref": "#/components/schemas/ResponseOperationsHistoryItem"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "ResponseOperationsHistoryItem": {
+        "properties": {
+          "amountBonus": {
+            "description": "Сумма бонусов",
+            "type": "number"
+          },
+          "amountRub": {
+            "description": "Сумма реальных денег",
+            "type": "number"
+          },
+          "amountTotal": {
+            "description": "Сумма операции всего",
+            "type": "number"
+          },
+          "itemId": {
+            "description": "ID объявления",
+            "type": "integer"
+          },
+          "operationName": {
+            "description": "Название операции",
+            "type": "string"
+          },
+          "operationType": {
+            "description": "Тип операции",
+            "enum": [
+              "списание в счёт кредита",
+              "постоплата",
+              "внесение CPA аванса",
+              "возврат CPA аванса",
+              "аванс",
+              "возврат аванса",
+              "списание средств с кошелька в доход (не за оказанные услуги)",
+              "сжигание бонусов",
+              "резервирование под автостратегию",
+              "возврат зарезервированных средств под автостатегию на кошелек",
+              "резервирование средств под услугу",
+              "возврат зарзервированных средств на баланс кошелька",
+              "признание выручки",
+              "списание остатка",
+              "сторно",
+              "опротестовано",
+              "чарджбэк"
+            ],
+            "type": "string"
+          },
+          "paidAt": {
+            "description": "Дата/время оплаты операции",
+            "type": "string"
+          },
+          "serviceId": {
+            "description": "Код типа услуги",
+            "type": "integer"
+          },
+          "serviceName": {
+            "description": "Название конкретного типа услуги",
+            "type": "string"
+          },
+          "serviceType": {
+            "description": "Тип услуги",
+            "enum": [
+              "vas",
+              "perf_vas",
+              "lf",
+              "cv",
+              "tariff",
+              "subscription",
+              "cpa",
+              "bundle"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Дата/время совершения операции",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UserInfoSelf": {
+        "properties": {
+          "email": {
+            "description": "Email пользователя",
+            "example": "example@domain.com",
+            "type": "string"
+          },
+          "id": {
+            "description": "Идентификатор пользователя",
+            "example": 94235311,
+            "format": "int32",
+            "type": "integer"
+          },
+          "name": {
+            "description": "Имя пользователя",
+            "example": "Петр",
+            "type": "string"
+          },
+          "phone": {
+            "description": "первый верифицированный телефон пользователя",
+            "example": 71112223344,
+            "type": "string"
+          },
+          "phones": {
+            "description": "все верифицированные номера телефонов",
+            "items": {
+              "example": "71112223344",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "profile_url": {
+            "description": "Ссылка на профиль пользователя",
+            "example": "https://avito.ru/user/7d04cdc3a12726eee72c6851c953ac54/profile",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "authError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 401,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Unauthorized",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "forbiddenError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 403,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Forbidden",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "notFoundError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 404,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Not found",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "serviceError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 500,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Описание ошибки",
+                "example": "Error while processing request. Please, contact support",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "serviceUnavailableError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 503,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Описание ошибки",
+                "example": "Service temporarily unavailable. Please, contact support",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](/api-catalog/auth/documentation#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": {
+              "autoload:reports": "Получение отчетов Автозагрузки",
+              "items:apply_vas": "Применение дополнительных услуг",
+              "items:info": "Получение информации об объявлениях",
+              "job:applications": "Получение информации об откликах на вакансии",
+              "job:cv": "Получение информации резюме",
+              "job:write": "Изменение объявлений вертикали Работа",
+              "messenger:read": "Чтение сообщений в мессенджере Авито",
+              "messenger:write": "Модифицирование сообщений в мессенджере Авито",
+              "short_term_rent:read": "Получение информации об объявлениях краткосрочной аренды",
+              "short_term_rent:write": "Изменение объявлений краткосрочной аренды",
+              "stats:read": "Получение статистики объявлений",
+              "user:read": "Получение информации о пользователе",
+              "user_balance:read": "Получение баланса пользователя",
+              "user_operations:read": "Получение истории операций пользователя"
+            },
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "email": "supportautoload@avito.ru"
+    },
+    "description": "API для получения баланса кошелька пользователя, истории операций и инфорации об авторизованном пользователе\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**    \n",
+    "title": "Информация о пользователе",
+    "version": "1"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/core/v1/accounts/operations_history/": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ],
+      "post": {
+        "description": "Возвращает список операций пользователя (списания/пополнение кошелька - деньги и бонусы) за определенный временной период (задается пользователем)\n",
+        "operationId": "postOperationsHistory",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "dateTimeFrom": "2020-04-01T00:00:00",
+                "dateTimeTo": "2020-04-08T00:00:00"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/RequestOperationsHistory"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "operations": [
+                    {
+                      "amountBonus": 0,
+                      "amountRub": 119,
+                      "amountTotal": 119,
+                      "itemId": 1853257996,
+                      "operationName": "Резервирование средств. Услуга «Сделать XL объявлением» для объявления №1853257996",
+                      "operationType": "резервирование средств под услугу",
+                      "serviceId": 16,
+                      "serviceName": "Сделать XL объявлением",
+                      "serviceType": "vas",
+                      "updatedAt": "2020-04-27T10:51:50.012436+03:00"
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseOperationsHistory"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/authError"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/serviceError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка метода API"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/serviceUnavailableError"
+                }
+              }
+            },
+            "description": "Метод API временно недоступен"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "user_operations:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение истории операций пользователя",
+        "tags": [
+          "User"
+        ]
+      }
+    },
+    "/core/v1/accounts/self": {
+      "get": {
+        "description": "Возвращает идентификатор пользователя и его регистрационные данные\n",
+        "operationId": "getUserInfoSelf",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserInfoSelf"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/authError"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/forbiddenError"
+                }
+              }
+            },
+            "description": "Неверный Token/Oauth Scope"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/serviceError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка метода API"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/serviceUnavailableError"
+                }
+              }
+            },
+            "description": "Метод API временно недоступен"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "user:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение информации об авторизованном пользователе",
+        "tags": [
+          "User"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ]
+    },
+    "/core/v1/accounts/{user_id}/balance/": {
+      "get": {
+        "description": "Возвращает сумму реальных денежных средств в кошельке, а также сумму бонусных средств\n",
+        "operationId": "getUserBalance",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Balance"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/authError"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/forbiddenError"
+                }
+              }
+            },
+            "description": "Неверный Token/Oauth Scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/notFoundError"
+                }
+              }
+            },
+            "description": "Неверный user_id в запросе"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/serviceError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка метода API"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/serviceUnavailableError"
+                }
+              }
+            },
+            "description": "Метод API временно недоступен"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "user_balance:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение баланса кошелька пользователя",
+        "tags": [
+          "User"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/userId"
+        }
+      ]
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "# API для получения баланса кошелька пользователя, истории операций и инфорации об авторизованном пользователе\nОписание API произведено в формате [**Swagger 3.0**](https://github.com/OAI/OpenAPI-Specification/blob/master/versions/3.0.0.md).\nВы можете использовать данный файл для ознакомления с методами API, а также для генерации базового кода для работы с API на удобном для вас языке программирования с помощью утилиты [**Swagger Codegen**](https://swagger.io/swagger-codegen/) или online сервиса [**Swagger Editor**](https://editor.swagger.io/).\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\nПо всем вопросам работы с API необходимо обращаться в Службу Поддержки профессиональных инструментов:\n<li>телефон: <b>+7 495 777-10-66</b></li>\n<li>email: <a href=\"mailto:supportautoload@avito.ru\">supportautoload@avito.ru</a></li>\n\n# Типы авторизации\n\nДля использования данного API запрос должен быть авторизован. В данный момент API Авито использует следующие механизмы авторизации.\n\n<!-- ReDoc-Inject: <security-definitions> -->\n\nПодробнее о каждом механизме и его назначении можно прочитать в соответствующем разделе.\n",
+      "name": "User",
+      "x-displayName": "Пользователь"
+    }
+  ]
+}

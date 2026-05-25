@@ -1,0 +1,1956 @@
+{
+  "components": {
+    "headers": {
+      "X-RateLimit-Limit": {
+        "description": "Количество запросов в минуту",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "X-RateLimit-Remaining": {
+        "description": "Доступное количество запросов в текущем временном окне",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      }
+    },
+    "parameters": {
+      "authHeader": {
+        "description": "Токен для авторизации",
+        "in": "header",
+        "name": "Authorization",
+        "required": true,
+        "schema": {
+          "example": "Bearer ACCESS_TOKEN",
+          "type": "string"
+        }
+      },
+      "chatId": {
+        "description": "Идентификатор чата (клиента)",
+        "in": "path",
+        "name": "chat_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "chatTypes": {
+        "description": "Фильтрация возвращаемых чатов. \n* u2i — чаты по объявлениям;\n* u2u — чаты между пользователями;\n* a2u — чаты между пользователями и Авито;\n",
+        "in": "query",
+        "name": "chat_types",
+        "schema": {
+          "default": "u2i",
+          "example": "u2i,u2u",
+          "items": {
+            "enum": [
+              "u2i",
+              "u2u",
+              "a2u"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "imageId": {
+        "description": "Идентификатор загруженного изображения",
+        "in": "path",
+        "name": "image_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "itemIds": {
+        "description": "Получение чатов только по объявлениям с указанными item_id",
+        "in": "query",
+        "name": "item_ids",
+        "schema": {
+          "example": "12345,6789",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "limit": {
+        "description": "Количество сообщений / чатов для запроса",
+        "in": "query",
+        "name": "limit",
+        "schema": {
+          "default": 100,
+          "example": 50,
+          "format": "int32",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "messageId": {
+        "description": "Идентификатор сообщения",
+        "in": "path",
+        "name": "message_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "offset": {
+        "description": "Сдвиг сообщений / чатов для запроса",
+        "in": "query",
+        "name": "offset",
+        "schema": {
+          "default": 0,
+          "example": 50,
+          "format": "int32",
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "unreadOnly": {
+        "description": "При значении true метод возвращает только непрочитанные чаты",
+        "in": "query",
+        "name": "unread_only",
+        "schema": {
+          "default": false,
+          "example": true,
+          "type": "boolean"
+        }
+      },
+      "userId": {
+        "description": "Идентификатор пользователя (клиента)",
+        "in": "path",
+        "name": "user_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "voiceIds": {
+        "description": "Получение файлов голосовых сообщений с указанными voice_id",
+        "in": "query",
+        "name": "voice_ids",
+        "required": true,
+        "schema": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      }
+    },
+    "schemas": {
+      "Chat": {
+        "properties": {
+          "context": {
+            "description": "Сопутствующая к чату информация, несвязанная с мессенджером напрямую",
+            "properties": {
+              "type": {
+                "description": "Тип контекста, определяет значение и смысл других полей в объекте контекста",
+                "example": "item",
+                "type": "string"
+              },
+              "value": {
+                "properties": {
+                  "id": {
+                    "description": "ID объявления",
+                    "example": 1768287444,
+                    "format": "int32",
+                    "type": "integer"
+                  },
+                  "images": {
+                    "description": "Изображения с карточки объявления",
+                    "properties": {
+                      "count": {
+                        "description": "Число изображений",
+                        "example": 4,
+                        "format": "int32",
+                        "type": "integer"
+                      },
+                      "main": {
+                        "properties": {
+                          "140x105": {
+                            "description": "Изображение в формате 140х105",
+                            "example": "https://01-img-staging-proxy.k.avito.ru/140x105/5815183159.jpg",
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "price_string": {
+                    "description": "Цена в объявлении, с указанием валюты",
+                    "example": "300 000 ₽",
+                    "type": "string"
+                  },
+                  "status_id": {
+                    "description": "Статус объявления, например 20 — объявление удалено",
+                    "example": 10,
+                    "format": "int32",
+                    "type": "integer"
+                  },
+                  "title": {
+                    "example": "Mazda 3 2008",
+                    "type": "string"
+                  },
+                  "url": {
+                    "description": "Ссылка на объявление",
+                    "example": "https://avito.ru/moskva/avtomobili/mazda_3_2008_1768287444",
+                    "type": "string"
+                  },
+                  "user_id": {
+                    "description": "ID автора объявления",
+                    "example": 141906442,
+                    "format": "int32",
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "created": {
+            "description": "Unix-timestamp времени создания чата",
+            "example": 1571412836,
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "description": "Уникальный идентификтор чата",
+            "type": "string"
+          },
+          "last_message": {
+            "properties": {
+              "author_id": {
+                "description": "Ссылка на профиль пользователя в Авито",
+                "example": 94235311,
+                "format": "int32",
+                "type": "integer"
+              },
+              "content": {
+                "$ref": "#/components/schemas/MessageContent"
+              },
+              "created": {
+                "description": "Unix-timestamp времени отправки сообщения",
+                "example": 1571654040,
+                "format": "int32",
+                "type": "integer"
+              },
+              "direction": {
+                "description": "\"in\" для входящих сообщений, \"out\" для исходящих",
+                "example": "out",
+                "type": "string"
+              },
+              "id": {
+                "description": "Уникальный идентификатор сообщения",
+                "type": "string"
+              },
+              "type": {
+                "description": "Тип контента в сообщений",
+                "example": "link",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "updated": {
+            "description": "Unix-timestamp времени последнего обновления чата",
+            "example": 1571654040,
+            "format": "int32",
+            "type": "integer"
+          },
+          "users": {
+            "items": {
+              "properties": {
+                "id": {
+                  "description": "Уникальный ID пользователя. Обратите внимание на хэширование",
+                  "example": 94235311,
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "name": {
+                  "description": "Имя пользователя",
+                  "example": "Guldan",
+                  "type": "string"
+                },
+                "public_user_profile": {
+                  "properties": {
+                    "avatar": {
+                      "description": "Фотография пользователя (аватар)",
+                      "properties": {
+                        "default": {
+                          "example": "https://www.avito.st/stub_avatars/_/14_256x256.png",
+                          "type": "string"
+                        },
+                        "images": {
+                          "properties": {
+                            "128x128": {
+                              "description": "Аватар в формате 128х128",
+                              "example": "https://www.avito.st/stub_avatars/_/14_128x128.png",
+                              "type": "string"
+                            },
+                            "192x192": {
+                              "description": "Аватар в формате 192х192",
+                              "example": "https://www.avito.st/stub_avatars/_/14_192x192.png",
+                              "type": "string"
+                            },
+                            "24x24": {
+                              "description": "Аватар в формате 24х24",
+                              "example": "https://www.avito.st/stub_avatars/_/14_24x24.png",
+                              "type": "string"
+                            },
+                            "256x256": {
+                              "description": "Аватар в формате 256х256",
+                              "example": "https://www.avito.st/stub_avatars/_/14_256x256.png",
+                              "type": "string"
+                            },
+                            "36x36": {
+                              "description": "Аватар в формате 36х36",
+                              "example": "https://www.avito.st/stub_avatars/_/14_36x36.png",
+                              "type": "string"
+                            },
+                            "48x48": {
+                              "description": "Аватар в формате 48х48",
+                              "example": "https://www.avito.st/stub_avatars/_/14_48x48.png",
+                              "type": "string"
+                            },
+                            "64x64": {
+                              "description": "Аватар в формате 64х64",
+                              "example": "https://www.avito.st/stub_avatars/_/14_64x64.png",
+                              "type": "string"
+                            },
+                            "72x72": {
+                              "description": "Аватар в формате 72х72",
+                              "example": "https://www.avito.st/stub_avatars/_/14_72x72.png",
+                              "type": "string"
+                            },
+                            "96x96": {
+                              "description": "Аватар в формате 96х96",
+                              "example": "https://www.avito.st/stub_avatars/_/14_96x96.png",
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "item_id": {
+                      "description": "ID объявления, выложенного пользователем",
+                      "example": 1768287444,
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "url": {
+                      "description": "Ссылка на профиль пользователя в Авито",
+                      "example": "https://avito.ru/user/db65c00c946dc404e11f14755465453b/profile",
+                      "type": "string"
+                    },
+                    "user_id": {
+                      "description": "Уникальный ID пользователя. Обратите внимание на хэширование",
+                      "example": 94235311,
+                      "format": "int32",
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "Chats": {
+        "properties": {
+          "chats": {
+            "description": "Список чатов",
+            "items": {
+              "$ref": "#/components/schemas/Chat"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "MessageContent": {
+        "description": "Для сообщений типов \"appCall\" \"file\" \"video\" возвращается empty object (данные типы не поддерживаются)",
+        "properties": {
+          "call": {
+            "description": "Объект, описывающий звонок, для сообщения типа call",
+            "nullable": true,
+            "properties": {
+              "status": {
+                "enum": [
+                  "missed"
+                ],
+                "type": "string"
+              },
+              "target_user_id": {
+                "example": 94235311,
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "flow_id": {
+            "description": "Идентификатор чат-бота, отправившего сообщение, для сообщений типа system",
+            "example": "seller_audience_discount",
+            "nullable": true,
+            "type": "string"
+          },
+          "image": {
+            "description": "Объект, описывающий изображение, для сообщения типа image",
+            "nullable": true,
+            "properties": {
+              "sizes": {
+                "description": "объект ключ-значение, где ключи - строки в формате \"ШxВ\" (ширина, высота), а значения - ссылки на изображения",
+                "example": {
+                  "1280x960": "https://img.k.avito.ru/chat/1280x960/5083651369.3e798a9bf88345ae8fe85ff891266b24.jpg",
+                  "140x105": "https://img.k.avito.ru/chat/140x105/5083651369.3e798a9bf88345ae8fe85ff891266b24.jpg",
+                  "32x32": "https://img.k.avito.ru/chat/32x32/5083651369.3e798a9bf88345ae8fe85ff891266b24.jpg",
+                  "640x480": "https://img.k.avito.ru/chat/640x480/5083651369.3e798a9bf88345ae8fe85ff891266b24.jpg"
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "item": {
+            "description": "Объект, описывающий объявление, для сообщения типа item",
+            "nullable": true,
+            "properties": {
+              "image_url": {
+                "example": "https://avito.ru/image_url.webp",
+                "type": "string"
+              },
+              "item_url": {
+                "example": "https://avito.ru/item_url",
+                "type": "string"
+              },
+              "price_string": {
+                "example": "1 232 323 ₽",
+                "nullable": true,
+                "type": "string"
+              },
+              "title": {
+                "example": "Объявление",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "link": {
+            "description": "Объект, описывающий ссылку, для сообщения типа link",
+            "nullable": true,
+            "properties": {
+              "preview": {
+                "nullable": true,
+                "properties": {
+                  "description": {
+                    "example": "Лучшие публикации за последние 24 часа",
+                    "type": "string"
+                  },
+                  "domain": {
+                    "example": "habr.com",
+                    "type": "string"
+                  },
+                  "images": {
+                    "description": "объект ключ-значение, где ключи - строки в формате \"ШxВ\" (ширина, высота), а значения - ссылки на изображения",
+                    "example": {
+                      "1280x960": "https://img.k.avito.ru/chat/1280x960/5083651369.3e798a9bf88345ae8fe85ff891266b24.jpg",
+                      "140x105": "https://img.k.avito.ru/chat/140x105/5083651369.3e798a9bf88345ae8fe85ff891266b24.jpg",
+                      "32x32": "https://img.k.avito.ru/chat/32x32/5083651369.3e798a9bf88345ae8fe85ff891266b24.jpg",
+                      "640x480": "https://img.k.avito.ru/chat/640x480/5083651369.3e798a9bf88345ae8fe85ff891266b24.jpg"
+                    },
+                    "nullable": true,
+                    "type": "object"
+                  },
+                  "title": {
+                    "example": "Лучшие публикации за сутки / Хабр",
+                    "type": "string"
+                  },
+                  "url": {
+                    "example": "https://habr.com/ru/",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "text": {
+                "example": "habr.com",
+                "type": "string"
+              },
+              "url": {
+                "example": "habr.com",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "location": {
+            "description": "Объект, описывающий геометку, для сообщения типа location",
+            "nullable": true,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "house",
+                  "street",
+                  "area",
+                  "..."
+                ],
+                "example": "street",
+                "type": "string"
+              },
+              "lat": {
+                "example": 55.599799,
+                "format": "float",
+                "type": "number"
+              },
+              "lon": {
+                "example": 37.603954,
+                "format": "float",
+                "type": "number"
+              },
+              "text": {
+                "example": "Москва, Варшавское шоссе",
+                "type": "string"
+              },
+              "title": {
+                "example": "Москва, Варшавское шоссе",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "text": {
+            "description": "Текст сообщения, для сообщения типа text",
+            "example": "привет!",
+            "nullable": true,
+            "type": "string"
+          },
+          "voice": {
+            "description": "Объект, описывающий голосовое сообщение, для сообщения типа voice",
+            "nullable": true,
+            "properties": {
+              "voice_id": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "MessageQuote": {
+        "description": "цитируемое сообщение",
+        "properties": {
+          "author_id": {
+            "example": 94235311,
+            "format": "int64",
+            "type": "integer"
+          },
+          "content": {
+            "$ref": "#/components/schemas/MessageContent"
+          },
+          "created": {
+            "example": 1571654040,
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "text",
+              "image",
+              "link",
+              "item",
+              "location",
+              "call",
+              "deleted",
+              "voice",
+              "system"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Messages": {
+        "items": {
+          "properties": {
+            "author_id": {
+              "example": 94235311,
+              "format": "int64",
+              "type": "integer"
+            },
+            "content": {
+              "$ref": "#/components/schemas/MessageContent"
+            },
+            "created": {
+              "example": 1571654040,
+              "format": "int64",
+              "type": "integer"
+            },
+            "direction": {
+              "enum": [
+                "in",
+                "out"
+              ],
+              "example": "out",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "is_read": {
+              "description": "True, если сообщение уже было прочитано запрашиваемым пользователем. Иначе false",
+              "example": true,
+              "type": "boolean"
+            },
+            "quote": {
+              "$ref": "#/components/schemas/MessageQuote"
+            },
+            "read": {
+              "description": "Unix-timestamp времени, когда сообщение было прочитано собеседником",
+              "example": 123,
+              "nullable": true,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "text",
+                "image",
+                "link",
+                "item",
+                "location",
+                "call",
+                "deleted",
+                "voice",
+                "system"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "PayloadStruct": {
+        "properties": {
+          "type": {
+            "description": "Тип сообщения",
+            "example": "message",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/WebhookMessage"
+          }
+        },
+        "type": "object"
+      },
+      "VoiceFiles": {
+        "properties": {
+          "voices_urls": {
+            "additionalProperties": {
+              "example": "https://avito.ru/voice_url",
+              "format": "uri",
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "WebhookMessage": {
+        "properties": {
+          "author_id": {
+            "description": "ID пользователя, отправившего сообщение",
+            "example": 123,
+            "type": "integer"
+          },
+          "chat_id": {
+            "description": "Уникальный идентификатор чата, куда отправлено сообщение",
+            "example": "abc",
+            "type": "string"
+          },
+          "chat_type": {
+            "description": "Тип чата (u2i - чат по объявлению, u2u - чат по профилю пользователя, a2u - чат по профилю пользователя c Авито)",
+            "enum": [
+              "u2i",
+              "u2u",
+              "a2u"
+            ],
+            "example": "u2i",
+            "type": "string"
+          },
+          "content": {
+            "$ref": "#/components/schemas/MessageContent"
+          },
+          "created": {
+            "description": "Unix-timestamp времени создания сообщения",
+            "example": 123,
+            "type": "integer"
+          },
+          "id": {
+            "description": "Уникальный идентификатор сообщения",
+            "example": "abc",
+            "type": "string"
+          },
+          "item_id": {
+            "description": "ID объявления, актуально только для чатов с типом u2i",
+            "example": 123,
+            "nullable": true,
+            "type": "integer"
+          },
+          "published_at": {
+            "description": "Время публикации сообщения в формате RFC3339 в UTC",
+            "example": "1973-03-04T13:33:09Z",
+            "type": "string"
+          },
+          "read": {
+            "description": "Unix-timestamp времени прочтения, если сообщение уже прочитано",
+            "example": 123,
+            "nullable": true,
+            "type": "integer"
+          },
+          "type": {
+            "description": "Тип сообщения",
+            "enum": [
+              "text",
+              "image",
+              "system",
+              "item",
+              "call",
+              "link",
+              "location",
+              "deleted",
+              "appCall",
+              "file",
+              "video",
+              "voice"
+            ],
+            "example": "text",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "ID пользователя, получившего сообщение. Это всегда аккаунт, на который зарегистрирован вебхук",
+            "example": 123,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "addBlacklistRequestBody": {
+        "properties": {
+          "users": {
+            "items": {
+              "properties": {
+                "context": {
+                  "properties": {
+                    "item_id": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "reason_id": {
+                      "description": "причина, по которой блокируем пользователя, 1 - спам, 2 - мошенничество, 3 - оскорбления и хамство, 4 - другая причина",
+                      "enum": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                },
+                "user_id": {
+                  "description": "id пользователя которого хотим заблокировать",
+                  "example": 94235311,
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "authError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 401,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Unauthorized",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "badRequestError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 400,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Bad Request",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "forbiddenError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 403,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Forbidden",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "notFoundError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 404,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Not found",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "purchasingError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 402,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Payment required",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "sendImageMessageRequestBody": {
+        "properties": {
+          "image_id": {
+            "description": "Идентификатор загруженного изображения",
+            "type": "string"
+          }
+        },
+        "required": [
+          "image_id"
+        ],
+        "type": "object"
+      },
+      "sendMessageRequestBody": {
+        "properties": {
+          "message": {
+            "properties": {
+              "text": {
+                "description": "Текст сообщения (максимум 1000 символов)",
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": {
+            "description": "Тип сообщения",
+            "enum": [
+              "text"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "serviceError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 500,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Описание ошибки",
+                "example": "Error while processing request. Please, contact support",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "serviceUnavailableError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 503,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Описание ошибки",
+                "example": "Service temporarily unavailable. Please, contact support",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "validatingError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 400,
+                "format": "int32",
+                "type": "integer"
+              },
+              "fields": {
+                "description": "Информация об ошибке валидации параметров в формате ключ-значение",
+                "nullable": true,
+                "type": "object"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Validation error",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "webhookSubscribeRequestBody": {
+        "properties": {
+          "url": {
+            "description": "Url на который будут отправляться нотификации",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](/api-catalog/auth/documentation#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": {
+              "autoload:reports": "Получение отчетов Автозагрузки",
+              "items:apply_vas": "Применение дополнительных услуг",
+              "items:info": "Получение информации об объявлениях",
+              "job:applications": "Получение информации об откликах на вакансии",
+              "job:cv": "Получение информации резюме",
+              "job:write": "Изменение объявлений вертикали Работа",
+              "messenger:read": "Чтение сообщений в мессенджере Авито",
+              "messenger:write": "Модифицирование сообщений в мессенджере Авито",
+              "short_term_rent:read": "Получение информации об объявлениях краткосрочной аренды",
+              "short_term_rent:write": "Изменение объявлений краткосрочной аренды",
+              "stats:read": "Получение статистики объявлений",
+              "user:read": "Получение информации о пользователе",
+              "user_balance:read": "Получение баланса пользователя",
+              "user_operations:read": "Получение истории операций пользователя"
+            },
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "email": "supportautoload@avito.ru"
+    },
+    "description": "API Мессенджера - набор методов для получения списка чатов пользователя на Авито, получения сообщений в чате, отправки сообщения в чат и др. Через API Мессенджера можно организовать интеграцию между мессенджером Авито и сторонней системой в обе стороны. В Товарах и Работе Messenger API доступен только на уровне подписки «Максимальный». В Услугах Messenger API доступен на уровнях подписки «Расширенный» и  «Максимальный».\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\n",
+    "title": "Мессенджер",
+    "version": "1"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/messenger/v1/accounts/{user_id}/chats/{chat_id}/messages": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/userId"
+        },
+        {
+          "$ref": "#/components/parameters/chatId"
+        }
+      ],
+      "post": {
+        "description": "На данный момент можно отправить только текстовое сообщение\n",
+        "operationId": "postSendMessage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/sendMessageRequestBody"
+              }
+            }
+          },
+          "description": "Отправление сообщения"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "content": {
+                      "properties": {
+                        "text": {
+                          "example": "привет",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "created": {
+                      "example": 1563202313,
+                      "type": "integer"
+                    },
+                    "direction": {
+                      "example": "out",
+                      "type": "string"
+                    },
+                    "id": {
+                      "example": "bdcc5bac2d00345f1cc66fa657813958",
+                      "type": "string"
+                    },
+                    "type": {
+                      "example": "text",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Успешный ответ",
+            "x-examples": {
+              "application/json": {
+                "content": {
+                  "text": "привет!"
+                },
+                "created": 1563202313,
+                "direction": "in",
+                "id": "bdcc5bac2d00345f1cc66fa657813958",
+                "type": "text"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:write"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Отправка сообщения",
+        "tags": [
+          "Messenger"
+        ]
+      }
+    },
+    "/messenger/v1/accounts/{user_id}/chats/{chat_id}/messages/image": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/userId"
+        },
+        {
+          "$ref": "#/components/parameters/chatId"
+        }
+      ],
+      "post": {
+        "description": "Метод используется для отправки сообщения с изображением.\n\nДля отправки сообщения с изображением необходимо передать в запросе id изображения, полученного после загрузки.\n",
+        "operationId": "postSendImageMessage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/sendImageMessageRequestBody"
+              }
+            }
+          },
+          "description": "Вложение с изображением"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "author_id": {
+                      "example": 9623532,
+                      "type": "integer"
+                    },
+                    "content": {
+                      "properties": {
+                        "image": {
+                          "properties": {
+                            "sizes": {
+                              "additionalProperties": {
+                                "type": "string"
+                              },
+                              "example": {
+                                "1280x960": "https://example.hosts.ru/image_1280_960.png",
+                                "140x105": "https://example.hosts.ru/image_140_105.png",
+                                "32x32": "https://example.hosts.ru/image_32_32.png"
+                              },
+                              "type": "object"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "created": {
+                      "example": 1563202313,
+                      "type": "integer"
+                    },
+                    "direction": {
+                      "example": "out",
+                      "type": "string"
+                    },
+                    "id": {
+                      "example": "bdcc5bac2d00345f1cc66fa657813958",
+                      "type": "string"
+                    },
+                    "type": {
+                      "example": "image",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Успешный ответ",
+            "x-examples": {
+              "application/json": {
+                "author_id": "9623532,",
+                "content": {
+                  "image": {
+                    "sizes": {
+                      "1280x960": "https://example.hosts.ru/image_1280_960.png",
+                      "140x105": "https://example.hosts.ru/image_140_105.png",
+                      "32x32": "https://example.hosts.ru/image_32_32.png"
+                    }
+                  }
+                },
+                "created": 1563202313,
+                "direction": "out",
+                "id": "bdcc5bac2d00345f1cc66fa657813958",
+                "type": "image"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:write"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Отправка сообщения с изображением",
+        "tags": [
+          "Messenger"
+        ]
+      }
+    },
+    "/messenger/v1/accounts/{user_id}/chats/{chat_id}/messages/{message_id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/userId"
+        },
+        {
+          "$ref": "#/components/parameters/chatId"
+        },
+        {
+          "$ref": "#/components/parameters/messageId"
+        }
+      ],
+      "post": {
+        "description": "Сообщение не пропадает из истории, а меняет свой тип на deleted.\nУдалять сообщения можно не позднее часа с момента их отправки.\n",
+        "operationId": "deleteMessage",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:write"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Удаление сообщения",
+        "tags": [
+          "Messenger"
+        ]
+      }
+    },
+    "/messenger/v1/accounts/{user_id}/chats/{chat_id}/read": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/userId"
+        },
+        {
+          "$ref": "#/components/parameters/chatId"
+        }
+      ],
+      "post": {
+        "description": "После успешного получения списка сообщений необходимо вызвать этот метод для того, чтобы чат стал прочитанным.\n",
+        "operationId": "chatRead",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "ok": {
+                      "example": true,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Прочитать чат",
+        "tags": [
+          "Messenger"
+        ]
+      }
+    },
+    "/messenger/v1/accounts/{user_id}/getVoiceFiles": {
+      "get": {
+        "description": "Метод используется для получения ссылки на файл с голосовым сообщением по идентификатору voice_id, получаемому из тела сообщения с типом voice.\n\nОсобенности работы с голосовыми сообщениями:\n- Голосовые сообщения Авито используют кодек **[opus](https://ru.wikipedia.org/wiki/Opus_(%D0%BA%D0%BE%D0%B4%D0%B5%D0%BA))** внутри **.mp4** контейнера; \n- Ссылка на голосовое сообщение доступна в течение **одного часа** с момента запроса. Попытка получить файл по ссылке спустя это время приведёт к ошибке. Для восстановления доступа необходимо получить новую ссылку на файл;\n- Как и с обычными сообщениями, получение ссылки на файл доступно только для пользователей, находящихся в беседе, где голосовое сообщение было отправлено;\n",
+        "operationId": "getVoiceFiles",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceFiles"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение голосовых сообщений",
+        "tags": [
+          "Messenger"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/userId"
+        },
+        {
+          "$ref": "#/components/parameters/voiceIds"
+        }
+      ]
+    },
+    "/messenger/v1/accounts/{user_id}/uploadImages": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/userId"
+        }
+      ],
+      "post": {
+        "description": "Метод используется для загрузки изображений в формате JPEG, HEIC, GIF, BMP или PNG.\n\nОсобенности работы с загрузкой изображений:\n- Метод поддерживает только одиночные изображения; для загрузки нескольких картинок необходимо сделать несколько запросов;\n- Максимальный размер файла — 24 МБ;\n- Максимальное разрешение — 75 мегапиксилей;\n",
+        "operationId": "uploadImages",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "uploadfile[]": {
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "uploadfile[]"
+                ],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "example": {
+                    "12345.12345abcdefghijklm": {
+                      "1280x960": "https://example.hosts.ru/image_1280_960.png",
+                      "140x105": "https://example.hosts.ru/image_140_105.png",
+                      "32x32": "https://example.hosts.ru/image_32_32.png"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Успешный ответ",
+            "x-examples": {
+              "application/json": {
+                "12345.12345abcdefghijklm": {
+                  "1280x960": "https://example.hosts.ru/image_1280_960.png",
+                  "140x105": "https://example.hosts.ru/image_140_105.png",
+                  "32x32": "https://example.hosts.ru/image_32_32.png"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:write"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Загрузка изображений",
+        "tags": [
+          "Messenger"
+        ]
+      }
+    },
+    "/messenger/v1/subscriptions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ],
+      "post": {
+        "description": "Получение списка подписок\n",
+        "operationId": "getSubscriptions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "subscriptions": {
+                      "items": {
+                        "properties": {
+                          "url": {
+                            "example": "http://abc",
+                            "type": "string"
+                          },
+                          "version": {
+                            "description": "Версия метода, через который вебхук добавлен. Влияет на формат получаемых данных",
+                            "example": "3",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "url",
+                          "version"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "subscriptions"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Успешный ответ",
+            "x-examples": {
+              "application/json": {
+                "ok": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение подписок (webhooks)",
+        "tags": [
+          "Messenger"
+        ]
+      }
+    },
+    "/messenger/v1/webhook/unsubscribe": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ],
+      "post": {
+        "description": "Отключение уведомлений\n",
+        "operationId": "postWebhookUnsubscribe",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/webhookSubscribeRequestBody"
+              }
+            }
+          },
+          "description": "Url, на который необходимо перестать слать уведомления"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "ok": {
+                      "example": true,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Успешный ответ",
+            "x-examples": {
+              "application/json": {
+                "ok": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Отключение уведомлений (webhooks)",
+        "tags": [
+          "Messenger"
+        ],
+        "x-code-samples": [
+          {
+            "lang": "PHP",
+            "source": "$ch = curl_init(\"https://api.avito.ru/messenger/v1/webhook/unsubscribe\");\ncurl_setopt($ch, CURLOPT_HTTPHEADER, [\n\t\"Content-Type: application/json\",\n\t\"Authorization: Bearer <TOKEN>\",\n]);\ncurl_setopt($ch, CURLOPT_POST, true);\n\ncurl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([\n\t\"url\" => \"https://test.test\",\n], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));\n\ncurl_setopt($ch, CURLOPT_RETURNTRANSFER, true);\n$result = curl_exec($ch);\ncurl_close($ch);"
+          }
+        ]
+      }
+    },
+    "/messenger/v2/accounts/{user_id}/blacklist": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/userId"
+        }
+      ],
+      "post": {
+        "description": "Добавление пользователя в blacklist\n",
+        "operationId": "postBlacklistV2",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/addBlacklistRequestBody"
+              }
+            }
+          },
+          "description": "Добавление пользователя в blacklist"
+        },
+        "responses": {
+          "200": {
+            "description": "Успешный ответ"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:write"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Добавление пользователя в blacklist",
+        "tags": [
+          "Messenger"
+        ]
+      }
+    },
+    "/messenger/v2/accounts/{user_id}/chats": {
+      "get": {
+        "description": "Возвращает список чатов\n",
+        "operationId": "getChatsV2",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chats"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение информации по чатам",
+        "tags": [
+          "Messenger"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/userId"
+        },
+        {
+          "$ref": "#/components/parameters/itemIds"
+        },
+        {
+          "$ref": "#/components/parameters/unreadOnly"
+        },
+        {
+          "$ref": "#/components/parameters/chatTypes"
+        },
+        {
+          "$ref": "#/components/parameters/limit"
+        },
+        {
+          "$ref": "#/components/parameters/offset"
+        }
+      ]
+    },
+    "/messenger/v2/accounts/{user_id}/chats/{chat_id}": {
+      "get": {
+        "description": "Возвращает данные чата и последнее сообщение в нем\n",
+        "operationId": "getChatByIdV2",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chat"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение информации по чату",
+        "tags": [
+          "Messenger"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/userId"
+        },
+        {
+          "$ref": "#/components/parameters/chatId"
+        }
+      ]
+    },
+    "/messenger/v3/accounts/{user_id}/chats/{chat_id}/messages/": {
+      "get": {
+        "description": "Получение списка сообщений.  **Не помечает чат прочитанным.**\nПосле успешного получения списка сообщений необходимо вызвать [метод](https://api.avito.ru/docs/api.html#operation/chatRead), который сделает сообщения прочитанными.\nДля получения новых сообщений в реальном времени используйте [webhooks](https://api.avito.ru/docs/api.html#operation/postWebhookV3)\n",
+        "operationId": "getMessagesV3",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Messages"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение списка сообщений V3",
+        "tags": [
+          "Messenger"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/userId"
+        },
+        {
+          "$ref": "#/components/parameters/chatId"
+        },
+        {
+          "$ref": "#/components/parameters/limit"
+        },
+        {
+          "$ref": "#/components/parameters/offset"
+        }
+      ]
+    },
+    "/messenger/v3/webhook": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ],
+      "post": {
+        "description": "Включение webhook-уведомлений. \n\nСхему JSON приходящего в webhook сообщения можно увидеть в примерах ответов.\n\nПосле регистрации url'а для получения веб-хуков, убедитесь, что он доступен, работает и возвращает статус 200 ОК соблюдая timeout 2s,\nнапример, выполнив запрос:\n\ncurl --connect-timeout 2 <url-вашего-вебхука> -i -d '{}'\n",
+        "operationId": "postWebhookV3",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/webhookSubscribeRequestBody"
+              }
+            }
+          },
+          "description": "Url на который будут отправляться уведомления"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "ok": {
+                      "example": true,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Успешный ответ",
+            "x-examples": {
+              "application/json": {
+                "ok": true
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "id": {
+                      "description": "Уникальный идентификатор сообщения webhooks",
+                      "example": "abc",
+                      "type": "string"
+                    },
+                    "payload": {
+                      "$ref": "#/components/schemas/PayloadStruct"
+                    },
+                    "timestamp": {
+                      "description": "Unix-timestamp времени отправки сообщения webhooks",
+                      "example": 123,
+                      "type": "integer"
+                    },
+                    "version": {
+                      "description": "Версия webhooks",
+                      "example": "v1.1",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "JSON сообщения, который будет приходить в webhook",
+            "x-examples": {
+              "application/json": {
+                "ok": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "messenger:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Включение уведомлений V3 (webhooks)",
+        "tags": [
+          "Messenger"
+        ],
+        "x-code-samples": [
+          {
+            "lang": "PHP",
+            "source": "$ch = curl_init(\"https://api.avito.ru/messenger/v3/webhook\");\ncurl_setopt($ch, CURLOPT_HTTPHEADER, [\n\t\"Content-Type: application/json\",\n\t\"Authorization: Bearer <TOKEN>\",\n]);\ncurl_setopt($ch, CURLOPT_POST, true);\n\ncurl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([\n\t\"url\" => \"https://test.test\",\n], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));\n\ncurl_setopt($ch, CURLOPT_RETURNTRANSFER, true);\n$result = curl_exec($ch);\ncurl_close($ch);"
+          }
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "API для интеграции между мессенджером Авито и сторонней системой в обе стороны.\n",
+      "name": "Messenger",
+      "x-displayName": "Messenger API"
+    }
+  ]
+}

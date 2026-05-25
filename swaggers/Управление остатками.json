@@ -1,0 +1,415 @@
+{
+  "components": {
+    "parameters": {
+      "authHeader": {
+        "description": "Токен для авторизации",
+        "in": "header",
+        "name": "Authorization",
+        "required": true,
+        "schema": {
+          "example": "Bearer ACCESS_TOKEN",
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "badRequest": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/errorMessage"
+            }
+          }
+        },
+        "description": "Bad request"
+      },
+      "forbidden": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/errorMessage"
+            }
+          }
+        },
+        "description": "Forbidden"
+      },
+      "internalError": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/errorMessage"
+            }
+          }
+        },
+        "description": "Internal Error"
+      },
+      "notFound": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/errorMessage"
+            }
+          }
+        },
+        "description": "Not found"
+      },
+      "timeout": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/errorMessage"
+            }
+          }
+        },
+        "description": "Timeout"
+      },
+      "tooManyRequests": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/errorMessage"
+            }
+          }
+        },
+        "description": "Too Many Requests"
+      },
+      "unauthorized": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/unauthError"
+            }
+          }
+        },
+        "description": "Unauthorized"
+      }
+    },
+    "schemas": {
+      "errorMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "description": "Текст ошибки",
+            "example": "Что-то пошло не так",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "stockEditResult": {
+        "properties": {
+          "stocks": {
+            "items": {
+              "description": "Остатки в объявлении",
+              "properties": {
+                "errors": {
+                  "description": "Ошибки при обновлении остатка",
+                  "example": [],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "external_id": {
+                  "description": "Идентификатор объявления во внешней системе",
+                  "example": "AB123456",
+                  "nullable": true,
+                  "type": "string"
+                },
+                "item_id": {
+                  "description": "Идентификатор объявления на сайте",
+                  "example": 123321,
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "success": {
+                  "description": "Успешно ли прошло обновление остатков",
+                  "example": true,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "item_id",
+                "success"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "stocksInfoResult": {
+        "properties": {
+          "stocks": {
+            "items": {
+              "description": "Информация по остаткам",
+              "properties": {
+                "is_multiple": {
+                  "description": "Флаг с подачи или редактирования \"Несколько штук в наличии\"",
+                  "example": true,
+                  "type": "boolean"
+                },
+                "is_out_of_stock": {
+                  "description": "Признак того, что у объявления закончилось доступное кол-во товара",
+                  "example": false,
+                  "type": "boolean"
+                },
+                "is_unlimited": {
+                  "description": "Признак неограниченности стоков",
+                  "example": true,
+                  "type": "boolean"
+                },
+                "item_id": {
+                  "description": "Идентификатор объявления на сайте",
+                  "example": 123321,
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "quantity": {
+                  "description": "Доступное количество товара (количество с подачи или редактирования минус бронь)",
+                  "example": 100,
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "item_id",
+                "is_unlimited",
+                "is_multiple",
+                "quantity",
+                "is_out_of_stock"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "unauthError": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "description": "Сообщение о том, что пользователь не авторизован. Если текст ошибки \"Unsupported flow for endpoint\", значит в авторизационном заголовке \"X-Oauth-Flow\" не передан \"authorization_code\"",
+            "example": "Unsupported flow for endpoint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": null,
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "description": "Методы для работы с остатками в объявлении.\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\n",
+    "title": "Управление остатками",
+    "version": "1.0.0"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/stock-management/1/info": {
+      "post": {
+        "description": "Максимальное количество элементов в одном запросе - 10\n\nМаксимальное количество запросов в минуту - 100\n\nВозвращает в ответ массив объектов со следующей структурой:\n- `itemId` - идентификатор объявления\n- `isUnlimited` - признак неограниченности остатков\n- `isMultiple` - флаг с подачи или редактирования \"Несколько штук в наличии\"\n- `quantity` - доступное количество товара (количество с подачи или редактирования минус бронь)\n- `isOutOfStock` - признак того, что у объявления закончилось доступное кол-во товара\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "item_ids": {
+                    "items": {
+                      "description": "Массив идентификаторов объявлений",
+                      "type": "integer"
+                    },
+                    "maxItems": 500,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "strong_consistency": {
+                    "description": "Пропустить поход в кеш, отдать данные из базы",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "item_ids"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/stocksInfoResult"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение остатков",
+        "x-rate-limiter": {
+          "default": 100
+        }
+      },
+      "x-gateway": {
+        "exportTo": [
+          {
+            "gateway": "open-api-gateway"
+          }
+        ]
+      }
+    },
+    "/stock-management/1/stocks": {
+      "put": {
+        "description": "Максимальное количество элементов в одном запросе - 200\n\nМаксимальное количество запросов в минуту - 100\n\nВозвращает в ответ массив объектов со следующей структурой:\n- `errors` – массив, который содержит информацию о ошибках, возникших при обновлении остатков.\n- `item_id` – идентификатор объявления, для которого мы обновляем остатки.\n- `external_id` – идентификатор объявления во внешней системе, для которого мы обновляем остатки.\n- `success` – флаг, успешно ли прошло обновление остатка для объявления.\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "stocks": {
+                    "items": {
+                      "description": "Остатки в объявлении",
+                      "properties": {
+                        "external_id": {
+                          "description": "Идентификатор объявления во внешней системе",
+                          "example": "AB123456",
+                          "type": "string"
+                        },
+                        "item_id": {
+                          "description": "Идентификатор объявления на сайте",
+                          "example": 123321,
+                          "format": "int64",
+                          "type": "integer"
+                        },
+                        "quantity": {
+                          "description": "Количество товара",
+                          "example": 500,
+                          "format": "int64",
+                          "maximum": 999999,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "item_id",
+                        "quantity"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 200,
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "stocks"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/stockEditResult"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Редактирование остатков",
+        "x-rate-limiter": {
+          "default": 100
+        }
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ]
+}

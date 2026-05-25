@@ -1,0 +1,425 @@
+{
+  "components": {
+    "headers": {
+      "X-RateLimit-Limit": {
+        "description": "Количество запросов в минуту",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "X-RateLimit-Remaining": {
+        "description": "Доступное количество запросов в текущем временном окне",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      }
+    },
+    "responses": {
+      "GetCallById": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/GetCallByIdResponse"
+            }
+          }
+        },
+        "description": "Успешный ответ"
+      },
+      "GetCalls": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/GetCallsResponse"
+            }
+          }
+        },
+        "description": "Успешный ответ или сообщение об ошибке"
+      }
+    },
+    "schemas": {
+      "Call": {
+        "description": "модель звонка",
+        "properties": {
+          "buyerPhone": {
+            "description": "Номер телефона покупателя",
+            "type": "string"
+          },
+          "callId": {
+            "description": "ID звонка",
+            "type": "integer"
+          },
+          "callTime": {
+            "description": "Время, когда звонок был совершен",
+            "format": "datetime",
+            "type": "string"
+          },
+          "itemId": {
+            "description": "ID объявления, по которому совершался звонок. Проставляется только если звонок был на номера Динамического КТ.",
+            "nullable": true,
+            "type": "integer"
+          },
+          "sellerPhone": {
+            "description": "Номер телефона продавца",
+            "type": "string"
+          },
+          "talkDuration": {
+            "description": "Длительность разговора",
+            "type": "integer"
+          },
+          "virtualPhone": {
+            "description": "Защитный номер, через который шел звонок",
+            "type": "string"
+          },
+          "waitingDuration": {
+            "description": "Длительность ожидания",
+            "type": "number"
+          }
+        },
+        "required": [
+          "callId",
+          "callTime",
+          "talkDuration",
+          "waitingDuration",
+          "buyerPhone",
+          "sellerPhone",
+          "virtualPhone"
+        ],
+        "type": "object"
+      },
+      "Error": {
+        "properties": {
+          "code": {
+            "description": "Внутренний код ошибки Возможные значения: 0 - нет ошибки 1000 - пустой запрос 1001 - ошибка валидации 1002 - ошибка авторизации 1003 - внутренняя ошибка 1004 - не найдено\n",
+            "enum": [
+              0,
+              1000,
+              1001,
+              1002,
+              1003,
+              1004
+            ],
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "GetCallByIdResponse": {
+        "properties": {
+          "call": {
+            "$ref": "#/components/schemas/Call"
+          },
+          "error": {
+            "$ref": "#/components/schemas/Error"
+          }
+        },
+        "required": [
+          "call",
+          "error"
+        ],
+        "type": "object"
+      },
+      "GetCallRecordError": {
+        "properties": {
+          "code": {
+            "description": "Внутренний код ошибки Возможные значения: 0 - нет ошибки 1000 - пустой запрос 1001 - ошибка валидации 1002 - ошибка авторизации 1003 - внутренняя ошибка 1004 - не найдено 1005 - запись звонка еще не готова на стороне оператора\n",
+            "enum": [
+              0,
+              1000,
+              1001,
+              1002,
+              1003,
+              1004,
+              1005
+            ],
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "GetCallsResponse": {
+        "properties": {
+          "calls": {
+            "items": {
+              "$ref": "#/components/schemas/Call"
+            },
+            "type": "array"
+          },
+          "error": {
+            "$ref": "#/components/schemas/Error"
+          }
+        },
+        "required": [
+          "calls",
+          "error"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "description": "Методы для работы с сервисом колл-трекинга\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://api.avito.ru/docs/public/APITermsOfServiceV1.pdf).**\n",
+    "title": "CallTracking[КТ]",
+    "version": "1"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/calltracking/v1/getCallById/": {
+      "post": {
+        "description": "Возвращает информацию о звонке по его id(callId)",
+        "operationId": "get_call_by_id",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "callId": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "callId"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "Тело запроса с идентификатором звонка",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/GetCallById"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Звонок по идентификатору",
+        "x-rate-limiter": {
+          "default": 5
+        }
+      },
+      "x-gateway": {
+        "enable": false
+      }
+    },
+    "/calltracking/v1/getCalls/": {
+      "post": {
+        "description": "Возвращает список звонков с фильтром по времени звонка",
+        "operationId": "get_calls",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "dateTimeFrom": {
+                    "description": "Время с которого нужно начинать поиск звонков по callTime (строка в формате RFC3339)",
+                    "example": "2021-01-02T00:00:00Z",
+                    "format": "RFC3339",
+                    "type": "string"
+                  },
+                  "dateTimeTo": {
+                    "description": "Время до которого нужно искать заонки по callTime (строка в формате RFC3339). Если не указано, используется dateTimeFrom + 1 месяц. Максимально возможное значение - dateTimeFrom + 3 месяца.",
+                    "example": "2021-03-02T23:59:59Z",
+                    "format": "RFC3339",
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "limit": {
+                    "description": "Размер выборки",
+                    "maximum": 100,
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "description": "Смещение выборки",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "dateTimeFrom",
+                  "limit",
+                  "offset"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "Тело запроса с фильтрами по времени звонка",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/GetCalls"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Звонки по времени",
+        "x-rate-limiter": {
+          "default": 5
+        }
+      },
+      "x-gateway": {
+        "enable": false
+      }
+    },
+    "/calltracking/v1/getRecordByCallId/": {
+      "get": {
+        "description": "Возвращает запись звонка по его id (callId).\n\nМы гарантируем, что записи звонка доступны для получения в течение 3х месяцев после завершения звонка.\n\nЗаписи звонка становятся доступны в данном API с некоторой задержкой после окончания звонка. Обычно эта задержка составляет до 30 минут.\n",
+        "operationId": "get_record_by_call_id",
+        "parameters": [
+          {
+            "description": "Идентификатор звонка",
+            "in": "query",
+            "name": "callId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Успешный ответ",
+            "headers": {
+              "Content-Length": {
+                "description": "Заголовок содержит размер объекта",
+                "schema": {
+                  "format": "int32",
+                  "type": "integer"
+                }
+              },
+              "Content-Type": {
+                "description": "Заголовок будет содержать тип возвращаемого контента (audio/mpeg)",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCallRecordError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCallRecordError"
+                }
+              }
+            },
+            "description": "Need authorization"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCallRecordError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCallRecordError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "425": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCallRecordError"
+                }
+              }
+            },
+            "description": "Too early"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCallRecordError"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение аудиозаписи звонка по идентификатору",
+        "x-rate-limiter": {
+          "default": 50
+        }
+      },
+      "x-gateway": {
+        "enable": false,
+        "timeouts": {
+          "read": "60s"
+        }
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "# API CallTracking-ceрвиса - это набор методов для получения информации о звонках.\nОписание API произведено в формате [**Swagger 3.0**](https://github.com/OAI/OpenAPI-Specification/blob/master/versions/3.0.0.md).\nВы можете использовать данный файл для ознакомления с методами API, а также для генерации базового кода для работы с API на удобном для вас языке программирования с помощью утилиты\n[**Swagger Codegen**](https://swagger.io/swagger-codegen/) или online сервиса [**Swagger Editor**](https://editor.swagger.io/).\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://api.avito.ru/docs/public/APITermsOfServiceV1.pdf).**\nПо всем вопросам работы с API необходимо обращаться в Службу Поддержки профессиональных инструментов:\n\n<li>телефон: <b>+7 495 777-10-66</b></li>\n<li>email: <a href=\"mailto:supportautoload@avito.ru\">supportautoload@avito.ru</a></li>\n\n# Типы авторизации\nДля использования данного API запрос должен быть авторизован. В данный момент API Авито использует следующие механизмы авторизации. <!-- ReDoc-Inject: <security-definitions> -->\n",
+      "name": "CallTracking",
+      "x-displayName": "CallTracking"
+    }
+  ]
+}

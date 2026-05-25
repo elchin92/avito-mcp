@@ -1,0 +1,2503 @@
+{
+  "components": {
+    "headers": {
+      "X-RateLimit-Limit": {
+        "description": "Количество запросов в минуту",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "X-RateLimit-Remaining": {
+        "description": "Доступное количество запросов в текущем временном окне",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      }
+    },
+    "parameters": {
+      "applicationJsonHeader": {
+        "description": "Тип данных запроса",
+        "example": "application/json",
+        "in": "header",
+        "name": "Content-Type",
+        "required": true,
+        "schema": {
+          "enum": [
+            "application/json"
+          ],
+          "example": "application/json",
+          "type": "string"
+        }
+      },
+      "authHeader": {
+        "description": "Токен для авторизации",
+        "in": "header",
+        "name": "Authorization",
+        "required": true,
+        "schema": {
+          "example": "Bearer ACCESS_TOKEN",
+          "type": "string"
+        }
+      },
+      "chatId": {
+        "description": "Идентификатор чата (клиента)",
+        "in": "path",
+        "name": "chat_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "itemIds": {
+        "in": "query",
+        "name": "item_ids",
+        "schema": {
+          "example": "12345,6789",
+          "type": "string"
+        }
+      },
+      "limit": {
+        "description": "Количество сообщений на странице (положительное число больше 0 и меньше 100)",
+        "in": "query",
+        "name": "limit",
+        "schema": {
+          "default": 100,
+          "example": 50,
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "messageId": {
+        "description": "Идентификатор сообщения",
+        "in": "path",
+        "name": "message_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "offset": {
+        "in": "query",
+        "name": "offset",
+        "schema": {
+          "default": 0,
+          "example": 50,
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "page": {
+        "description": "Номер страницы",
+        "in": "query",
+        "name": "page",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "pathItemId": {
+        "description": "Идентификатор объявления на сайте",
+        "in": "path",
+        "name": "item_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "pathUserId": {
+        "description": "Номер пользователя в Личном кабинете Авито",
+        "in": "path",
+        "name": "user_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "pathVacancyId": {
+        "description": "Идентификатор вакансии на сайте",
+        "in": "path",
+        "name": "vacancy_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "perPage": {
+        "description": "Количество ресурсов на страницу",
+        "in": "query",
+        "name": "per_page",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "unreadOnly": {
+        "in": "query",
+        "name": "unread_only",
+        "schema": {
+          "example": true,
+          "type": "boolean"
+        }
+      },
+      "userId": {
+        "description": "Идентификатор пользователя (клиента)",
+        "in": "path",
+        "name": "user_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      }
+    },
+    "schemas": {
+      "AnalyticsRequest": {
+        "properties": {
+          "dateFrom": {
+            "description": "Дата (в формате YYYY-MM-DD), с которой (включительно) надо получить статистику",
+            "example": "2020-09-01",
+            "format": "date",
+            "type": "string"
+          },
+          "dateTo": {
+            "description": "Дата (в формате YYYY-MM-DD), по которую (включительно) надо получить статистику",
+            "example": "2021-10-15",
+            "format": "date",
+            "type": "string"
+          },
+          "filter": {
+            "description": "Набор ограничений, по которым нужно отфильтровать данные",
+            "nullable": true,
+            "properties": {
+              "categoryIDs": {
+                "description": "Идентификаторы категорий</br> [ Справочник идентификаторов категорий ](https://www.avito.st/s/openapi/catalog-categories.xml)",
+                "example": [
+                  11,
+                  12
+                ],
+                "items": {
+                  "type": "integer"
+                },
+                "nullable": true,
+                "type": "array"
+              },
+              "employeeIDs": {
+                "description": "Идентификаторы сотрудников</br> [ Метод получения идентификаторов сотрудников ](https://developers.avito.ru/api-catalog/accounts-hierarchy/documentation#operation/getEmployeesV1)",
+                "example": [
+                  41042142,
+                  41042143
+                ],
+                "items": {
+                  "type": "integer"
+                },
+                "nullable": true,
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "grouping": {
+            "$ref": "#/components/schemas/Groupings"
+          },
+          "limit": {
+            "description": "Инструмент пагинации для ограничения количества сущностей в response;",
+            "example": 1000,
+            "maximum": 1000,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "metrics": {
+            "description": "Набор доступных показателей, которые должны присутствовать в ответе",
+            "example": [
+              "views",
+              "contacts",
+              "presenceSpending"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "offset": {
+            "description": "инструмент пагинации или смещение, с которого начинается выборка данных;",
+            "example": 0,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "sort": {
+            "description": "Сортировка по заданному показателю",
+            "nullable": true,
+            "properties": {
+              "key": {
+                "description": "Показатель статистики, по которому нужно отсортировать;",
+                "type": "string"
+              },
+              "order": {
+                "description": "Порядок сортировки (asc, desc);",
+                "enum": [
+                  "asc",
+                  "desc"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "order"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "dateFrom",
+          "dateTo",
+          "metrics",
+          "grouping",
+          "limit",
+          "offset"
+        ],
+        "type": "object"
+      },
+      "AnalyticsResponse": {
+        "properties": {
+          "result": {
+            "properties": {
+              "dataTotalCount": {
+                "example": 1,
+                "type": "integer"
+              },
+              "groupings": {
+                "example": [
+                  {
+                    "id": 1742860800,
+                    "metrics": [
+                      {
+                        "slug": "views",
+                        "value": 100
+                      },
+                      {
+                        "slug": "contacts",
+                        "value": 100
+                      },
+                      {
+                        "slug": "presenceSpending",
+                        "value": 1000
+                      }
+                    ],
+                    "type": "dates"
+                  }
+                ],
+                "items": {
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "metrics": {
+                      "items": {
+                        "properties": {
+                          "slug": {
+                            "example": "views",
+                            "type": "string"
+                          },
+                          "value": {
+                            "format": "float",
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "slug",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "type": {
+                      "$ref": "#/components/schemas/Groupings"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "timestamp": {
+                "example": "2021-11-25 15:19:21",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "ApplyVasResp": {
+        "properties": {
+          "operationId": {
+            "title": "Уникальный идентификатор операции покупки",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operationId"
+        ],
+        "type": "object"
+      },
+      "CallsStatsDay": {
+        "properties": {
+          "answered": {
+            "description": "Отвеченные звонки",
+            "type": "integer"
+          },
+          "calls": {
+            "description": "Звонки всего",
+            "type": "integer"
+          },
+          "date": {
+            "description": "Дата (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "new": {
+            "description": "Новые звонки",
+            "type": "integer"
+          },
+          "newAnswered": {
+            "description": "Новые и одновременно отвеченные звонки",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "CallsStatsItem": {
+        "properties": {
+          "days": {
+            "description": "Массив статистики звонков объявления в разрезе дней",
+            "items": {
+              "$ref": "#/components/schemas/CallsStatsDay"
+            },
+            "type": "array"
+          },
+          "employeeId": {
+            "description": "Идентификатор сотрудника в сервисе иерархии аккаунтов (0 означает, что звонок не аттрибуцирован до сотрудника)",
+            "type": "integer"
+          },
+          "itemId": {
+            "description": "Идентификатор объявления (0 означает, что звонок не аттрибуцирован до объявления)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "employeeId",
+          "itemId"
+        ],
+        "type": "object"
+      },
+      "CallsStatsRequest": {
+        "properties": {
+          "dateFrom": {
+            "description": "Начальная дата периода (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "dateTo": {
+            "description": "Конечная дата периода (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "itemIds": {
+            "description": "Идентификаторы объявлений",
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "dateFrom",
+          "dateTo"
+        ],
+        "type": "object"
+      },
+      "CallsStatsResponse": {
+        "properties": {
+          "result": {
+            "properties": {
+              "items": {
+                "description": "Массив статистики по объявлениям",
+                "items": {
+                  "$ref": "#/components/schemas/CallsStatsItem"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "ErrorItemsVas": {
+        "description": "Список идентификаторов, которые не удалось обработать по разным причинам (например, они не принадлежат текущему пользователю)",
+        "items": {
+          "type": "integer"
+        },
+        "type": "array"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "example": 123,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "example": "message about error occurred",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "code"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "FieldError": {
+        "properties": {
+          "code": {
+            "description": "Код ошибки",
+            "type": "string"
+          },
+          "message": {
+            "description": "Описание ошибки",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "Groupings": {
+        "enum": [
+          "day",
+          "week",
+          "month",
+          "item",
+          "totals"
+        ],
+        "type": "string"
+      },
+      "InfoVas": {
+        "properties": {
+          "finish_time": {
+            "description": "Дата завершения услуги",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "schedule": {
+            "description": "Информация о следующих применениях услуги",
+            "items": {
+              "description": "Дата следующего применения услуги",
+              "format": "date-time",
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "vas_id": {
+            "description": "Идентификатор услуги",
+            "enum": [
+              "vip",
+              "highlight",
+              "pushup",
+              "premium",
+              "xl"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ItemInfoAvito": {
+        "properties": {
+          "autoload_item_id": {
+            "description": "[Идентификатор объявления](https://autoload.avito.ru/format/realty/#Id) из файла автозагрузки",
+            "nullable": true,
+            "type": "string"
+          },
+          "finish_time": {
+            "description": "Дата завершения объявления",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "start_time": {
+            "description": "Дата создания объявления",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "description": "Статус объявления на сайте",
+            "enum": [
+              "active",
+              "removed",
+              "old",
+              "blocked",
+              "rejected",
+              "not_found",
+              "another_user"
+            ],
+            "type": "string"
+          },
+          "url": {
+            "description": "URL-адрес объявления",
+            "nullable": true,
+            "type": "string"
+          },
+          "vas": {
+            "description": "Список примененных платных услуг",
+            "items": {
+              "$ref": "#/components/schemas/InfoVas"
+            },
+            "nullable": true,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "ItemVasPricesResp": {
+        "properties": {
+          "itemId": {
+            "description": "Идентификатор объявления на сайте",
+            "type": "integer"
+          },
+          "stickers": {
+            "items": {
+              "$ref": "#/components/schemas/StickerResp"
+            },
+            "type": "array"
+          },
+          "vas": {
+            "items": {
+              "$ref": "#/components/schemas/VasResp"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "vas"
+        ],
+        "type": "object"
+      },
+      "ItemsInfoWithCategoryAvito": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "page": {
+                "description": "Номер страницы",
+                "example": 1,
+                "type": "integer"
+              },
+              "per_page": {
+                "description": "Количество записей на странице",
+                "example": 25,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "resources": {
+            "items": {
+              "properties": {
+                "address": {
+                  "description": "Адрес объявления",
+                  "example": "Москва, Лесная улица 7",
+                  "type": "string"
+                },
+                "category": {
+                  "properties": {
+                    "id": {
+                      "description": "Идентификатор категории",
+                      "example": 111,
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "name": {
+                      "description": "Наименование категории",
+                      "example": "Вакансии",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "id": {
+                  "description": "Идентификатор объявления",
+                  "example": 24122231,
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "price": {
+                  "description": "Цена объявления (null значение означает, что цена не указана)",
+                  "example": 35000,
+                  "nullable": true,
+                  "type": "integer"
+                },
+                "status": {
+                  "description": "Статус объявления на сайте",
+                  "enum": [
+                    "active",
+                    "removed",
+                    "old",
+                    "blocked",
+                    "rejected"
+                  ],
+                  "type": "string"
+                },
+                "title": {
+                  "description": "Наименование объявления",
+                  "example": "Продавец-кассир",
+                  "type": "string"
+                },
+                "url": {
+                  "description": "URL-адрес объявления",
+                  "example": "https://www.avito.ru/rostov-na-donu/vakansii/prodavets_magazina_2142",
+                  "nullable": true,
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "SpendingsGroupings": {
+        "description": "Группировка статистики расходов (по дням, неделям, месяцам)",
+        "enum": [
+          "day",
+          "week",
+          "month"
+        ],
+        "type": "string"
+      },
+      "SpendingsRequest": {
+        "properties": {
+          "dateFrom": {
+            "description": "Дата начала периода статистики расходов в формате YYYY-MM-DD",
+            "example": "2020-09-01",
+            "format": "date",
+            "type": "string"
+          },
+          "dateTo": {
+            "description": "Дата конца периода статистики расходов в формате YYYY-MM-DD",
+            "example": "2021-10-15",
+            "format": "date",
+            "type": "string"
+          },
+          "filter": {
+            "description": "Набор ограничений, по которым необходимо отфильтровать расходы",
+            "nullable": true,
+            "properties": {
+              "categoryIDs": {
+                "description": "Идентификаторы категорий</br> [ Справочник идентификаторов категорий ](https://www.avito.st/s/openapi/catalog-categories.xml)",
+                "example": [
+                  11,
+                  12
+                ],
+                "items": {
+                  "type": "integer"
+                },
+                "nullable": true,
+                "type": "array"
+              },
+              "itemIDs": {
+                "description": "Идентификаторы объявлений",
+                "example": [
+                  534353,
+                  534354
+                ],
+                "items": {
+                  "type": "integer"
+                },
+                "nullable": true,
+                "type": "array"
+              },
+              "locationIDs": {
+                "description": "Идентификаторы населенных пунктов",
+                "example": [
+                  554353,
+                  554353
+                ],
+                "items": {
+                  "type": "integer"
+                },
+                "nullable": true,
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "grouping": {
+            "$ref": "#/components/schemas/SpendingsGroupings"
+          },
+          "spendingTypes": {
+            "description": "Набор необходимых типов расходов",
+            "example": [
+              "promotion",
+              "presence"
+            ],
+            "items": {
+              "description": "Тип расходов (all, promotion, presence, commission, rest)",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "dateFrom",
+          "dateTo",
+          "spendingTypes",
+          "grouping"
+        ],
+        "type": "object"
+      },
+      "SpendingsResponse": {
+        "properties": {
+          "result": {
+            "properties": {
+              "groupings": {
+                "description": "Группировки расходов",
+                "items": {
+                  "properties": {
+                    "date": {
+                      "description": "Дата группировки в формате YYYY-MM-DD",
+                      "example": "2025-05-02",
+                      "type": "string"
+                    },
+                    "spendings": {
+                      "description": "Расходы",
+                      "items": {
+                        "properties": {
+                          "slug": {
+                            "description": "Слаг типа расходов (promotion, presence, commission, rest)",
+                            "example": "presence",
+                            "type": "string"
+                          },
+                          "value": {
+                            "description": "Сумма расходов в рублях",
+                            "example": 123.95,
+                            "format": "float",
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "slug",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "type": {
+                      "$ref": "#/components/schemas/SpendingsGroupings"
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "type",
+                    "spendings"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "timestamp": {
+                "description": "Временная метка ответа (UTC)",
+                "example": 1746133200,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "groupings",
+              "timestamp"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "StatisticsCounters": {
+        "items": {
+          "properties": {
+            "itemId": {
+              "description": "Идентификатор объявления",
+              "format": "int64",
+              "type": "integer"
+            },
+            "stats": {
+              "items": {
+                "properties": {
+                  "contacts": {
+                    "deprecated": true,
+                    "description": "__DEPRECATED (будет удалено в апреле 2021 г.).__\n__Используйте поле uniqContacts.__\nЗапросы контактов объявления.\n",
+                    "type": "integer"
+                  },
+                  "date": {
+                    "description": "Дата (в формате YYYY-MM-DD), за которую посчитаны статистические счетчики. Для группировок по периодам - дата начала периода.",
+                    "format": "date",
+                    "type": "string"
+                  },
+                  "favorites": {
+                    "deprecated": true,
+                    "description": "__DEPRECATED (будет удалено в апреле 2021 г.).__ __Используйте поле uniqFavorites.__ Добавления объявления в избранное",
+                    "type": "integer"
+                  },
+                  "uniqContacts": {
+                    "description": "Уникальные пользователи, запрашивавшие контакты объявления",
+                    "type": "integer"
+                  },
+                  "uniqFavorites": {
+                    "description": "Уникальные пользователи, добавившие объявление в избранное",
+                    "type": "integer"
+                  },
+                  "uniqViews": {
+                    "description": "Уникальные пользователи, просматривавшие объявления",
+                    "type": "integer"
+                  },
+                  "views": {
+                    "deprecated": true,
+                    "description": "__DEPRECATED (будет удалено в апреле 2021 г.).__\n__Используйте поле uniqViews.__\nПросмотры объявления.\n",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "date"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "StatisticsDateFrom": {
+        "description": "Дата (в формате YYYY-MM-DD), с которой (включительно) надо получить статистику",
+        "example": "2020-01-01",
+        "type": "string"
+      },
+      "StatisticsDateTo": {
+        "description": "Дата (в формате YYYY-MM-DD), по которую (включительно) надо получить статистику",
+        "example": "2020-01-01",
+        "type": "string"
+      },
+      "StatisticsFields": {
+        "description": "Набор счетчиков, которые должны присутствовать в ответе",
+        "items": {
+          "enum": [
+            "views",
+            "uniqViews",
+            "contacts",
+            "uniqContacts",
+            "favorites",
+            "uniqFavorites"
+          ],
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "StatisticsItemIDs": {
+        "description": "Набор идентификаторов объявлений на сайте",
+        "example": [
+          123456789,
+          987654321
+        ],
+        "items": {
+          "type": "integer"
+        },
+        "required": [
+          "items"
+        ],
+        "type": "array"
+      },
+      "StatisticsPeriodGrouping": {
+        "description": "Период группировки",
+        "enum": [
+          "day",
+          "week",
+          "month"
+        ],
+        "type": "string"
+      },
+      "StatisticsResponse": {
+        "properties": {
+          "errors": {
+            "type": "object"
+          },
+          "result": {
+            "description": "Статистические счетчики объявления",
+            "properties": {
+              "items": {
+                "$ref": "#/components/schemas/StatisticsCounters"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "StatisticsShallowRequestBody": {
+        "properties": {
+          "dateFrom": {
+            "$ref": "#/components/schemas/StatisticsDateFrom"
+          },
+          "dateTo": {
+            "$ref": "#/components/schemas/StatisticsDateTo"
+          },
+          "fields": {
+            "$ref": "#/components/schemas/StatisticsFields"
+          },
+          "itemIds": {
+            "$ref": "#/components/schemas/StatisticsItemIDs"
+          },
+          "periodGrouping": {
+            "$ref": "#/components/schemas/StatisticsPeriodGrouping"
+          }
+        },
+        "required": [
+          "itemIds",
+          "dateFrom",
+          "dateTo"
+        ],
+        "type": "object"
+      },
+      "StickerResp": {
+        "description": "Информация о значках для переданного списка объявлений",
+        "properties": {
+          "description": {
+            "description": "Описание значка",
+            "type": "string"
+          },
+          "id": {
+            "description": "Идентификатор значка",
+            "type": "integer"
+          },
+          "title": {
+            "description": "Название значка",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description"
+        ],
+        "type": "object"
+      },
+      "UpdatePriceRequest": {
+        "properties": {
+          "price": {
+            "description": "Цена",
+            "example": 100,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "price"
+        ],
+        "type": "object"
+      },
+      "UpdatePriceResponse": {
+        "properties": {
+          "result": {
+            "properties": {
+              "success": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "VasAmountAvito": {
+        "properties": {
+          "amount": {
+            "description": "Сумма списания за применение услуги или пакета",
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "VasApplyAvito": {
+        "properties": {
+          "amount": {
+            "description": "Сумма списания за применение услуги",
+            "format": "float",
+            "type": "number"
+          },
+          "vas": {
+            "$ref": "#/components/schemas/InfoVas"
+          }
+        },
+        "type": "object"
+      },
+      "VasPricesResp": {
+        "items": {
+          "$ref": "#/components/schemas/ItemVasPricesResp"
+        },
+        "type": "array"
+      },
+      "VasResp": {
+        "description": "Информация об услугах и пакетах дополнительных услуг для переданного списка объявлений",
+        "properties": {
+          "price": {
+            "description": "Цена со скидкой",
+            "example": 200,
+            "type": "integer"
+          },
+          "priceOld": {
+            "description": "Цена до применения скидки",
+            "example": 300,
+            "type": "integer"
+          },
+          "slug": {
+            "description": "Идентификатор услуги или пакета услуг",
+            "example": "x2_1",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "price",
+          "priceOld"
+        ],
+        "type": "object"
+      },
+      "authError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 401,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Unauthorized",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "badRequestError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 400,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Bad Request",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "itemIdsRequestBody": {
+        "properties": {
+          "item_ids": {
+            "description": "Набор идентификаторов объявлений на сайте",
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "item_ids"
+        ],
+        "type": "object"
+      },
+      "notFoundError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 404,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Not found",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "packageIdRequestBodyV2": {
+        "properties": {
+          "package_id": {
+            "description": "Идентификатор пакета услуг, возможные варианты значения:\n- `x2_1` - применение пакета До 2 раз больше просмотров на 1 день\n- `x2_7` - применение пакета До 2 раз больше просмотров на 7 дней\n- `x5_1` - применение пакета До 5 раз больше просмотров на 1 день\n- `x5_7` - применение пакета До 5 раз больше просмотров на 7 дней\n- `x10_1` - применение пакета До 10 раз больше просмотров на 1 день\n- `x10_7` - применение пакета До 10 раз больше просмотров на 7 дней\n\nВ некоторых регионах и категориях также доступны дополнительные варианты:\n- `x15_1` - применение пакета До 15 раз больше просмотров на 1 день\n- `x15_7` - применение пакета До 15 раз больше просмотров на 7 дней\n- `x20_1` - применение пакета До 20 раз больше просмотров на 1 день\n- `x20_7` - применение пакета До 20 раз больше просмотров на 7 дней\n\nЕсли попытаться применить эти пакеты в недоступных для них регионе и категории, оплата не пройдёт.\n",
+            "enum": [
+              "x2_1",
+              "x2_7",
+              "x5_1",
+              "x5_7",
+              "x10_1",
+              "x10_7",
+              "x15_1",
+              "x15_7",
+              "x20_1",
+              "x20_7"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "package_id"
+        ],
+        "type": "object"
+      },
+      "pricesItemIdsRequestBody": {
+        "properties": {
+          "itemIds": {
+            "description": "Набор идентификаторов объявлений на сайте",
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "itemIds"
+        ],
+        "type": "object"
+      },
+      "serviceError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 500,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Описание ошибки",
+                "example": "Error while processing request. Please, contact support",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "serviceUnavailableError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 503,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Описание ошибки",
+                "example": "Service temporarily unavailable. Please, contact support",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "tooManyRequests": {
+        "type": "object"
+      },
+      "validatingError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 400,
+                "format": "int32",
+                "type": "integer"
+              },
+              "fields": {
+                "description": "Информация об ошибке валидации параметров в формате ключ-значение",
+                "nullable": true,
+                "type": "object"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Validation error",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "vasIdRequestBody": {
+        "properties": {
+          "vas_id": {
+            "description": "Идентификатор услуги, возможные его варианты значения:\n- `highlight` — [выделение объявления](https://support.avito.ru/articles/200026858)\n- `xl` – [XL-объявление](https://support.avito.ru/articles/685)\n",
+            "enum": [
+              "highlight",
+              "xl"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "vas_id"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](/api-catalog/auth/documentation#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": {
+              "autoload:reports": "Получение отчетов Автозагрузки",
+              "items:apply_vas": "Применение дополнительных услуг",
+              "items:info": "Получение информации об объявлениях",
+              "job:applications": "Получение информации об откликах на вакансии",
+              "job:cv": "Получение информации резюме",
+              "job:write": "Изменение объявлений вертикали Работа",
+              "messenger:read": "Чтение сообщений в мессенджере Авито",
+              "messenger:write": "Модифицирование сообщений в мессенджере Авито",
+              "short_term_rent:read": "Получение информации об объявлениях краткосрочной аренды",
+              "short_term_rent:write": "Изменение объявлений краткосрочной аренды",
+              "stats:read": "Получение статистики объявлений",
+              "user:read": "Получение информации о пользователе",
+              "user_balance:read": "Получение баланса пользователя",
+              "user_operations:read": "Получение истории операций пользователя"
+            },
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "email": "supportautoload@avito.ru"
+    },
+    "description": "API для получение статистики по объявлениям, применения дополнительных услуг, а также просмотр статусов объявлений\n\n**Авито API для бизнеса предоставляется согласно [Условиям\n  использования](https://www.avito.ru/legal/pro_tools/public-api).**\n",
+    "title": "Объявления",
+    "version": "1"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/core/v1/accounts/{userId}/vas/prices": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/pathUserId"
+        },
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ],
+      "post": {
+        "description": "Возвращает в ответ список объектов со следующей структурой:\n- `itemId` – идентификатор объявления\n- `vas` – список объектов, которые содержат информацию о стоимости дополнительных услуг и пакетов дополнительных услуг для каждого объявления. Структура объекта:\n  - `slug` – идентификатор услуги или пакета услуг:\n    - `highlight` — [услуга продвижения \"Выделить\"](https://support.avito.ru/articles/200026858)\n    - `xl` – [услуга продвижения \"XL-объявление\"](https://support.avito.ru/articles/685)\n    - `stickerpack_x1` – [1 значок на XL-объявлении](https://support.avito.ru/articles/2450) \n    - `stickerpack_x2` – [2 значка на XL-объявлении](https://support.avito.ru/articles/2450)\n    - `stickerpack_x3` – [3 значка на XL-объявлении](https://support.avito.ru/articles/2450)\n\n    - `x2_1` – [пакет \"до 2 раз больше просмотров на 1 день\"](https://support.avito.ru/articles/1398)\n    - `x2_7` – [пакет \"до 2 раз больше просмотров на 7 дней\"](https://support.avito.ru/articles/1398)\n    - `x5_1` – [пакет \"до 5 раз больше просмотров на 1 день\"](https://support.avito.ru/articles/1398)\n    - `x5_7` – [пакет \"до 5 раз больше просмотров на 7 дней\"](https://support.avito.ru/articles/1398)\n    - `x10_1` – [пакет \"до 10 раз больше просмотров на 1 день\"](https://support.avito.ru/articles/1398)\n    - `x10_7` – [пакет \"до 10 раз больше просмотров на 7 дней\"](https://support.avito.ru/articles/1398)\n    - `x15_1` – [пакет \"до 15 раз больше просмотров на 1 день\"](https://support.avito.ru/articles/1398)\n    - `x15_7` – [пакет \"до 15 раз больше просмотров на 7 дней\"](https://support.avito.ru/articles/1398)\n    - `x20_1` – [пакет \"до 20 раз больше просмотров на 1 день\"](https://support.avito.ru/articles/1398)\n    - `x20_7` – [пакет \"до 20 раз больше просмотров на 7 дней\"](https://support.avito.ru/articles/1398)\n\n  - `price` – цена в рублях с учетом скидки\n\n  - `priceOld` – цена в рублях до применения скидки\n\n- `stickers` – список объектов которые содержат доступные для объявления  [значки](https://support.avito.ru/articles/2450)\n  - `id` – идентификатор значка\n  - `title` – название значка\n  - `description` – описание значка\n",
+        "operationId": "vasPrices",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "itemIds": [
+                  1234567,
+                  7654321
+                ]
+              },
+              "schema": {
+                "$ref": "#/components/schemas/pricesItemIdsRequestBody"
+              }
+            }
+          },
+          "description": "Набор идентификаторов объявлений на сайте"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "itemId": 1234567,
+                    "stickers": [
+                      {
+                        "description": "Description 1",
+                        "id": 1,
+                        "title": "Sticker 1"
+                      },
+                      {
+                        "description": "Description 2",
+                        "id": 2,
+                        "title": "Sticker 2"
+                      }
+                    ],
+                    "vas": [
+                      {
+                        "price": 200,
+                        "priceOld": 300,
+                        "slug": "x2_7"
+                      },
+                      {
+                        "price": 100,
+                        "priceOld": 150,
+                        "slug": "xl"
+                      },
+                      {
+                        "price": 50,
+                        "priceOld": 70,
+                        "slug": "stickerpack_x1"
+                      }
+                    ]
+                  },
+                  {
+                    "itemId": 7654321,
+                    "vas": []
+                  }
+                ],
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/VasPricesResp"
+                    },
+                    {
+                      "$ref": "#/components/schemas/badRequestError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/authError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/validatingError"
+                }
+              }
+            },
+            "description": "Информация об ошибке"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:info"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение информации о стоимости услуг продвижения и доступных значках",
+        "tags": [
+          "Item"
+        ]
+      }
+    },
+    "/core/v1/accounts/{user_id}/calls/stats/": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/pathUserId"
+        },
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/applicationJsonHeader"
+        }
+      ],
+      "post": {
+        "description": "Получение агрегированной статистики звонков, полученных пользователем\n",
+        "operationId": "postCallsStats",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "dateFrom": "2020-04-01",
+                "dateTo": "2020-04-08",
+                "itemIds": [
+                  1853257996
+                ]
+              },
+              "schema": {
+                "$ref": "#/components/schemas/CallsStatsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "result": {
+                    "items": [
+                      {
+                        "days": [
+                          {
+                            "answered": 0,
+                            "calls": 0,
+                            "date": "2020-04-01",
+                            "new": 0,
+                            "newAnswered": 0
+                          }
+                        ],
+                        "employeeId": 0,
+                        "itemId": 1853257996
+                      }
+                    ]
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CallsStatsResponse"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/badRequestError"
+                }
+              }
+            },
+            "description": "Неверный запрос"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/authError"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/notFoundError"
+                }
+              }
+            },
+            "description": "Неверный user_id в запросе"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/serviceError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка метода API"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/serviceUnavailableError"
+                }
+              }
+            },
+            "description": "Метод API временно недоступен"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:info"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение статистики по звонкам",
+        "tags": [
+          "Item"
+        ]
+      }
+    },
+    "/core/v1/accounts/{user_id}/items/{item_id}/": {
+      "get": {
+        "description": "Возвращает данные об объявлении - его статус, список примененных услуг Максимальное количество запросов в минуту - 500\n**Внимание:** для получения статистики объявления должен использоваться метод:\n[получение статистики по списку объявлений](#operation/itemStatsShallow)\n",
+        "operationId": "getItemInfo",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemInfoAvito"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/tooManyRequests"
+                }
+              }
+            },
+            "description": "Превышено допустимое количество запросов"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FieldError"
+                }
+              }
+            },
+            "description": "Информация об ошибке"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:info"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение информации по объявлению",
+        "tags": [
+          "Item"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/pathUserId"
+        },
+        {
+          "$ref": "#/components/parameters/pathItemId"
+        },
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ]
+    },
+    "/core/v1/accounts/{user_id}/items/{item_id}/vas": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/pathUserId"
+        },
+        {
+          "$ref": "#/components/parameters/pathItemId"
+        },
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ],
+      "put": {
+        "description": "**Внимание:** метод объявлен устаревшим и больше не поддерживается. Вместо него используйте метод `/core/v2/items/{itemId}/vas/`\n\nПрименение дополнительной услуги к объявлению, в ответе возвращает данные о примененной услуге и сумму списания.\n[Более подробная информация по дополнительным услугам](https://support.avito.ru/sections/200009758)\n\n**Внимание:** получение ошибки при выполнении этой операции не означает, что услуга точно не была куплена.\nВ этом случае рекомендуется подождать несколько минут и проверить, что услуга отсутствует в списке применённых, а только затем повторить попытку.\n",
+        "operationId": "putItemVas",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "vas_id": "highlight"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/vasIdRequestBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VasApplyAvito"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/validatingError"
+                }
+              }
+            },
+            "description": "Информация об ошибке"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:apply_vas"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Применение дополнительных услуг",
+        "tags": [
+          "Item"
+        ]
+      }
+    },
+    "/core/v1/items": {
+      "get": {
+        "description": "Возвращает список объявлений авторизованного пользователя - статус, категорию и ссылку на сайте.\n**Внимание! В настоящий момент этот метод не работает с объявлениями [сотрудников](https://pro.avito.ru/employees).** Он позволяет получить объявления только для пользователя, который указан владельцем этого объявления. В случае сотрудника это будет главный аккаунт компании, для авторизованного сотрудника вернётся пустой список объявлений.\nМаксимальное количество запросов в минуту - 25.\n",
+        "operationId": "getItemsInfo",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemsInfoWithCategoryAvito"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "429": {
+            "description": "Превышено допустимое количество запросов",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FieldError"
+                }
+              }
+            },
+            "description": "Информация об ошибке"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:info"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение информации по объявлениям",
+        "tags": [
+          "Item"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "description": "Количество записей на странице (целое число больше 0 и меньше 100)",
+          "in": "query",
+          "name": "per_page",
+          "schema": {
+            "default": 25,
+            "example": 50,
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        {
+          "description": "Номер страницы (целое число больше 0)",
+          "in": "query",
+          "name": "page",
+          "schema": {
+            "default": 1,
+            "example": 1,
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        {
+          "description": "Статус объявления на сайте (можно указать несколько значений через запятую)",
+          "in": "query",
+          "name": "status",
+          "schema": {
+            "default": "active",
+            "enum": [
+              "active",
+              "removed",
+              "old",
+              "blocked",
+              "rejected"
+            ],
+            "example": "active,old",
+            "type": "string"
+          }
+        },
+        {
+          "description": "Фильтр больше либо равно по дате обновления/редактирования объявления в формате YYYY-MM-DD",
+          "in": "query",
+          "name": "updatedAtFrom",
+          "schema": {
+            "example": "2023-12-18",
+            "type": "string"
+          }
+        },
+        {
+          "description": "Идентификатор категории объявления</br> см. возможные варианты категорий в [ справочнике ](https://www.avito.st/s/openapi/catalog-categories.xml)\n",
+          "in": "query",
+          "name": "category",
+          "schema": {
+            "example": 111,
+            "format": "int32",
+            "type": "integer"
+          }
+        }
+      ]
+    },
+    "/core/v1/items/{item_id}/update_price": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/pathItemId"
+        }
+      ],
+      "post": {
+        "description": "Обновляет цену товара по id. \nМаксимальное количество запросов в минуту - 150.\n**Внимание! Доступно для категорий Товары, Запчасти, Авто, Недвижимость (кроме краткосрочной)**\n",
+        "operationId": "updatePrice",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePriceRequest"
+              }
+            }
+          },
+          "description": "Набор параметров в теле запроса."
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdatePriceResponse"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/badRequestError"
+                }
+              }
+            },
+            "description": "Неверный запрос"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/authError"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/notFoundError"
+                }
+              }
+            },
+            "description": "Неверный user_id в запросе"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/tooManyRequests"
+                }
+              }
+            },
+            "description": "Превышено количество запросов"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": []
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Обновление цены объявления\n"
+      }
+    },
+    "/core/v2/accounts/{user_id}/items/{item_id}/vas_packages": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/pathUserId"
+        },
+        {
+          "$ref": "#/components/parameters/pathItemId"
+        },
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ],
+      "put": {
+        "description": "**Внимание:** метод объявлен устаревшим и больше не поддерживается. Вместо него используйте метод `/core/v2/items/{itemId}/vas/`\n\nПрименение пакета дополнительных услуг к объявлению, в ответе возвращает сумму списания.\n\n**Внимание:** получение ошибки при выполнении этой операции не означает, что пакет точно не была куплен.\nВ этом случае рекомендуется подождать несколько минут и проверить, что пакет отсутствует в списке применённых, а только затем повторить попытку.\n",
+        "operationId": "putItemVasPackageV2",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "package_id": "x10_7"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/packageIdRequestBodyV2"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VasAmountAvito"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/validatingError"
+                }
+              }
+            },
+            "description": "Информация об ошибке"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:apply_vas"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Применение пакета дополнительных услуг",
+        "tags": [
+          "Item"
+        ]
+      }
+    },
+    "/core/v2/items/{itemId}/vas/": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/pathItemId"
+        },
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ],
+      "put": {
+        "description": "С помощью этого метода вы можете применить к опубликованному объявлению одну или несколько услуг продвижения (например, «XL-объявление», «Выделение цветом» и «До 10 раз больше просмотров на 7 дней»). В рамках одного запроса услуга может быть применена только один раз. \n\nЕсли для вашего объявления доступны значки (такие как «Без ДТП», «Срочно», «1 владелец»), при подключении услуги «XL-объявление» вы можете передать их список (не более трёх значков). В этом случае добавьте соответствующую услугу на 1, 2 или 3 значка.\n\n[Подробнее об услугах продвижения](https://support.avito.ru/partitions/131)\n\nЧтобы получить список доступных услуг и значков,  используйте метод `/core/v1/accounts/{userId}/vas/prices`.\n\nЕсли заказ сформирован успешно, в ответ вы получите уникальные идентификаторы операций покупки для каждой из применяемых услуг. Позже эти идентификаторы можно будет использовать, чтобы узнать статус выполнения заказа.\n\nВ случае некорректного запроса метод вернет код ответа 400 и структуру, содержащую поле `code`. Возможные коды ошибок:\n  - **1001** – один или несколько заголовков неправильно передаются;\n  - **1002** – ошибка в URL;\n  - **1003** – неверный идентификатор объявления из запроса;\n  - **1004** – JSON из тела запроса не соответствует схеме или список идентификаторов услуг пустой;\n  - **1005** – объявление, к которому вы хотите применить услуги, неактивно;\n  - **1006** – неправильное количество выбранных значков для объявления.\nУбедитесь, что в списке идентификаторов услуг есть услуга для покупки значков и она совпадает с количеством выбранных значков.\n      - stickerpack_x1 – 1 значок\n      - stickerpack_x2 – 2 значка\n      - stickerpack_x3 – 3 значка\n  - **1007** – некоторые из выбранных услуг не могут быть применены;\n  - **1008** – в объявлении появились обязательные поля, которые нужно заполнить.\nОтредактируйте объявление и попробуйте применить услугу снова.\n  - **1009** – в кошельке не хватает средств для покупки услуг;\n  - **1010** – вы пытались купить больше одной услуги увеличения просмотров;\n  - **1011** – вы пытались купить значки, недоступные для выбранного объявления.\n\nВ случае внутренней ошибки на стороне Авито вернётся код ответа 500 и структура, содержащая поле `code`. Возможные коды ошибок:\n  - **1000** – ошибка на стороне Авито, попробуйте позже или [напишите в поддержку](https://support.avito.ru/request/659?eventData[contextId]=117);\n\n**Важно:** если ответ пришёл без кода ошибки или его значения нет в списке выше — возможно, услуга всё-таки была куплена. Подождите несколько минут: услуга продвижения появится в списке применённых, а если нет — попробуйте оформить её снова.\n",
+        "operationId": "applyVas",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "slugs": {
+                    "description": "Список идентификаторов услуг",
+                    "example": [
+                      "x10_1",
+                      "xl",
+                      "stickerpack_x2"
+                    ],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "stickers": {
+                    "description": "Список значков",
+                    "example": [
+                      1,
+                      2
+                    ],
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "slugs"
+                ],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "$ref": "#/components/schemas/ApplyVasResp"
+                  },
+                  "example": {
+                    "stickerpack_x2": {
+                      "operationId": 123456791
+                    },
+                    "x10_1": {
+                      "operationId": 123456789
+                    },
+                    "xl": {
+                      "operationId": 123456790
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        1000,
+                        1001,
+                        1002,
+                        1003,
+                        1004,
+                        1005,
+                        1006,
+                        1007,
+                        1008,
+                        1009,
+                        1010,
+                        1011
+                      ],
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Ответ с ошибкой"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:apply_vas"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Применение услуг продвижения",
+        "tags": [
+          "Item"
+        ]
+      }
+    },
+    "/stats/v1/accounts/{user_id}/items": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/userId"
+        },
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/applicationJsonHeader"
+        }
+      ],
+      "post": {
+        "description": "Получение счетчиков по переданному списку объявлений пользователя.\n\n**Внимание:** в запросе может быть передано не более 200 идентификаторов объявлений.\n\n**Внимание:** глубина такого запроса ограничена 270 днями.\n\n### Счетчики\n* ~~views - общее число просмотров объявления;~~ __DEPRECATED (будет удалено в апреле 2021 г.).__ Используйте поле uniqViews.\n* uniqViews - число уникальных пользователей, просмотревших объявление;\n* ~~contacts - число контактов [1];~~ __DEPRECATED (будет удалено в апреле 2021 г.).__ Используйте поле uniqContacts.\n* uniqContacts - число уникальных пользователей, совершивших контакты [1];\n* ~~favorites - число добавлений объявления в \"избранное\";~~ __DEPRECATED (будет удалено в апреле 2021 г.).__ Используйте поле uniqFavorites.\n* uniqFavorites - число уникальных пользователей, добавивших объявление в \"избранное\".\n\n### Группировка счетчиков\nСчетчики могут быть сгруппированы [2] по:\n* дням;\n* неделям - в поле `date` соответствующей структуры будет первый день недели;\n* месяцам - в поле `date` соответствующей структуры будет первый день месяца.\n\n#### Период группировки\nПериод группировки передается в теле запроса в поле `periodGrouping`. Доступные значения этого поля:\n* \"day\" (по умолчанию) - без группировки;\n* \"week\" - суммирование счетчиков за неделю;\n* \"month\" - суммирование счетчиков за месяц.\n\n### Примечания\n* [1]: Под контактом понимаются: запросы телефона продавца, начатый чат с продавцом по конкретному объявлению, отклик на резюме и пр.\n* [2]: Группировка уникальных пользователей происходит только в рамках одного дня.\n",
+        "operationId": "itemStatsShallow",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatisticsShallowRequestBody"
+              }
+            }
+          },
+          "description": "Набор параметров в теле запроса."
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "result": {
+                    "items": [
+                      {
+                        "itemId": "<item_id_1>",
+                        "stats": [
+                          {
+                            "date": "2020-06-11",
+                            "uniqContacts": 1,
+                            "uniqFavorites": 0,
+                            "uniqViews": 10
+                          },
+                          {
+                            "date": "2020-06-12",
+                            "uniqContacts": 0,
+                            "uniqFavorites": 2,
+                            "uniqViews": 7
+                          }
+                        ]
+                      },
+                      {
+                        "itemId": "<item_id_2>",
+                        "stats": [
+                          {
+                            "date": "2020-06-11",
+                            "uniqContacts": 4,
+                            "uniqFavorites": 3,
+                            "uniqViews": 21
+                          },
+                          {
+                            "date": "2020-06-12",
+                            "uniqContacts": 1,
+                            "uniqFavorites": 1,
+                            "uniqViews": 18
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/StatisticsResponse"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/badRequestError"
+                }
+              }
+            },
+            "description": "Неверный запрос"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/authError"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/notFoundError"
+                }
+              }
+            },
+            "description": "Неверный user_id в запросе"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/serviceError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка метода API"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/serviceUnavailableError"
+                }
+              }
+            },
+            "description": "Метод API временно недоступен"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "stats:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение статистики по списку объявлений",
+        "tags": [
+          "Item"
+        ]
+      }
+    },
+    "/stats/v2/accounts/{user_id}/items": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/userId"
+        },
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/applicationJsonHeader"
+        }
+      ],
+      "post": {
+        "description": "Получение статистических показателей по профилю.\n### Группировки показателей\nИспользуйте группировки, чтобы получать конкретную статистику.  Например, можете запросить только общие значения показателей, а если нужны подробности, — значения показателей по каждому объявлению или за определённый период. Доступные группировки:\n\n  - **totals** — по общему значению показателя за определённый период, без детализации;\n  - **item** — по объявлениям;\n  - **day** — по дням;\n  - **week** — по неделям;\n  - **month** — по месяцам.\n\n\n### Доступные показатели по объявлениям\n#### Основные\n\n  - **views** - Просмотры. Сколько раз объявление показывалось в результатах поиска и рекомендациях. Несколько показов за сутки одному пользователю считаются как один.\n  - **contacts** - Контакты. Количество пользователей, которые посмотрели ваш номер, написали в чат или откликнулись на скидку после рассылки. Несколько контактов за сутки от одного пользователя считаются как один.\n    - **contactsShowPhone** - Посмотрели телефон. Количество пользователей, которые посмотрели ваш телефон или нажали «Позвонить». Несколько таких действий за сутки от одного пользователя считаются как один.\n    - **contactsMessenger** - Написали в чат. Количество пользователей, которые написали вам. Несколько чатов за сутки от одного пользователя считаются как один.\n    - **contactsShowPhoneAndMessenger** - Посмотрели телефон и написали в чат. Количество пользователей, которые и посмотрели ваш телефон, и написали в чат. Несколько таких действий за сутки от одного пользователя считаются как один.\n    - **contactsSbcDiscount** - Откликнулись на скидку в чате. Количество пользователей, которые приняли ваше спецпредложение после рассылки.\n  - **viewsToContactsConversion** - Конверсия из просмотров в контакты. Процент пользователей, которые после перехода в объявление посмотрели ваш телефон или написали в чат.\n  - **favorites** - Добавили в избранное. Сколько раз объявление добавили в избранное.\n  - **averageViewCost** - Средняя цена просмотра. Расходы на размещение и продвижение объявлений делятся на число просмотров.\n  - **averageContactCost** - Средняя цена контакта. Расходы на размещение и продвижение объявлений делятся на число контактов.\n  - **impressions** - Показы. Сколько раз объявление показывалось в результатах поиска и рекомендациях. Несколько показов за сутки одному пользователю считаются как один.\n  - **impressionsToViewsConversion** - Конверсия из показов в просмотры. Процент пользователей, которые перешли в объявление после того, как оно показалось в результатах поиска и рекомендациях.\n\n\n#### Целевые действия\n\n  - **clickPackages**\t- Целевые просмотры. Просмотры, которые оплачены из тарифа и считаются целевыми [по правилам Авито](https://www.avito.ru/legal/rules/paid_services/cost-per-action/#clicks).\n  - **jobContacts** - Отклики на вакансии. Отклики, которые оплачены из тарифа и считаются целевыми [по правилам Авито](https://www.avito.ru/legal/rules/paid_services/cost-per-action/#clicks).\n\n\n#### Заказы с Авито Доставкой\n\n  - **viewsToOrderedItemsConversion** - Конверсия из просмотров в заказанные товары. Процент пользователей, которые после перехода в объявление заказали товар.\n  - **orderedItems** - Заказано товаров. Количество товаров, которые заказали с Авито Доставкой.\n  - **orderedItemsPrice** - Стоимость заказанных товаров в копейках. Общая стоимость заказов. Это сумма, которую вы получите на руки, если клиенты примут заказы.\n  - **deliveredItems** - Доставлено товаров. Количество товаров, которые заказали с Авито Доставкой и уже приняли.\n  - **deliveredItemsPrice** - Стоимость доставленных товаров в копейках. Общая стоимость заказов, которые покупатели приняли. Это сумма, которую вы получаете на руки.\n\n\n#### Посуточная аренда\n\n  - **bookingPlacedCount** - Получено заявок. Общее количество заявок на бронирование\n  - **bookingPlacedPrice** - Стоимость полученных заявок в копейках. Общая стоимость бронирований. Это сумма, которую вы получите на руки, если гости заселятся.\n  - **bookingApprovedCount** - Подтверждено заявок. Количество заявок на бронирование, которые вы подтвердили.\n  - **bookingApprovedPrice** - Стоимость подтвержденных заявок в копейках. Общая стоимость бронирований, которые вы подтвердили. Это сумма, которую вы получите на руки, если гости заселятся.\n  - **bookingAcceptedCount** - Заявки с заселением. Количество бронирований, по которым заселились гости. Заселение засчитывается в 15:00 по Москве на следующий день после заезда.\n  - **bookingAcceptedPrice** - Стоимость заявок с заселением в копейках. Общая стоимость бронирований, по которым заселились гости. Это сумма, которую вы получаете на руки.\n\n\n#### Расходы\n\n  - **allSpending** - Все расходы в копейках. Сколько всего денег и бонусов вы потратили на объявления.\n    - **spending** - Расходы на объявления в копейках. Сколько денег вы потратили на размещение, продвижение, целевые действия и комиссию.\n      - **presenceSpending** - Расходы на размещение и целевые действия в копейках. Сколько денег вы потратили на размещения и целевые действия — просмотры, чаты, звонки и отклики.\n      - **promoSpending** - Расходы на продвижение в копейках. Сколько денег вы потратили на продвижение и на услуги, которые влияют на внешний вид объявления.\n      - **restSpending** - Остальные расходы в копейках. Сколько денег вы потратили на чат-ботов и услуги, которые система не смогла распознать.\n      - **commission** - Комиссия в копейках. Какую комиссию вы заплатили за заказы с Авито Доставкой, которые приняли покупатели, а также за бронирования жилья.\n    - **spendingBonus** - Списано бонусов на объявления. Сколько бонусов вы потратили на размещение, продвижение, целевые действия и комиссию.\n\n\n#### Количество объявлений за период\n\n  - **activeItems** - Активные объявления. Объявления, которые прошли проверку и появились в поиске.        \n    - **newActiveItems** - Новые и опубликованные заново объявления. Сколько объявлений опубликовано впервые или повторно.\n    - **oldActiveItems** - Активны с прошлого периода. Сколько объявлений остаются опубликованными с предыдущего периода.\n\n\n### Примечания\n\n  * Из ручки возвращается не более чем по 1000 сущностей. Вы можете использовать поля запроса limit и offset для регулировки выбранного диапазона.\n  * Глубина данных статистики такого запроса ограничена 270 днями.\n  * В случае недоступности метрики для пользователя она не приходит в ответе. \n  * Система позволяет делать не более одного запроса в минуту на данный метод.\n",
+        "operationId": "itemAnalytics",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyticsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsResponse"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Неверный запрос"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Доступ запрещен"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Слишком много запросов"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "stats:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение статистических показателей по профилю",
+        "tags": [
+          "Item"
+        ]
+      },
+      "x-rate-limiter": {
+        "default": 1
+      }
+    },
+    "/stats/v2/accounts/{user_id}/spendings": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/userId"
+        },
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "$ref": "#/components/parameters/applicationJsonHeader"
+        }
+      ],
+      "post": {
+        "description": "Получение статистики расходов профиля.\n\n**Внимание:** Глубина данных статистики такого запроса ограничена 270 днями.\n\n**Внимание:** Система позволяет делать не более одного запроса в минуту на данный метод.\n\n### Группировки расходов\nИспользуйте группировки, чтобы получать конкретную статистику. Доступные группировки:\n\n  - **day** — по дням;\n  - **week** — по неделям;\n  - **month** — по месяцам.\n\n\n### Доступные типы расходов\n\n  - **all** - Все расходы в копейках. Сколько всего денег вы потратили на объявления и прочие услуги.\n    - **promotion** - Расходы на продвижение в копейках. Сколько денег вы потратили на продвижение объявлений и услуги, которые влияют на внешний вид объявления.\n    - **presence** - Расходы на размещение и целевые действия в копейках. Сколько денег вы потратили на размещение объявлений и целевые действия с ними — просмотры, чаты, звонки и отклики.\n    - **commission** - Комиссия в копейках. Какую комиссию вы заплатили за заказы с Авито Доставкой, которые приняли покупатели, а также за бронирование жилья.\n    - **rest** - Остальные расходы в копейках. Сколько денег вы потратили на чат-ботов и услуги, которые система не смогла распознать.\n",
+        "operationId": "accountSpendings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpendingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendingsResponse"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Неверный запрос"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Доступ запрещен"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Слишком много запросов"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "stats:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение статистики расходов профиля",
+        "tags": [
+          "Item"
+        ]
+      },
+      "x-rate-limiter": {
+        "default": 1
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "Общие методы API для работы с объявлениями на Авито\nОписание API произведено в формате [**Swagger 3.0**](https://github.com/OAI/OpenAPI-Specification/blob/master/versions/3.0.0.md).\nВы можете использовать данный файл для ознакомления с методами API, а также для генерации базового\nкода для работы с API на удобном для вас языке программирования с помощью утилиты\n[**Swagger Codegen**](https://swagger.io/swagger-codegen/) или online сервиса [**Swagger Editor**](https://editor.swagger.io/).\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\nПо всем вопросам работы с API необходимо обращаться в Службу Поддержки профессиональных инструментов:\n\n<li>телефон: <b>+7 495 777-10-66</b></li>\n<li>email: <a href=\"mailto:supportautoload@avito.ru\">supportautoload@avito.ru</a></li>\n\n# Типы авторизации\nДля использования данного API запрос должен быть авторизован. В данный момент API Авито использует следующие механизмы авторизации.\n\n<!-- ReDoc-Inject: <security-definitions> -->\n\nПодробнее о каждом механизме и его назначении можно прочитать в соответствующем разделе.\n",
+      "name": "Item",
+      "x-displayName": "Объявления"
+    }
+  ]
+}

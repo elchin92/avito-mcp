@@ -1,0 +1,915 @@
+{
+  "components": {
+    "headers": {
+      "X-RateLimit-Limit": {
+        "description": "Количество запросов в минуту",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "X-RateLimit-Remaining": {
+        "description": "Доступное количество запросов в текущем временном окне",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      }
+    },
+    "parameters": {
+      "authHeader": {
+        "description": "Токен для авторизации",
+        "in": "header",
+        "name": "Authorization",
+        "required": true,
+        "schema": {
+          "example": "Bearer ACCESS_TOKEN",
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "badRequest": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Bad request"
+      },
+      "forbidden": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Forbidden"
+      },
+      "internalError": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Internal Error"
+      },
+      "notFound": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Not found"
+      },
+      "timeout": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Timeout"
+      },
+      "tooManyRequests": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Too Many Requests"
+      },
+      "unauthorized": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Unauthorized"
+      }
+    },
+    "schemas": {
+      "AutoBid": {
+        "properties": {
+          "actionTypeID": {
+            "description": "Тип события (1 - звонок | 5 - пакет кликов | 7 - мессенджер, передача контакта в чате)",
+            "example": 5,
+            "type": "integer"
+          },
+          "budgetPenny": {
+            "description": "Текущий бюджет в копейках",
+            "example": 1400,
+            "type": "integer"
+          },
+          "budgetType": {
+            "description": "Тип бюджета (\"1d\" - дневной | \"7d\" - недельный | \"30d\" - месячный)",
+            "example": "1d",
+            "type": "string"
+          },
+          "itemID": {
+            "description": "Идентификатор объявления",
+            "example": 123456789,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "itemID",
+          "budgetPenny",
+          "budgetType",
+          "actionTypeID"
+        ],
+        "type": "object"
+      },
+      "ManualBid": {
+        "properties": {
+          "actionTypeID": {
+            "description": "Тип события (1 - звонок | 5 - пакет кликов | 7 - мессенджер, передача контакта в чате)",
+            "example": 5,
+            "type": "integer"
+          },
+          "bidPenny": {
+            "description": "Текущая цена за целевое действие в копейках",
+            "example": 1400,
+            "type": "integer"
+          },
+          "itemID": {
+            "description": "Идентификатор объявления",
+            "example": 123456789,
+            "type": "integer"
+          },
+          "limitPenny": {
+            "description": "Дневной лимит в копейках",
+            "example": 192400,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "itemID",
+          "bidPenny",
+          "actionTypeID"
+        ],
+        "type": "object"
+      },
+      "RemovePromotion": {
+        "properties": {
+          "itemID": {
+            "description": "Идентификатор объявления",
+            "example": 123456789,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "itemID"
+        ],
+        "type": "object"
+      },
+      "auto": {
+        "nullable": true,
+        "properties": {
+          "budgetPenny": {
+            "description": "Текущий бюджет (в копейках)",
+            "nullable": true,
+            "type": "integer"
+          },
+          "budgetType": {
+            "description": "Тип бюджета (\"1d\" - дневной | \"7d\" - недельный | \"30d\" - месячный)",
+            "nullable": true,
+            "type": "string"
+          },
+          "dailyBudget": {
+            "$ref": "#/components/schemas/budget"
+          },
+          "maxBudgetPenny": {
+            "description": "Максимальный бюджет (в копейках)",
+            "type": "integer"
+          },
+          "minBudgetPenny": {
+            "description": "Минимальный бюджет (в копейках)",
+            "type": "integer"
+          },
+          "monthlyBudget": {
+            "$ref": "#/components/schemas/budget"
+          },
+          "weeklyBudget": {
+            "$ref": "#/components/schemas/budget"
+          }
+        },
+        "required": [
+          "minBudgetPenny",
+          "maxBudgetPenny",
+          "dailyBudget",
+          "weeklyBudget",
+          "monthlyBudget"
+        ],
+        "type": "object"
+      },
+      "autoPromotion": {
+        "nullable": true,
+        "properties": {
+          "budgetPenny": {
+            "description": "Текущий бюджет в копейках",
+            "type": "integer"
+          },
+          "budgetType": {
+            "description": "Тип бюджета (\"1d\" - дневной | \"7d\" - недельный | \"30d\" - месячный)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "budgetPenny",
+          "budgetType"
+        ],
+        "type": "object"
+      },
+      "bid": {
+        "properties": {
+          "compare": {
+            "description": "Количество процентных пунктов. (На сколько выше в сравнении с конкурентами)",
+            "type": "integer"
+          },
+          "maxForecast": {
+            "description": "Максимальное кол-во ЦД за цену ЦД",
+            "type": "integer"
+          },
+          "minForecast": {
+            "description": "Минимальное кол-во ЦД за цену ЦД",
+            "type": "integer"
+          },
+          "valuePenny": {
+            "description": "Цена за целевое действие (в копейках)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "valuePenny",
+          "minForecast",
+          "maxForecast",
+          "compare"
+        ],
+        "type": "object"
+      },
+      "budget": {
+        "properties": {
+          "budgets": {
+            "items": {
+              "$ref": "#/components/schemas/budgetValue"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "type": "array"
+          },
+          "maxLimitPenny": {
+            "description": "Максимальный лимит (в копейках)",
+            "type": "integer"
+          },
+          "minLimitPenny": {
+            "description": "Минимальный лимит (в копейках)",
+            "type": "integer"
+          },
+          "recBudgetPenny": {
+            "description": "Рекомендованный лимит (в копейках)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "budgets",
+          "minLimitPenny",
+          "maxLimitPenny",
+          "recBudgetPenny"
+        ],
+        "type": "object"
+      },
+      "budgetValue": {
+        "properties": {
+          "compare": {
+            "description": "Количество процентных пунктов. (На сколько выше в сравнении с конкурентами)",
+            "type": "integer"
+          },
+          "maxForecast": {
+            "description": "Максимальное кол-во ЦД за цену ЦД",
+            "type": "integer"
+          },
+          "minForecast": {
+            "description": "Минимальное кол-во ЦД за цену ЦД",
+            "type": "integer"
+          },
+          "valuePenny": {
+            "description": "Бюджет (в копейках)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "valuePenny",
+          "minForecast",
+          "maxForecast",
+          "compare"
+        ],
+        "type": "object"
+      },
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "description": "Текст ошибки",
+            "example": "Что-то пошло не так",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "getBidsOut": {
+        "properties": {
+          "actionTypeID": {
+            "description": "Тип события (1 - звонок | 5 - пакет кликов | 7 - мессенджер, передача контакта в чате)",
+            "type": "integer"
+          },
+          "auto": {
+            "$ref": "#/components/schemas/auto"
+          },
+          "manual": {
+            "$ref": "#/components/schemas/manual"
+          },
+          "selectedType": {
+            "description": "Выбранный тип продвижения (\"manual\" - ручное продвижение | \"auto\" - автоматическое продвижение)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionTypeID",
+          "selectedType"
+        ],
+        "type": "object"
+      },
+      "getPromotionsByItemIdsIn": {
+        "properties": {
+          "itemIDs": {
+            "items": {
+              "description": "Идентификатор объявления",
+              "example": 1,
+              "type": "integer"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "itemIDs"
+        ],
+        "type": "object"
+      },
+      "getPromotionsByItemIdsOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "actionTypeID": {
+                  "description": "Тип события (1 - звонок | 5 - пакет кликов | 7 - мессенджер, передача контакта в чате)",
+                  "type": "integer"
+                },
+                "autoPromotion": {
+                  "$ref": "#/components/schemas/autoPromotion"
+                },
+                "itemID": {
+                  "description": "Идентификатор объявления",
+                  "type": "integer"
+                },
+                "manualPromotion": {
+                  "$ref": "#/components/schemas/manualPromotion"
+                }
+              },
+              "required": [
+                "itemID",
+                "actionTypeID"
+              ],
+              "type": "object"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "manual": {
+        "nullable": true,
+        "properties": {
+          "bidPenny": {
+            "description": "Текущая цена за целевое действие (в копейках)",
+            "nullable": true,
+            "type": "integer"
+          },
+          "bids": {
+            "items": {
+              "$ref": "#/components/schemas/bid"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "type": "array"
+          },
+          "limitPenny": {
+            "description": "Дневной лимит (в копейках)",
+            "nullable": true,
+            "type": "integer"
+          },
+          "maxBidPenny": {
+            "description": "Максимальная цена за целевое действие (в копейках)",
+            "type": "integer"
+          },
+          "maxLimitPenny": {
+            "description": "Максимальный дневной лимит (в копейках)",
+            "type": "integer"
+          },
+          "minBidPenny": {
+            "description": "Минимальная цена за целевое действие (в копейках)",
+            "type": "integer"
+          },
+          "minLimitPenny": {
+            "description": "Минимальный дневной лимит (в копейках)",
+            "type": "integer"
+          },
+          "recBidPenny": {
+            "description": "Рекомендуемая цена за целевое действие (в копейках)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "recBidPenny",
+          "minBidPenny",
+          "maxBidPenny",
+          "minLimitPenny",
+          "maxLimitPenny",
+          "bids"
+        ],
+        "type": "object"
+      },
+      "manualPromotion": {
+        "nullable": true,
+        "properties": {
+          "bidPenny": {
+            "description": "Текущая цена за целевое действие в копейках",
+            "type": "integer"
+          },
+          "limitPenny": {
+            "description": "Дневной лимит в копейках",
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bidPenny"
+        ],
+        "type": "object"
+      },
+      "tooManyRequestsError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 429,
+                "format": "int32",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": {
+              "cpxpromo:edit": "Редактирование цен за целевые действия",
+              "cpxpromo:read": "Получение цен за целевые действия"
+            },
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "description": "Методы для работы с настройками цены целевого действия.\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\n",
+    "title": "Настройка цены целевого действия",
+    "version": "1"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/cpxpromo/1/getBids/{itemId}": {
+      "get": {
+        "description": "Метод позволяет получить детализированную информацию о действующих и доступных ценах целевого действия (в копейках), бюджетах (в копейках) и преимуществах перед конкурентами.\nМаксимальное количество запросов в минуту - 20\n",
+        "operationId": "getBids",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          },
+          {
+            "in": "path",
+            "name": "itemId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/getBidsOut"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/tooManyRequestsError"
+                }
+              }
+            },
+            "description": "Превышено допустимое количество запросов",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "cpxpromo:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение детализированной информации о действующих и доступных ценах за целевые действия и бюджетах",
+        "x-rate-limiter": {
+          "default": 20
+        }
+      }
+    },
+    "/cpxpromo/1/getPromotionsByItemIds": {
+      "post": {
+        "description": "Метод позволяет получить текущие цены целевого действия (в копейках) и бюджеты (в копейках) по нескольким объявлениям.\nМаксимальное количество передаваемых объявлений - 200.\nМаксимальное количество запросов в минуту - 400.\n",
+        "operationId": "getPromotionsByItemIds",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/getPromotionsByItemIdsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/getPromotionsByItemIdsOut"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/tooManyRequestsError"
+                }
+              }
+            },
+            "description": "Превышено допустимое количество запросов",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "cpxpromo:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение текущих цен за целевое действие и бюджетов по нескольким объявлениям",
+        "x-rate-limiter": {
+          "default": 400
+        }
+      }
+    },
+    "/cpxpromo/1/remove": {
+      "post": {
+        "description": "Метод позволяет остановить продвижение и переключиться на цены из прайс-листа. \nМаксимальное количество запросов в минуту - 300\n",
+        "operationId": "removePromotion",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemovePromotion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "message": {
+                      "description": "Текст сообщения",
+                      "example": "Ваше объявление теперь тарифицируется по базовой цене целевого действия",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/tooManyRequestsError"
+                }
+              }
+            },
+            "description": "Превышено допустимое количество запросов",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "cpxpromo:edit"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Остановка продвижения",
+        "x-rate-limiter": {
+          "default": 300
+        }
+      }
+    },
+    "/cpxpromo/1/setAuto": {
+      "post": {
+        "description": "Метод позволяет установить бюджет (в копейках) и срок, за который потратится этот бюджет (\"1d\" — сутки; \"7d\" — неделя; \"30d\" — месяц). Бюджет указывать необязательно.\n\nАвтоматическое продвижение пока что нельзя запустить в категории «Транспорт»\n\nМаксимальное количество запросов в минуту - 10.\n",
+        "operationId": "saveAutoBid",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutoBid"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/tooManyRequestsError"
+                }
+              }
+            },
+            "description": "Превышено допустимое количество запросов",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "cpxpromo:edit"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Применение автоматической настройки",
+        "x-rate-limiter": {
+          "default": 10
+        }
+      }
+    },
+    "/cpxpromo/1/setManual": {
+      "post": {
+        "description": "Метод позволяет установить цену за целевое действие и лимит трат (обе суммы нужно указать в копейках).\n\nЦена целевого действия должна быть больше минимальной цены (посмотреть минимальную цену можно в ручке получения получения детализированной информации о действующих и доступных ценах за целевые действия и бюджетах). Лимит трат указывать необязательно.\n\nМаксимальное количество запросов в минуту - 20.\n",
+        "operationId": "saveManualBid",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualBid"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/tooManyRequestsError"
+                }
+              }
+            },
+            "description": "Превышено допустимое количество запросов",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "cpxpromo:edit"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Применение ручной настройки",
+        "x-rate-limiter": {
+          "default": 20
+        }
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "# API настройки цены целевого действия — это набор методов, которые помогут настроить цену целевого действия, бюджет и лимит трат и запустить продвижение одного или нескольких объявлений. Через этот API можно организовать интеграцию между Авито и сторонней системой в обе стороны.\nОписание API произведено в формате [**Swagger 3.0**](https://github.com/OAI/OpenAPI-Specification/blob/master/versions/3.0.0.md).\nВы можете использовать данный файл для ознакомления с методами API, а также для генерации базового кода для работы с API на удобном для вас языке программирования с помощью утилиты\n[**Swagger Codegen**](https://swagger.io/swagger-codegen/) или online сервиса [**Swagger Editor**](https://editor.swagger.io/).\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\nПо всем вопросам работы с API необходимо обращаться в Службу Поддержки профессиональных инструментов:\n\n<li>телефон: <b>+7 495 777-10-66</b></li>\n<li>email: <a href=\"mailto:supportautoload@avito.ru\">supportautoload@avito.ru</a></li>\n\n# Типы авторизации\nДля использования данного API запрос должен быть авторизован. В данный момент API Авито использует следующие механизмы авторизации. <!-- ReDoc-Inject: <security-definitions> -->\n",
+      "name": "Настройка цены целевого действия",
+      "x-displayName": "Настройка цены целевого действия"
+    }
+  ]
+}

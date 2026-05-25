@@ -1,0 +1,16 @@
+{
+  "_comment": "Example MCP config for running avito-mcp LOCALLY from source. Copy to .mcp.json and fill in your credentials. For most users the npx-based config from README.md is simpler — no clone/build required.",
+  "mcpServers": {
+    "avito": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["./dist/server.js"],
+      "env": {
+        "Client_id": "YOUR_CLIENT_ID",
+        "Client_secret": "YOUR_CLIENT_SECRET",
+        "Profile_id": "YOUR_PROFILE_ID",
+        "LOG_LEVEL": "info"
+      }
+    }
+  }
+}

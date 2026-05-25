@@ -1,0 +1,471 @@
+{
+  "components": {
+    "headers": {
+      "X-RateLimit-Limit": {
+        "description": "Количество запросов в минуту",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "X-RateLimit-Remaining": {
+        "description": "Доступное количество запросов в текущем временном окне",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      }
+    },
+    "parameters": {
+      "authHeader": {
+        "description": "Токен для авторизации",
+        "in": "header",
+        "name": "Authorization",
+        "required": true,
+        "schema": {
+          "example": "Bearer ACCESS_TOKEN",
+          "type": "string"
+        }
+      },
+      "pathItemId": {
+        "description": "Идентификатор объявления на сайте",
+        "in": "path",
+        "name": "item_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "pathUserId": {
+        "description": "Номер пользователя в Личном кабинете Авито",
+        "in": "path",
+        "name": "user_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "sourceHeader": {
+        "description": "Имя сервиса, отправляющего запрос",
+        "in": "header",
+        "name": "X-Source",
+        "required": true,
+        "schema": {
+          "example": "someName",
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "TariffContract": {
+        "properties": {
+          "bonus": {
+            "description": "Количество бонусов на продвижение по тарифу",
+            "type": "integer"
+          },
+          "closeTime": {
+            "description": "Дата и время окончания в формате Unix time. Для неактивных тарифов значение поля будет null",
+            "example": 1616589821,
+            "type": "integer"
+          },
+          "isActive": {
+            "description": "Признак активности",
+            "example": true,
+            "type": "boolean"
+          },
+          "level": {
+            "description": "Уровень тарифа",
+            "example": "Тариф «Максимальный +»",
+            "type": "string"
+          },
+          "packages": {
+            "description": "Пакеты размещений, доступные в рамках тарифа",
+            "items": {
+              "$ref": "#/components/schemas/TariffContractPackage"
+            },
+            "type": "array"
+          },
+          "price": {
+            "description": "Стоимость тарифа",
+            "properties": {
+              "originalPrice": {
+                "description": "Цена тарифа без учёта скидки",
+                "type": "number"
+              },
+              "price": {
+                "description": "Цена тарифа со скидкой",
+                "type": "number"
+              }
+            },
+            "type": "object"
+          },
+          "startTime": {
+            "description": "Дата и время начала в формате Unix time",
+            "example": 1613997821,
+            "type": "integer"
+          }
+        }
+      },
+      "TariffContractPackage": {
+        "properties": {
+          "categories": {
+            "description": "Доступные категории для размещений из пакета",
+            "items": {
+              "properties": {
+                "name": {
+                  "description": "Название категории",
+                  "example": "Автомобили",
+                  "type": "string"
+                },
+                "subCategories": {
+                  "description": "Список выбранных подкатегорий.\nЕсли категория выбрана целиком, со всеми подкатегориями, здесь будет пустой массив.\n",
+                  "items": {
+                    "example": "С пробегом",
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "locations": {
+            "description": "Доступные локации для размещений из пакета",
+            "items": {
+              "example": "Санкт-Петербург и Ленинградская область",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "priceConditions": {
+            "description": "Ценовая группа",
+            "items": {
+              "properties": {
+                "categoryName": {
+                  "description": "Название ценовой группы",
+                  "type": "string"
+                },
+                "originalPrice": {
+                  "description": "Стоимость в ценовой группе без учёта скидки",
+                  "type": "number"
+                },
+                "price": {
+                  "description": "Стоимость в ценой группе со скидкой",
+                  "type": "number"
+                },
+                "sort": {
+                  "description": "Порядок сортировки ценовых групп",
+                  "type": "integer"
+                },
+                "total": {
+                  "description": "Количество размещений в ценовой группе",
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "remain": {
+            "description": "Оставшееся число размещений в пакете",
+            "type": "integer"
+          },
+          "total": {
+            "description": "Размер пакета",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "TariffInfo": {
+        "description": "Информация по текущему и запланированному контракту",
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/TariffContract"
+          },
+          "scheduled": {
+            "$ref": "#/components/schemas/TariffContract"
+          }
+        },
+        "type": "object"
+      },
+      "authError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 401,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Unauthorized",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "notFoundError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 404,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Not found",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "serviceError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 500,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Описание ошибки",
+                "example": "Error while processing request. Please, contact support",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](/api-catalog/auth/documentation#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": {
+              "autoload:reports": "Получение отчетов Автозагрузки",
+              "items:apply_vas": "Применение дополнительных услуг",
+              "items:info": "Получение информации об объявлениях",
+              "job:applications": "Получение информации об откликах на вакансии",
+              "job:cv": "Получение информации резюме",
+              "job:write": "Изменение объявлений вертикали Работа",
+              "messenger:read": "Чтение сообщений в мессенджере Авито",
+              "messenger:write": "Модифицирование сообщений в мессенджере Авито",
+              "short_term_rent:read": "Получение информации об объявлениях краткосрочной аренды",
+              "short_term_rent:write": "Изменение объявлений краткосрочной аренды",
+              "stats:read": "Получение статистики объявлений",
+              "user:read": "Получение информации о пользователе",
+              "user_balance:read": "Получение баланса пользователя",
+              "user_operations:read": "Получение истории операций пользователя"
+            },
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "email": "supportautoload@avito.ru"
+    },
+    "description": "API для работы с тарифами в категории транспорт\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\n<!-- ReDoc-Inject: <security-definitions> -->\n",
+    "title": "Тарифы",
+    "version": "1"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/tariff/info/1": {
+      "get": {
+        "description": "Получение информации по тарифу.\n\n**Внимание:** информация доступна только для тарифов в категории \"Транспорт\". **Тариф должен быть не \"СРА\"**\n",
+        "operationId": "getTariffInfo",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "current": {
+                    "bonus": 34432,
+                    "closeTime": 1616589821,
+                    "isActive": true,
+                    "level": "Тариф «Максимальный +»",
+                    "packages": [
+                      {
+                        "categories": [
+                          {
+                            "name": "Автомобили",
+                            "subCategories": [
+                              "С пробегом"
+                            ]
+                          }
+                        ],
+                        "locations": [
+                          "Санкт-Петербург и Ленинградская область"
+                        ],
+                        "priceConditions": [
+                          {
+                            "categoryName": "От 500 000 до 1 000 000",
+                            "originalPrice": 88001,
+                            "price": 80200,
+                            "sort": 1,
+                            "total": 140
+                          }
+                        ],
+                        "remain": 105,
+                        "total": 140
+                      }
+                    ],
+                    "price": {
+                      "originalPrice": 128441,
+                      "price": 114777
+                    },
+                    "startTime": 1613997821
+                  },
+                  "scheduled": {
+                    "bonus": 36696,
+                    "closeTime": null,
+                    "isActive": false,
+                    "level": "Тариф «Максимальный +»",
+                    "packages": [
+                      {
+                        "categories": [
+                          {
+                            "name": "Автомобили",
+                            "subCategories": [
+                              "С пробегом"
+                            ]
+                          }
+                        ],
+                        "locations": [
+                          "Санкт-Петербург и Ленинградская область"
+                        ],
+                        "priceConditions": [
+                          {
+                            "categoryName": "От 500 000 до 1 000 000",
+                            "originalPrice": 81000,
+                            "price": 75200,
+                            "sort": 1,
+                            "total": 151
+                          }
+                        ],
+                        "remain": 151,
+                        "total": 151
+                      }
+                    ],
+                    "price": {
+                      "originalPrice": 137980,
+                      "price": 122321
+                    },
+                    "startTime": 1616589821
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/TariffInfo"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/authError"
+                }
+              }
+            },
+            "description": "Требуется аутентификация"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/notFoundError"
+                }
+              }
+            },
+            "description": "Тариф не найден"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/serviceError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка метода API"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Информация по тарифу",
+        "tags": [
+          "Tariff"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ]
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "API для работы с Тарифами\n",
+      "name": "Tariff",
+      "x-displayName": "Tariff"
+    }
+  ]
+}

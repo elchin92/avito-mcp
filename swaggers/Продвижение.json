@@ -1,0 +1,1507 @@
+{
+  "components": {
+    "parameters": {
+      "AuthHeader": {
+        "description": "Токен для авторизации",
+        "example": "Bearer ACCESS_TOKEN",
+        "in": "header",
+        "name": "Authorization",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "XIsEmployee": {
+        "description": "Пользователь работает от имени сотрудника компании (boolean, \"true\"\\\\\"false\")",
+        "in": "header",
+        "name": "X-Is-Employee",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "BbipForecastByItemV1": {
+        "description": "Прогноз продвижения по объявлению",
+        "properties": {
+          "itemId": {
+            "description": "Идентификатор объявления",
+            "example": 2,
+            "format": "int64",
+            "type": "integer"
+          },
+          "max": {
+            "description": "Ожидаемый максимальный прирост просмотров",
+            "example": 336,
+            "type": "integer"
+          },
+          "min": {
+            "description": "Ожидаемый минимальный прирост просмотров",
+            "example": 35,
+            "type": "integer"
+          },
+          "totalOldPrice": {
+            "description": "Общая ценность продвижения за весь период до применения скидок и акций (в копейках)",
+            "example": 26166,
+            "type": "integer"
+          },
+          "totalPrice": {
+            "description": "Общая стоимость продвижения за весь период (в копейках)",
+            "example": 26166,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "itemId",
+          "min",
+          "max",
+          "totalOldPrice",
+          "totalPrice"
+        ],
+        "type": "object"
+      },
+      "BbipForecastRequestByItemV1": {
+        "properties": {
+          "duration": {
+            "description": "Период в днях, для которого запрашивается прогноз",
+            "example": 7,
+            "type": "integer"
+          },
+          "itemId": {
+            "description": "Идентификатор объявления",
+            "format": "int64",
+            "type": "integer"
+          },
+          "oldPrice": {
+            "description": "Общая ценность продвижения за один день (в копейках)",
+            "example": 10000,
+            "type": "integer"
+          },
+          "price": {
+            "description": "Стоимость продвижения за один день (в копейках)",
+            "example": 10000,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "itemId",
+          "duration",
+          "oldPrice",
+          "price"
+        ],
+        "type": "object"
+      },
+      "BbipOrderByItemV1": {
+        "description": "Заявка на подключение услуг продвижения BBIP по объявлению",
+        "properties": {
+          "duration": {
+            "description": "Период действия продвижения в днях",
+            "example": 7,
+            "type": "integer"
+          },
+          "itemId": {
+            "description": "Идентификатор объявления",
+            "format": "int64",
+            "type": "integer"
+          },
+          "oldPrice": {
+            "description": "Общая ценность продвижения за один день (в копейках)",
+            "example": 10000,
+            "type": "integer"
+          },
+          "price": {
+            "description": "Стоимость продвижения за один день (в копейках)",
+            "example": 10000,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "itemId",
+          "duration",
+          "oldPrice",
+          "price"
+        ],
+        "type": "object"
+      },
+      "BbipSuggestBudgetV1": {
+        "description": "Объединённый вариант бюджета продвижения по набору объявлений",
+        "properties": {
+          "isRecommended": {
+            "description": "Рекомендуемый вариант бюджета",
+            "type": "boolean"
+          },
+          "oldPrice": {
+            "description": "Общая ценность продвижения за один день до применения скидок и акций (в копейках)",
+            "example": 10000,
+            "format": "int64",
+            "type": "integer"
+          },
+          "price": {
+            "description": "Стоимость продвижения за один день (в копейках)",
+            "example": 10000,
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "price",
+          "oldPrice"
+        ],
+        "type": "object"
+      },
+      "BbipSuggestByItemV1": {
+        "description": "Вариант бюджета продвижения по объявлению",
+        "properties": {
+          "budgets": {
+            "items": {
+              "$ref": "#/components/schemas/BbipSuggestBudgetV1"
+            },
+            "type": "array"
+          },
+          "duration": {
+            "$ref": "#/components/schemas/BbipSuggestDurationRangeV1"
+          },
+          "itemId": {
+            "description": "Идентификатор объявления",
+            "example": 2,
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "itemId",
+          "duration",
+          "budgets"
+        ],
+        "type": "object"
+      },
+      "BbipSuggestDurationRangeV1": {
+        "description": "Вилка доступных периодов для продвижения в днях",
+        "properties": {
+          "from": {
+            "description": "Минимальное кол-во дней для продвижения",
+            "example": 1,
+            "type": "integer"
+          },
+          "recommended": {
+            "description": "Рекомендуемое кол-во дней для продвижения",
+            "example": 5,
+            "type": "integer"
+          },
+          "to": {
+            "description": "Максимальное кол-во дней для продвижения",
+            "example": 7,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "CommonError": {
+        "properties": {
+          "details": {
+            "description": "Информация об ошибках в привязке к полям",
+            "items": {
+              "properties": {
+                "message": {
+                  "description": "Информация об ошибке",
+                  "type": "string"
+                },
+                "path": {
+                  "description": "Путь к полю",
+                  "type": "string"
+                },
+                "source": {
+                  "description": "Источник значения",
+                  "enum": [
+                    "header",
+                    "url",
+                    "query",
+                    "body"
+                  ],
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Значение поля в строковом представление",
+                  "nullable": true,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "path",
+                "message"
+              ],
+              "type": "object"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "message": {
+            "description": "Сообщение об ошибке",
+            "example": "Validation error",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "ErrorByItemV1": {
+        "description": "Информация об ошибке выполнения операции по объявлению",
+        "properties": {
+          "errorCode": {
+            "description": "Код ошибки",
+            "example": 1005,
+            "format": "int64",
+            "type": "integer"
+          },
+          "errorText": {
+            "description": "Текст ошибки",
+            "example": "Услуга недоступна для объявлений с типом Резюме",
+            "type": "string"
+          },
+          "itemId": {
+            "description": "Идентификатор объявления",
+            "example": 2,
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "itemId",
+          "errorCode",
+          "errorText"
+        ],
+        "type": "object"
+      },
+      "GetBbipForecastByItemsV1Req": {
+        "properties": {
+          "items": {
+            "description": "Данные по объявлениям для запроса прогноза",
+            "items": {
+              "$ref": "#/components/schemas/BbipForecastRequestByItemV1"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "GetBbipForecastByItemsV1Resp": {
+        "properties": {
+          "errors": {
+            "description": "Информация об ошибках по объявлениям",
+            "items": {
+              "$ref": "#/components/schemas/ErrorByItemV1"
+            },
+            "type": "array"
+          },
+          "items": {
+            "description": "Прогноз по каждому объявлению",
+            "items": {
+              "$ref": "#/components/schemas/BbipForecastByItemV1"
+            },
+            "type": "array"
+          },
+          "totalPrice": {
+            "description": "Общая стоимость по всем объявлениям (в копейках)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "errors"
+        ],
+        "type": "object"
+      },
+      "GetBbipSuggestsV1Req": {
+        "properties": {
+          "itemIds": {
+            "description": "Идентификаторы объявлений",
+            "items": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "GetBbipSuggestsV1Resp": {
+        "properties": {
+          "errors": {
+            "description": "Информация об ошибках получения варианта бюджета",
+            "items": {
+              "$ref": "#/components/schemas/ErrorByItemV1"
+            },
+            "type": "array"
+          },
+          "items": {
+            "description": "Предлагаемые варианты бюджетов по каждому объявлению",
+            "items": {
+              "$ref": "#/components/schemas/BbipSuggestByItemV1"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "errors"
+        ],
+        "type": "object"
+      },
+      "GetDictOfServicesV1Resp": {
+        "description": "Список услуг",
+        "items": {
+          "$ref": "#/components/schemas/ServiceInfoV1"
+        },
+        "type": "array"
+      },
+      "GetOrderStatusV1Req": {
+        "properties": {
+          "orderId": {
+            "description": "Идентификатор заявки на подключение услуг продвижения",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "GetOrderStatusV1Resp": {
+        "properties": {
+          "errors": {
+            "description": "Информация об ошибках получения данных по объявлениям",
+            "items": {
+              "$ref": "#/components/schemas/ErrorByItemV1"
+            },
+            "type": "array"
+          },
+          "items": {
+            "description": "Статус заявки на подключение услуги по объявлениям",
+            "items": {
+              "$ref": "#/components/schemas/OrderStatusByItemV1"
+            },
+            "type": "array"
+          },
+          "orderId": {
+            "description": "Идентификатор заявки на подключение услуг продвижения",
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "totalPrice": {
+            "description": "Общая стоимость заявки (в копейках)",
+            "example": 26166,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "GetServicesByItemsV1Req": {
+        "properties": {
+          "itemIds": {
+            "description": "Идентификаторы объявлений",
+            "items": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "GetServicesByItemsV1Resp": {
+        "properties": {
+          "errors": {
+            "description": "Информация об ошибках получения варианта бюджета",
+            "items": {
+              "$ref": "#/components/schemas/ErrorByItemV1"
+            },
+            "type": "array"
+          },
+          "items": {
+            "description": "Информация об услугах продвижения по объявлениям",
+            "items": {
+              "$ref": "#/components/schemas/ServicesByItemV1"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "ListOrdersByUserV1Req": {
+        "properties": {
+          "pagination": {
+            "description": "Данные для постраничного чтения",
+            "nullable": true,
+            "properties": {
+              "page": {
+                "default": 1,
+                "description": "Номер страницы",
+                "format": "int32",
+                "type": "integer"
+              },
+              "perPage": {
+                "default": 20,
+                "description": "Количество записей на странице",
+                "format": "int32",
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "ListOrdersByUserV1Resp": {
+        "properties": {
+          "orders": {
+            "description": "Список заявок на подключение услуг продвижения по объявлениям",
+            "items": {
+              "$ref": "#/components/schemas/OrderBrief"
+            },
+            "type": "array"
+          },
+          "pagination": {
+            "description": "Данные для постраничного чтения",
+            "properties": {
+              "hasNextPage": {
+                "description": "Признак наличия следующей страницы",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "hasNextPage"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "orders",
+          "pagination"
+        ],
+        "type": "object"
+      },
+      "NotEnoughMoneyError": {
+        "properties": {
+          "message": {
+            "description": "Сообщение об ошибке",
+            "example": "Validation error",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "OrderBbipForItemsV1Req": {
+        "properties": {
+          "items": {
+            "description": "Заявки на подключение BBIP по отдельным объявлениям",
+            "items": {
+              "$ref": "#/components/schemas/BbipOrderByItemV1"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "OrderBbipForItemsV1Resp": {
+        "properties": {
+          "errors": {
+            "description": "Информация об ошибках по объявлениям",
+            "items": {
+              "$ref": "#/components/schemas/ErrorByItemV1"
+            },
+            "type": "array"
+          },
+          "orderId": {
+            "description": "Идентификатор созданной заявки на подключение услуг продвижения",
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "errors"
+        ],
+        "type": "object"
+      },
+      "OrderBrief": {
+        "description": "Информация о заявке на подключение услуг продвижения",
+        "properties": {
+          "createdAt": {
+            "description": "Дата создания заявки",
+            "example": "2025-11-10T13:46:15.000Z",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "Идентификатор заявки",
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          }
+        },
+        "type": "object"
+      },
+      "OrderService": {
+        "description": "Информация об услуге в заявке",
+        "properties": {
+          "itemId": {
+            "description": "Идентификатор объявления",
+            "format": "int64",
+            "type": "integer"
+          },
+          "price": {
+            "description": "Цена услуги на момент создания задачи (в копейках)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "slug": {
+            "description": "Тип услуги",
+            "type": "string"
+          },
+          "statusId": {
+            "$ref": "#/components/schemas/OrderServiceStatus"
+          }
+        },
+        "type": "object"
+      },
+      "OrderServiceStatus": {
+        "description": "Статус услуги в составе заявки, возможные значения:\n- `unknown` - Неизвестный статус услуги\n- `active` - Активна\n- `error` - Обработка завершилась ошибкой\n- `canceled` - Отменено пользователем\n- `processed` - Успешно завершено\n",
+        "enum": [
+          "unknown",
+          "active",
+          "error",
+          "canceled",
+          "processed"
+        ],
+        "type": "string"
+      },
+      "OrderStatus": {
+        "description": "Статус заявки, возможные значения: \n- `unknown` - Неизвестный статус заявки\n- `initialized` - Заявка создана и инициализирована\n- `waiting` - Заявка ожидает выполнения\n- `in_process` - Заявка находится в обработке\n- `processed` - Обработка заявки завершена\n",
+        "enum": [
+          "unknown",
+          "initialized",
+          "waiting",
+          "in_process",
+          "processed"
+        ],
+        "type": "string"
+      },
+      "OrderStatusByItemV1": {
+        "description": "Информация об услуге продвижения внутри заявки на подключение",
+        "properties": {
+          "errorReason": {
+            "description": "Описание ошибки",
+            "nullable": true,
+            "type": "string"
+          },
+          "itemId": {
+            "description": "Идентификатор объявления",
+            "format": "int64",
+            "type": "integer"
+          },
+          "price": {
+            "description": "Цена услуги на момент создания задачи (в копейках)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "slug": {
+            "description": "Тип услуги",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          }
+        },
+        "type": "object"
+      },
+      "ServiceInfoV1": {
+        "description": "Информация об услуге продвижения",
+        "properties": {
+          "isDeprecated": {
+            "description": "Признак, что тип услуги устарел и более недоступен для подключения",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Наименование типа услуги",
+            "type": "string"
+          },
+          "slug": {
+            "description": "Идентификатор типа услуги",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ],
+        "type": "object"
+      },
+      "ServiceV1": {
+        "description": "Информация об услуге продвижения",
+        "properties": {
+          "endDate": {
+            "description": "Дата и время завершения продвижения",
+            "format": "date-time",
+            "type": "string"
+          },
+          "name": {
+            "description": "Наименование услуги",
+            "type": "string"
+          },
+          "slug": {
+            "description": "Тип услуги",
+            "type": "string"
+          },
+          "startDate": {
+            "description": "Дата и время начала продвижения",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ServicesByItemV1": {
+        "description": "Информация об услуге продвижения",
+        "properties": {
+          "itemId": {
+            "description": "Идентификатор объявления",
+            "format": "int64",
+            "type": "integer"
+          },
+          "services": {
+            "description": "Список услуг по объявлению",
+            "items": {
+              "$ref": "#/components/schemas/ServiceV1"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](/api-catalog/auth/documentation#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": {
+              "items:apply_bbip": "Применение услуг продвижения BBIP",
+              "items:info": "Получение информации об объявлениях"
+            },
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "email": "supportautoload@avito.ru"
+    },
+    "description": "API для управления услугами продвижения по объявлениям. [Подробная документация](https://developers.avito.ru/api-catalog/promotion/documentation). \n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\nОписание API произведено в формате [**Swagger 3.0**](https://github.com/OAI/OpenAPI-Specification/blob/master/versions/3.0.0.md).\nВы можете использовать данный файл для ознакомления с методами API, а также для генерации базового кода для работы с API на удобном для вас языке программирования с помощью утилиты [**Swagger Codegen**](https://swagger.io/swagger-codegen/) или online сервиса [**Swagger Editor**](https://editor.swagger.io/).\nПо всем вопросам работы с API необходимо обращаться в Службу Поддержки профессиональных инструментов:\n<li>телефон: <b>+7 495 777-10-66</b></li> <li>email: <a href=\"mailto:supportautoload@avito.ru\">supportautoload@avito.ru</a></li>\n# Типы авторизации\nДля использования данного API запрос должен быть авторизован. В данный момент API Авито использует следующие механизмы авторизации.\n<!-- ReDoc-Inject: <security-definitions> -->\nПодробнее о каждом механизме и его назначении можно прочитать в соответствующем разделе.\n",
+    "title": "Продвижение",
+    "version": "1.0.0"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/promotion/v1/items/services/bbip/forecasts/get": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthHeader"
+        },
+        {
+          "$ref": "#/components/parameters/XIsEmployee"
+        }
+      ],
+      "post": {
+        "description": "Получение прогноза продвижения по объявлениям\n\n**Rate limit:** 100 RPM\n",
+        "operationId": "get_bbip_forecasts_by_items_v1",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetBbipForecastByItemsV1Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBbipForecastByItemsV1Resp"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка валидации"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка авторизации"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка доступа"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Объявление не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка обработки запроса"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка сервиса"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:apply_bbip"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "BBIP. Прогноз продвижения",
+        "tags": [
+          "Promotion_BBIP"
+        ]
+      }
+    },
+    "/promotion/v1/items/services/bbip/orders/create": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthHeader"
+        },
+        {
+          "$ref": "#/components/parameters/XIsEmployee"
+        }
+      ],
+      "put": {
+        "description": "Создать заявку на подключение услуг продвижения.\n\nСоздание заявки для набора объявлений возможно только в случае если ни по одному из объявлений не возникло ошибок.\n\nПри успешном создании заявки система возвращает `orderId` (идентификатор заявки),\nна основе которого можно проверять как статус заявки, так и статус подключения услуг по объявлениям.\n\n**Rate limit:** 10 RPM\n",
+        "operationId": "create_bbip_order_for_items_v1",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderBbipForItemsV1Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderBbipForItemsV1Resp"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка валидации"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка авторизации"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEnoughMoneyError"
+                }
+              }
+            },
+            "description": "Недостаточно средств"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка доступа"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Объявление не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка обработки запроса"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка сервиса"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:apply_bbip"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "BBIP. Подключение услуги продвижения",
+        "tags": [
+          "Promotion_BBIP"
+        ]
+      }
+    },
+    "/promotion/v1/items/services/bbip/suggests/get": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthHeader"
+        },
+        {
+          "$ref": "#/components/parameters/XIsEmployee"
+        }
+      ],
+      "post": {
+        "description": "Получение доступных вариантов бюджета для продвижения\n\n**Rate limit:** 100 RPM\n",
+        "operationId": "get_bbip_suggests_by_items_v1",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetBbipSuggestsV1Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBbipSuggestsV1Resp"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка валидации"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка авторизации"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка доступа"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Объявление не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка обработки запроса"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка сервиса"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:apply_bbip"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "BBIP. Варианты бюджета продвижения",
+        "tags": [
+          "Promotion_BBIP"
+        ]
+      }
+    },
+    "/promotion/v1/items/services/dict": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthHeader"
+        }
+      ],
+      "post": {
+        "description": "Получение словаря типов услуг продвижения\n\n**Rate limit:** 100 RPM\n",
+        "operationId": "get_dict_of_services_v1",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetDictOfServicesV1Resp"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка валидации"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка авторизации"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка доступа"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка обработки запроса"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка сервиса"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:info"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Словарь типов услуг продвижения",
+        "tags": [
+          "Promotion"
+        ]
+      }
+    },
+    "/promotion/v1/items/services/get": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthHeader"
+        },
+        {
+          "$ref": "#/components/parameters/XIsEmployee"
+        }
+      ],
+      "post": {
+        "description": "Получение списка активных услуг продвижения по объявлениям\n \n**Rate limit:** 100 RPM\n",
+        "operationId": "get_services_by_items_v1",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetServicesByItemsV1Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetServicesByItemsV1Resp"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка валидации"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка авторизации"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка доступа"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Объявления не найдены"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка обработки запроса"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка сервиса"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:info"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Список услуг продвижения",
+        "tags": [
+          "Promotion"
+        ]
+      }
+    },
+    "/promotion/v1/items/services/orders/get": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthHeader"
+        },
+        {
+          "$ref": "#/components/parameters/XIsEmployee"
+        }
+      ],
+      "post": {
+        "description": "Получение списка заявок на подключение услуг.\n\n**Rate limit:** 100 RPM\n",
+        "operationId": "list_orders_by_user_v1",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListOrdersByUserV1Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOrdersByUserV1Resp"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка валидации"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка доступа"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Объявление не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка обработки запроса"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка сервиса"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:apply_bbip"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Список заявок",
+        "tags": [
+          "Promotion"
+        ]
+      }
+    },
+    "/promotion/v1/items/services/orders/status": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AuthHeader"
+        },
+        {
+          "$ref": "#/components/parameters/XIsEmployee"
+        }
+      ],
+      "post": {
+        "description": "Получение статуса заявки на подключение услуг продвижения\n\n**Rate limit:** 100 RPM\n",
+        "operationId": "get_order_status_v1",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetOrderStatusV1Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetOrderStatusV1Resp"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка валидации"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка авторизации"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка доступа"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Объявление не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Ошибка обработки запроса"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonError"
+                }
+              }
+            },
+            "description": "Внутренняя ошибка сервиса"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "items:apply_bbip"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Статус заявки",
+        "tags": [
+          "Promotion"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "Общее API для чтения информации об услугах продвижения.\n",
+      "name": "Promotion",
+      "x-displayName": "Общие методы для работы с услугами продвижения"
+    },
+    {
+      "description": "API для управления услугой \"Продвижение с прогнозом\".\n",
+      "name": "Promotion_BBIP",
+      "x-displayName": "Услуга \"Продвижение с прогнозом\""
+    }
+  ]
+}

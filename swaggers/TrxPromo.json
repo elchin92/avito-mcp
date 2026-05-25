@@ -1,0 +1,692 @@
+{
+  "components": {
+    "parameters": {
+      "OAuthAuthenticatedUserId": {
+        "description": "Avito-ID пользователя",
+        "in": "header",
+        "name": "x-authenticated-userid",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "OAuthFlow": {
+        "description": "Выбранный флоу авторизации по протоколу OAuth 2.0",
+        "in": "header",
+        "name": "x-oauth-flow",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "OAuthScopes": {
+        "description": "Список зон доступа",
+        "in": "header",
+        "name": "x-oauth-scopes",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "errorV3BadRequest": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apiV3error400"
+            }
+          }
+        },
+        "description": "BadRequest"
+      },
+      "errorV3Forbidden": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apiV3error403"
+            }
+          }
+        },
+        "description": "Forbidden"
+      },
+      "errorV3InternalError": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apiV3error500"
+            }
+          }
+        },
+        "description": "InternalError"
+      },
+      "errorV3Unauthenticated": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apiV3error401"
+            }
+          }
+        },
+        "description": "Unauthenticated"
+      }
+    },
+    "schemas": {
+      "ApplyReq": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "commission": {
+                  "description": "Комиссия за продвижение в сотых долях 1500 - 15%",
+                  "example": 1500,
+                  "type": "integer"
+                },
+                "dateFrom": {
+                  "description": "Дата начала продвижения",
+                  "example": "2024-12-01",
+                  "type": "string"
+                },
+                "dateTo": {
+                  "description": "Дата окончания продвижения",
+                  "example": "2024-12-31",
+                  "type": "string"
+                },
+                "itemID": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "itemID",
+                "commission",
+                "dateFrom"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "requestBody",
+        "type": "object"
+      },
+      "ApplyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "success": {
+            "additionalProperties": false,
+            "properties": {
+              "result": {
+                "items": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            1001,
+                            1002
+                          ],
+                          "type": "integer"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "type": "object"
+                    },
+                    "itemID": {
+                      "type": "integer"
+                    },
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "validCommissionRange": {
+                      "properties": {
+                        "step": {
+                          "description": "Шаг изменения комиссии в сотых долях 100 - 1%",
+                          "example": 100,
+                          "type": "integer"
+                        },
+                        "valueMax": {
+                          "description": "Максимальный размер комиссии в сотых долях 100 - 1%",
+                          "example": 1500,
+                          "type": "integer"
+                        },
+                        "valueMin": {
+                          "description": "Минимальный размер комиссии в сотых долях 100 - 1%",
+                          "example": 100,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "valueMin",
+                        "valueMax",
+                        "step"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "itemID",
+                    "success"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "title": "okResponse",
+        "type": "object"
+      },
+      "CancelResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "success": {
+            "additionalProperties": false,
+            "properties": {
+              "result": {
+                "items": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            1001,
+                            1002
+                          ],
+                          "type": "integer"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "type": "object"
+                    },
+                    "itemID": {
+                      "type": "integer"
+                    },
+                    "success": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "itemID",
+                    "success"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "title": "okResponse",
+        "type": "object"
+      },
+      "CommissionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "success": {
+            "additionalProperties": false,
+            "properties": {
+              "result": {
+                "items": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            1001
+                          ],
+                          "type": "integer"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "type": "object"
+                    },
+                    "itemID": {
+                      "type": "integer"
+                    },
+                    "promoAvailable": {
+                      "description": "Флаг доступности промо",
+                      "type": "boolean"
+                    },
+                    "settings": {
+                      "description": "Доступные настройки продвижения",
+                      "properties": {
+                        "step": {
+                          "description": "Шаг изменения процента в сотых долях 100 - 1%",
+                          "example": 100,
+                          "type": "integer"
+                        },
+                        "valueMax": {
+                          "description": "Максимальный процент в сотых долях 100 - 1%",
+                          "example": 1500,
+                          "type": "integer"
+                        },
+                        "valueMin": {
+                          "description": "Минимальный процент в сотых долях 100 - 1%",
+                          "example": 100,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "valueMin",
+                        "valueMax",
+                        "step"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "itemID",
+                    "promoAvailable",
+                    "settings"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "title": "okResponse",
+        "type": "object"
+      },
+      "apiV3error400": {
+        "additionalProperties": false,
+        "properties": {
+          "bad-request": {
+            "additionalProperties": false,
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "bad-request"
+        ],
+        "title": "BadRequestResponse",
+        "type": "object"
+      },
+      "apiV3error401": {
+        "additionalProperties": false,
+        "properties": {
+          "unauthenticated": {
+            "additionalProperties": false,
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "unauthenticated"
+        ],
+        "title": "UnauthenticatedResponse",
+        "type": "object"
+      },
+      "apiV3error403": {
+        "additionalProperties": false,
+        "properties": {
+          "forbidden": {
+            "additionalProperties": false,
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "forbidden"
+        ],
+        "title": "ForbiddenResponse",
+        "type": "object"
+      },
+      "apiV3error500": {
+        "additionalProperties": false,
+        "properties": {
+          "internal-error": {
+            "additionalProperties": false,
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "internal-error"
+        ],
+        "title": "InternalErrorResponse",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": {
+              "trx:apply": "применение продвижения за комиссию",
+              "trx:cancel": "отмена продвижения за комиссию",
+              "trx:commission": "получение настроек продвижения за комиссию"
+            },
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "description": "Методы для работы с сервисом TrxPromo.\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\n",
+    "title": "TrxPromo",
+    "version": "1"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/trx-promo/1/apply": {
+      "post": {
+        "description": "Запуск продвижения. Этот метод применяет настройки продвижения к вашим объявлениям.\n\nУкажите плату за продвижение: от 1 до 15%.  Ещё выберите даты продвижения: все свободные или период.\n\nПлата за продвижение прибавится к базовой комиссии — получится общая комиссия. А базовая комиссия будет [зависеть от мгновенного бронирования](https://www.avito.ru/realestate/kratkosrochnaya_arenda/test_commission/)\n\nНапример, если выбрали плату за продвижение 2%, то в поле commission  напишите «200».\n\nВ ответе вы получите детальную информацию по каждому объявлению. Если продвижение не запустится, вы увидите ошибки:\n\n1001 — ошибка валидации параметров\n\n1002 — вам недоступно продвижение за комиссию\n",
+        "operationId": "api_trx_promo_open_api_apply",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OAuthScopes"
+          },
+          {
+            "$ref": "#/components/parameters/OAuthFlow"
+          },
+          {
+            "$ref": "#/components/parameters/OAuthAuthenticatedUserId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResponse"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/errorV3BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/errorV3Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/errorV3Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/errorV3InternalError"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "trx:apply"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Запуск продвижения",
+        "x-rate-limiter": {
+          "default": 100
+        }
+      }
+    },
+    "/trx-promo/1/cancel": {
+      "post": {
+        "description": "Этот метод позволяет отменить действующее и запланированное продвижение для объявления.\n\nВ ответе вы получите детальную информацию по каждому объявлению. Если продвижение не отменится, в ответе вы получите ошибки:\n\n1001 — ошибка валидации параметров\n\n1002 — вам недоступно продвижение за комиссию\n",
+        "operationId": "api_trx_promo_open_api_cancel",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OAuthScopes"
+          },
+          {
+            "$ref": "#/components/parameters/OAuthFlow"
+          },
+          {
+            "$ref": "#/components/parameters/OAuthAuthenticatedUserId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "itemIDs": {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "itemIDs"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelResponse"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/errorV3BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/errorV3Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/errorV3Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/errorV3InternalError"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "trx:cancel"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Остановка продвижения",
+        "x-rate-limiter": {
+          "default": 100
+        }
+      }
+    },
+    "/trx-promo/1/commissions": {
+      "get": {
+        "description": "Метод позволяет узнать, доступно ли продвижение за комиссию для объявлений, и посмотреть, какие комиссии будут.\n\nВ ответе вы получите детальную информацию по каждому объявлению. Коды ошибок:\n\n1001 — ошибка валидации параметров\n",
+        "operationId": "api_trx_promo_open_api_commissions",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OAuthScopes"
+          },
+          {
+            "$ref": "#/components/parameters/OAuthFlow"
+          },
+          {
+            "$ref": "#/components/parameters/OAuthAuthenticatedUserId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "itemIDs": {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "itemIDs"
+                ],
+                "title": "requestBody",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommissionResponse"
+                }
+              }
+            },
+            "description": "Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/errorV3BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/errorV3Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/errorV3Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/errorV3InternalError"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "trx:commission"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Проверка доступности продвижения и размера комиссий",
+        "x-rate-limiter": {
+          "default": 100
+        }
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "# API настройки продвижения за комиссию — это набор методов, которые помогут настроить размер комиссии и запустить продвижение одного или нескольких объявлений. Через этот API можно организовать интеграцию между Авито и сторонней системой в обе стороны.\nОписание API произведено в формате [**Swagger 3.0**](https://github.com/OAI/OpenAPI-Specification/blob/master/versions/3.0.0.md).\nВы можете использовать данный файл для ознакомления с методами API, а также для генерации базового кода для работы с API на удобном для вас языке программирования с помощью утилиты\n[**Swagger Codegen**](https://swagger.io/swagger-codegen/) или online сервиса [**Swagger Editor**](https://editor.swagger.io/).\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\nПо всем вопросам работы с API необходимо обращаться в Службу Поддержки профессиональных инструментов:\n\n<li>телефон: <b>+7 495 777-10-66</b></li>\n<li>email: <a href=\"mailto:supportautoload@avito.ru\">supportautoload@avito.ru</a></li>\n\n# Типы авторизации\nДля использования данного API запрос должен быть авторизован. В данный момент API Авито использует следующие механизмы авторизации. <!-- ReDoc-Inject: <security-definitions> -->\n",
+      "name": "TrxPromo",
+      "x-displayName": "TrxPromo"
+    }
+  ]
+}

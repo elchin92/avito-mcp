@@ -1,0 +1,1802 @@
+{
+  "components": {
+    "parameters": {
+      "authHeader": {
+        "description": "Токен для авторизации",
+        "in": "header",
+        "name": "Authorization",
+        "required": true,
+        "schema": {
+          "example": "Bearer ACCESS_TOKEN",
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "badRequest": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Bad request"
+      },
+      "forbidden": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Forbidden"
+      },
+      "internalError": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Internal Error"
+      },
+      "notFound": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Not found"
+      },
+      "timeout": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Timeout"
+      },
+      "tooManyRequests": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Too Many Requests"
+      },
+      "unauthorized": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/error"
+            }
+          }
+        },
+        "description": "Unauthorized"
+      }
+    },
+    "schemas": {
+      "action": {
+        "properties": {
+          "name": {
+            "description": "Название действия",
+            "enum": [
+              "setMarkings",
+              "setCNCDetails",
+              "setTrackNumber",
+              "fixTrackNumber",
+              "acceptReturnOrder",
+              "confirm",
+              "reject",
+              "perform",
+              "receive"
+            ],
+            "type": "string"
+          },
+          "required": {
+            "description": "Обязательность действия для продвижения заказа.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "buyerInfo": {
+        "description": "Информация о покупателе. Доступна только для DBS и RDBS после оплаты заказа",
+        "nullable": true,
+        "properties": {
+          "fullName": {
+            "description": "ФИО покупателя",
+            "example": "Пушкин Александр Сергеевич",
+            "type": "string"
+          },
+          "phoneNumber": {
+            "description": "Номер телефона покупателя",
+            "example": 79876543210,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "courierInfo": {
+        "description": "Информация об адресе покупателя для курьерской доставки RDBS",
+        "nullable": true,
+        "properties": {
+          "address": {
+            "description": "Адрес, на который покупатель оформил доставку",
+            "example": "Москва, ул. Каретный ряд, 16, ст. 1, к. 2",
+            "nullable": true,
+            "type": "string"
+          },
+          "comment": {
+            "description": "Комментарий покупателя",
+            "example": "Подъезд во дворе дома, домофон не работает",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "delivery": {
+        "description": "Информация о доставке",
+        "properties": {
+          "buyerInfo": {
+            "$ref": "#/components/schemas/buyerInfo"
+          },
+          "courierInfo": {
+            "$ref": "#/components/schemas/courierInfo"
+          },
+          "dispatchNumber": {
+            "description": "Номер отправления. Отсутствует для RDBS.",
+            "example": "0000042642072",
+            "type": "string"
+          },
+          "serviceName": {
+            "description": "Название службы доставки.",
+            "example": "Boxberry",
+            "type": "string"
+          },
+          "serviceType": {
+            "description": "Способ доставки \n  - `pvz` - ПВЗ;\n  - `dbs` - Доставка партнёрами продавца (ПВЗ);\n  - `rdbs` - Доставка курьером продавца;\n  - `postamat` - Доставка через постамат;\n",
+            "enum": [
+              "pvz",
+              "dbs",
+              "rdbs"
+            ],
+            "type": "string"
+          },
+          "terminalInfo": {
+            "$ref": "#/components/schemas/terminalInfo"
+          },
+          "trackingNumber": {
+            "description": "Номер для отслеживания посылки. Отсутствует для RDBS.",
+            "example": "0000012642072",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "discount": {
+        "properties": {
+          "id": {
+            "description": "Идентификатор скидки",
+            "example": "myfriendpromo",
+            "type": "string"
+          },
+          "type": {
+            "description": "Тип скидки",
+            "enum": [
+              "promocode"
+            ],
+            "type": "string"
+          },
+          "value": {
+            "description": "Размер скидки",
+            "example": 10,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "error": {
+        "properties": {
+          "code": {
+            "description": "Код ошибки",
+            "example": 500,
+            "type": "integer"
+          },
+          "message": {
+            "description": "Текст ошибки",
+            "example": "Error message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "code"
+        ],
+        "type": "object"
+      },
+      "getDeliveryCourierConfirmationResponse": {
+        "properties": {
+          "result": {
+            "description": "Данные для отображения виджета подтверждения заказа продавцом",
+            "properties": {
+              "address": {
+                "description": "Адрес продавца",
+                "type": "string"
+              },
+              "addressDetails": {
+                "description": "Детали адреса продавца",
+                "type": "string"
+              },
+              "dateOptions": {
+                "description": "Опции с датами",
+                "items": {
+                  "description": "Опция с датами",
+                  "properties": {
+                    "date": {
+                      "description": "Дата интервала",
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "timeIntervals": {
+                      "description": "Опции с временными интервалами",
+                      "items": {
+                        "description": "Опция с временными интервалами",
+                        "properties": {
+                          "endDate": {
+                            "description": "Дата конца",
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "startDate": {
+                            "description": "Дата начала",
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "description": "Тип интервала",
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "endDate": {
+                "description": "Конечная дата приезда курьера",
+                "format": "date-time",
+                "type": "string"
+              },
+              "name": {
+                "description": "ФИО продавца",
+                "type": "string"
+              },
+              "phone": {
+                "description": "Телефон продавца",
+                "type": "string"
+              },
+              "startDate": {
+                "description": "Начальная дата приезда курьера",
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "dateOptions"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "result"
+        ],
+        "type": "object"
+      },
+      "item": {
+        "properties": {
+          "avitoId": {
+            "description": "ID товара в базе Avito",
+            "example": "2799377316",
+            "type": "string"
+          },
+          "chatId": {
+            "description": "Идентификатор чата",
+            "example": "u2i-isUW4p7EZVu4R4Zk6ts2G",
+            "type": "string"
+          },
+          "count": {
+            "description": "Количество товара",
+            "example": 2,
+            "type": "integer"
+          },
+          "discounts": {
+            "description": "Список примененных скидок",
+            "items": {
+              "$ref": "#/components/schemas/discount"
+            },
+            "type": "array"
+          },
+          "id": {
+            "description": "ID товара в базе продавца",
+            "example": "132768483",
+            "type": "string"
+          },
+          "location": {
+            "description": "Город, в котором размещено объявление",
+            "example": "Новосибирск",
+            "type": "string"
+          },
+          "prices": {
+            "$ref": "#/components/schemas/itemPrices"
+          },
+          "title": {
+            "description": "Название товара",
+            "example": "Кеды Venice",
+            "type": "string"
+          }
+        },
+        "required": [
+          "avitoId",
+          "title",
+          "prices",
+          "count"
+        ],
+        "type": "object"
+      },
+      "itemPrices": {
+        "properties": {
+          "commission": {
+            "description": "Комиссия за товар",
+            "example": 10,
+            "type": "number"
+          },
+          "discountSum": {
+            "description": "Сумма примененных скидок на товар",
+            "example": 10,
+            "type": "number"
+          },
+          "price": {
+            "description": "Цена товара",
+            "example": 500,
+            "type": "number"
+          },
+          "total": {
+            "description": "Цена товара за вычетом скидок",
+            "example": 480,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "marking": {
+        "description": "Данные маркировки",
+        "properties": {
+          "itemId": {
+            "description": "ID товара в Авито",
+            "example": "2799377316",
+            "type": "string"
+          },
+          "markings": {
+            "description": "Набор маркировок, которые требуется сохранить",
+            "items": {
+              "example": "36376376113637637611363763761123",
+              "maxLength": 129,
+              "minLength": 29,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
+          "orderId": {
+            "description": "ID заказа в Авито",
+            "example": "50000000000000000",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "order": {
+        "properties": {
+          "availableActions": {
+            "description": "Массив действий доступных по заказу. Действие с флагом required необходимо выполнить для движения заказа. В случае, когда действия от продавца не требуются, массив будет пустой.\n\n  * `confirm` - подтверждение заказа;\n  * `perform` - подтверждение отправки заказа (RDBS);\n  * `receive` - подтверждение доставки заказа (RDBS, CNC);\n  * `reject` - отмена заказа;\n  * `setMarkings` - передача кодов маркировки системы \"Честный знак\";\n  * `setTrackNumber` - передача трек-номера посылки для доставки партнёрами продавца (DBS);\n  * `fixTrackNumber` - исправление трек-номера посылки, в случае, если трек-номер не прошёл проверку (DBS);\n  * `getCourierDeliveryRange` - получение доступных временных интервалов приезда курьера (Courier);\n  * `setCourierDeliveryRange` - выбор места и времени приезда курьера (Courier);\n  * `acceptReturnOrder` - подтверждение возврата и выбор отделения Почты, куда приедет возврат (Courier).\n  * `setCNCDetails` - подготовка заказаза и уточнение деталей (CNC).\n",
+            "example": [
+              {
+                "name": "setTrackNumber",
+                "required": true
+              },
+              {
+                "name": "setMarkings",
+                "required": false
+              }
+            ],
+            "items": {
+              "$ref": "#/components/schemas/action"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "createdAt": {
+            "description": "Дата и время создания заказа",
+            "example": "2016-11-01T20:44:39Z",
+            "type": "string"
+          },
+          "delivery": {
+            "$ref": "#/components/schemas/delivery"
+          },
+          "id": {
+            "description": "Номер заказа в Авито",
+            "example": 50000000000000000,
+            "type": "string"
+          },
+          "items": {
+            "description": "Товары в заказе",
+            "items": {
+              "$ref": "#/components/schemas/item"
+            },
+            "type": "array"
+          },
+          "marketplaceId": {
+            "description": "Номер заказа в Авито в новой системе",
+            "example": 70000000000000000,
+            "nullable": true,
+            "type": "string"
+          },
+          "prices": {
+            "$ref": "#/components/schemas/orderPrices"
+          },
+          "returnPolicy": {
+            "$ref": "#/components/schemas/returnPolicy"
+          },
+          "schedules": {
+            "$ref": "#/components/schemas/schedules"
+          },
+          "status": {
+            "description": "Текущий статус заказа",
+            "example": "confirming",
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Дата и время обновления заказа",
+            "example": "2016-11-01T20:44:39Z",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "createdAt",
+          "updatedAt",
+          "items",
+          "prices",
+          "status",
+          "delivery",
+          "schedules"
+        ],
+        "type": "object"
+      },
+      "orderAcceptReturnOrderRequest": {
+        "description": "Запрос выбора ПВЗ для возврата товара",
+        "properties": {
+          "orderId": {
+            "description": "ID заказа в Авито",
+            "example": "50000000000000000",
+            "type": "string"
+          },
+          "recipient": {
+            "description": "Данные человека, который будет забирать возвратную посылку",
+            "properties": {
+              "name": {
+                "description": "ФИО получателя",
+                "example": "Иванов Иван Иванович",
+                "type": "string"
+              },
+              "phone": {
+                "description": "Номер телефона человека, который будет забирать возвратную посылку",
+                "example": "+79999999999",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "terminalNumber": {
+            "description": "Номер отделения Почты России, куда придёт возвратная посылка.",
+            "example": "141138",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "orderAcceptReturnOrderResponse": {
+        "description": "Ответ выбора указанного ПВЗ для возврата",
+        "properties": {
+          "success": {
+            "description": "Флаг успеха указанного ПВЗ для возврата",
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "orderApplyTransitionRequest": {
+        "description": "Запрос перевода заказа в другой статус",
+        "properties": {
+          "orderId": {
+            "description": "ID заказа в Авито",
+            "example": "50000000000000000",
+            "type": "string"
+          },
+          "params": {
+            "description": "Дополнительные параметры доставки",
+            "nullable": true,
+            "properties": {
+              "cnc": {
+                "description": "Параметры для подготовки заказа с самовывозом",
+                "nullable": true,
+                "properties": {
+                  "confirmCode": {
+                    "description": "Код подтверждения, который покупатель показывает продавцу",
+                    "example": "1755",
+                    "type": "string"
+                  },
+                  "marketplaceId": {
+                    "description": "Номер заказа в Авито в новой системе",
+                    "example": "70000000000000000",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "transition": {
+            "description": "Название перехода. \n  * `confirm` - подтверждение заказа;\n  * `reject` - отмена заказа;\n  * `perform` - подтверждение отправки заказа (RDBS);\n  * `receive` - подтверждение доставки заказа (RDBS, CNC).\n",
+            "enum": [
+              "confirm",
+              "reject",
+              "perform",
+              "receive"
+            ],
+            "example": "confirm",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "orderApplyTransitionResponse": {
+        "description": "Ответ перевода заказа в другой статус",
+        "properties": {
+          "success": {
+            "description": "Флаг успеха перевода в новый статус",
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "orderCNCSetDetailsRequest": {
+        "description": "Запрос на подготовку заказа и уточнение деталей",
+        "properties": {
+          "address": {
+            "description": "Адрес получения товара",
+            "example": "Тверская улица, 3, Москва",
+            "type": "string"
+          },
+          "bookingPeriod": {
+            "description": "Сроки бронирования товара",
+            "example": 4,
+            "type": "integer"
+          },
+          "details": {
+            "description": "Комментарий, который получит покупатель",
+            "example": "Могу передать товар с 13:00 до 18:00",
+            "type": "string"
+          },
+          "id": {
+            "description": "ID заказа в Авито",
+            "example": "5000000000000000",
+            "type": "string"
+          },
+          "marketplaceId": {
+            "description": "Номер заказа в Авито в новой системе",
+            "example": "70000000000000000",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "marketplaceId",
+          "bookingPeriod"
+        ],
+        "type": "object"
+      },
+      "orderCNCSetDetailsResponse": {
+        "description": "Ответ ручки подготовки заказа с самовывозом",
+        "properties": {
+          "result": {
+            "properties": {
+              "success": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "orderCheckConfirmationCodeRequest": {
+        "description": "Запрос на проверку кода подтверждения",
+        "properties": {
+          "confirmCode": {
+            "description": "Код, который показал пользователь",
+            "type": "string"
+          },
+          "parcelID": {
+            "description": "ID посылки в Авито",
+            "example": "P00081306679",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "orderCheckConfirmationCodeResponse": {
+        "description": "Ответ ручки проверки кода подтверждения",
+        "properties": {
+          "data": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "success",
+                  "fail",
+                  "expired",
+                  "attempts"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "orderPrices": {
+        "properties": {
+          "commission": {
+            "description": "Комиссия Авито",
+            "example": 20,
+            "type": "number"
+          },
+          "delivery": {
+            "description": "Стоимость доставки для DBS и RDBS",
+            "example": 1000,
+            "type": "number"
+          },
+          "discount": {
+            "description": "Сумма скидок",
+            "example": 20,
+            "type": "number"
+          },
+          "price": {
+            "description": "Сумма заказа",
+            "example": 1000,
+            "type": "number"
+          },
+          "total": {
+            "description": "Сумма к получению за заказ (стоимости товаров за вычетом скидок и комиссии)",
+            "example": 960,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "orderSetTrackingNumberRequest": {
+        "description": "Запрос ручки передачи трек-номера",
+        "properties": {
+          "orderId": {
+            "description": "ID заказа в Авито",
+            "example": "50000000000000000",
+            "type": "string"
+          },
+          "trackingNumber": {
+            "description": "Трек-номер посылки",
+            "example": "01-01031002199",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "orderSetTrackingNumberResponse": {
+        "description": "Ответ ручки передачи трек-номера",
+        "example": {
+          "error": {
+            "code": "already_set",
+            "message": "Трек-номер уже зарегистрирован для другого заказа"
+          },
+          "success": false
+        },
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки:\n  * `incorrect_number` - Некорректный трек-номер\n  * `already_set` - Трек-номер уже зарегистрирован для другого заказа\n",
+                "type": "string"
+              },
+              "message": {
+                "description": "Текст ошибки",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "code"
+            ],
+            "type": "object"
+          },
+          "success": {
+            "description": "Флаг успеха обновления",
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "ordersInfo": {
+        "description": "Ответ для ручки получения информации о заказе",
+        "properties": {
+          "hasMore": {
+            "description": "Есть ли еще заказы",
+            "example": true,
+            "type": "boolean"
+          },
+          "orders": {
+            "description": "Массив заказов",
+            "items": {
+              "$ref": "#/components/schemas/order"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "orders",
+          "hasMore"
+        ],
+        "type": "object"
+      },
+      "ordersLabelsRequest": {
+        "description": "Запрос на создание генерации этикеток для пользователя по его заказам",
+        "properties": {
+          "orderIDs": {
+            "description": "ID заказов в сервисе сделок (marketplace)",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "orderIDs"
+        ],
+        "type": "object"
+      },
+      "ordersLabelsResponse": {
+        "description": "Ответ на запрос создания генерации этикеток для пользователя по его заказам",
+        "properties": {
+          "taskID": {
+            "description": "ID задачи (документа)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskID"
+        ],
+        "type": "object"
+      },
+      "returnPolicy": {
+        "description": "Информация по возврату",
+        "nullable": true,
+        "properties": {
+          "returnStatus": {
+            "description": "- `in_transit` - возврат в пути; - `ready_to_pickup` - возврат доставлен, его можно получить; - `self_return` - возврат осуществляется продавцом самостоятельно (только для DBS).\n",
+            "enum": [
+              "in_transit",
+              "ready_to_pickup",
+              "self_return"
+            ],
+            "example": "in_transit",
+            "type": "string"
+          },
+          "trackingNumber": {
+            "description": "Номер отправления",
+            "example": "0000012642072",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "schedules": {
+        "description": "Расписание запланированных событий и необходимых действий над заказом",
+        "properties": {
+          "confirmTill": {
+            "description": "Дата, до которой продавцу нужно подтвердить заказ",
+            "example": "2016-11-01T20:44:39Z",
+            "nullable": true,
+            "type": "string"
+          },
+          "deliveryDate": {
+            "description": "Дата доставки товара покупателю переданная продавцом (RDBS)",
+            "example": "2016-11-01T20:44:39Z",
+            "nullable": true,
+            "type": "string"
+          },
+          "deliveryDateMaх": {
+            "description": "Максимальная ожидаемая дата доставки товара покупателю",
+            "example": "2016-11-01T20:44:39Z",
+            "nullable": true,
+            "type": "string"
+          },
+          "deliveryDateMin": {
+            "description": "Минимальная ожидаемая дата доставки товара покупателю",
+            "example": "2016-11-01T20:44:39Z",
+            "nullable": true,
+            "type": "string"
+          },
+          "setTrackingNumberTill": {
+            "description": "Дата, до которой продавцу нужно передать трек-номер заказа (DBS)",
+            "example": "2016-11-01T20:44:39Z",
+            "nullable": true,
+            "type": "string"
+          },
+          "shipTill": {
+            "description": "Дата, до которой продавцу нужно отправить заказ",
+            "example": "2016-11-01T20:44:39Z",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "x-redoc-markdown-subheaders": "schedules"
+      },
+      "setCourierDeliveryRangeRequest": {
+        "description": "Параметры запроса для ручки установки параметров курьерской доставки",
+        "properties": {
+          "address": {
+            "description": "Адрес продавца",
+            "minLength": 1,
+            "type": "string"
+          },
+          "addressDetails": {
+            "description": "Детали адреса продавца",
+            "type": "string"
+          },
+          "endDate": {
+            "description": "Конечная дата приезда курьера",
+            "format": "date-time",
+            "type": "string"
+          },
+          "intervalType": {
+            "description": "Тип интервала",
+            "enum": [
+              "fixed",
+              "asap"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "description": "ФИО",
+            "minLength": 1,
+            "type": "string"
+          },
+          "orderId": {
+            "description": "ID заказа",
+            "minLength": 1,
+            "type": "string"
+          },
+          "phone": {
+            "description": "Телефон",
+            "minLength": 1,
+            "type": "string"
+          },
+          "startDate": {
+            "description": "Начальная дата приезда курьера",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "orderId",
+          "address",
+          "startDate",
+          "endDate",
+          "intervalType",
+          "phone",
+          "name"
+        ],
+        "type": "object"
+      },
+      "setCourierDeliveryRangeResponse": {
+        "description": "Ответ для ручки установки параметров курьерской доставки",
+        "properties": {
+          "success": {
+            "description": "Флаг успеха выбора времени приезда курьера",
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "setOrderMarkingRequest": {
+        "description": "Запрос ручки обновления маркировок",
+        "properties": {
+          "markings": {
+            "description": "Массив маркировок, которые требуется передать",
+            "items": {
+              "$ref": "#/components/schemas/marking"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "setOrderMarkingResponse": {
+        "description": "Ответ ручки обновления маркировок",
+        "properties": {
+          "results": {
+            "description": "Массив результатов обновления",
+            "items": {
+              "properties": {
+                "error": {
+                  "description": "Сообщение ошибки, если она была",
+                  "example": "Order with such id doesn't exist",
+                  "nullable": true,
+                  "type": "string"
+                },
+                "itemId": {
+                  "description": "ID товара в Авито",
+                  "example": "2799377316",
+                  "type": "string"
+                },
+                "orderId": {
+                  "description": "ID заказа в Авито",
+                  "example": "50000000000000000",
+                  "type": "string"
+                },
+                "success": {
+                  "description": "Флаг успеха обновления",
+                  "example": false,
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "status": {
+        "enum": [
+          "on_confirmation",
+          "ready_to_ship",
+          "in_transit",
+          "canceled",
+          "delivered",
+          "on_return",
+          "in_dispute",
+          "closed"
+        ],
+        "type": "string"
+      },
+      "terminalInfo": {
+        "description": "Информация о ПВЗ выбранном покупателем для доставки DBS",
+        "nullable": true,
+        "properties": {
+          "address": {
+            "description": "Адрес ПВЗ",
+            "example": "Москва, Настасьинский 8 стр2 6",
+            "nullable": true,
+            "type": "string"
+          },
+          "code": {
+            "description": "Код ПВЗ",
+            "example": "MSK14",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "description": "Методы для управления заказами на доставку.\n\nВ данный момент управление заказами доступно только для B2C продавцов.\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://api.avito.ru/docs/public/APITermsOfServiceV1.pdf).**\n",
+    "title": "Управление заказами",
+    "version": "1.0.0",
+    "x-codegen-omitempty-by-required-enable": false
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/order-management/1/markings": {
+      "post": {
+        "description": "Метод для передачи честного знака для товаров в заказе.\nМаксимальное количество элементов в одном запросе - 50.\nМаксимальное количество запросов в минуту - 100.\n",
+        "operationId": "markings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/setOrderMarkingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/setOrderMarkingResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Передача честного знака",
+        "x-rate-limiter": {
+          "default": 100
+        }
+      }
+    },
+    "/order-management/1/order/acceptReturnOrder": {
+      "post": {
+        "description": "Данный метод применяется для подтверждения возврата товара и выбора отделения Почты России, куда будет доставлен возврат.\nМаксимальное количество запросов в минуту - 100.\n",
+        "operationId": "acceptReturnOrder",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/orderAcceptReturnOrderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/orderAcceptReturnOrderResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Выбор отделения отделения Почты России для получения возврата",
+        "x-rate-limiter": {
+          "default": 100
+        }
+      }
+    },
+    "/order-management/1/order/applyTransition": {
+      "post": {
+        "description": "Данный метод применяется для изменения статуса заказа, в частности для подтверждения или отмены заказа.\nМаксимальное количество запросов в минуту - 100.\n",
+        "operationId": "applyTransition",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/orderApplyTransitionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/orderApplyTransitionResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Изменение статуса заказа",
+        "x-rate-limiter": {
+          "default": 100
+        }
+      }
+    },
+    "/order-management/1/order/checkConfirmationCode": {
+      "post": {
+        "description": "Данный метод используется для подтверждения личности для получения заказа в ПВЗ. Пользователь называет код  из приложения сотруднику СД. Далее через API служба доставки проверяет его валидность.\nМаксимальное количество запросов в минуту - 2000.\n",
+        "operationId": "checkConfirmationCode",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/orderCheckConfirmationCodeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/orderCheckConfirmationCodeResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Метод для проверки кода подтверждения заказа.",
+        "x-rate-limiter": {
+          "default": 2000
+        }
+      }
+    },
+    "/order-management/1/order/cncSetDetails": {
+      "post": {
+        "description": "Данный метод применяется продавцом для подготовки заказа и передачи адреса, сроков бронирования и сообщения покупателю.\nМаксимальное количество запросов в минуту - 60\n",
+        "operationId": "cncSetDetails",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/orderCNCSetDetailsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/orderCNCSetDetailsResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Метод для подготовки заказа с самовывозом",
+        "x-rate-limiter": {
+          "default": 60
+        }
+      }
+    },
+    "/order-management/1/order/getCourierDeliveryRange": {
+      "get": {
+        "description": "Данный метод применяется для получения всех промежутков времени, когда курьер может приехать забрать товар, чтобы отвезти его покупателю.\nМаксимальное количество запросов в минуту - 100.\n",
+        "operationId": "getCourierDeliveryRange",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          },
+          {
+            "description": "ID заказа",
+            "in": "query",
+            "name": "orderId",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Адрес продавца",
+            "in": "query",
+            "name": "address",
+            "schema": {
+              "minLength": 1,
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/getDeliveryCourierConfirmationResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Метод получения доступных временных промежутков приезда курьера",
+        "x-rate-limiter": {
+          "default": 100
+        }
+      }
+    },
+    "/order-management/1/order/setCourierDeliveryRange": {
+      "post": {
+        "description": "Данный метод применяется после метода получения всех промежутков времени, когда курьер может приехать и забрать товар.  Вызвав этот метод, продавец выбирает определённый временной промежуток приезда курьера.\nТакже этот метод можно вызвать, чтобы изменить время приезда курьера, если он ещё не забрал посылку. Максимальное количество запросов в минуту - 200.\n",
+        "operationId": "setCourierDeliveryRange",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/setCourierDeliveryRangeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/setCourierDeliveryRangeResponse"
+                }
+              }
+            },
+            "description": "Успешный выбор времени приезда курьера"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Метод выбора определённого доступного временного промежутка для приезда курьера",
+        "x-rate-limiter": {
+          "default": 100
+        }
+      }
+    },
+    "/order-management/1/order/setTrackingNumber": {
+      "post": {
+        "description": "Метод для передачи трек-номера для доставки партнёрами продавца (DBS)\nМаксимальное количество запросов в минуту - 100.\n",
+        "operationId": "setOrderTrackingNumber",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/orderSetTrackingNumberRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/orderSetTrackingNumberResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Передача трек-номера",
+        "x-rate-limiter": {
+          "default": 100
+        }
+      }
+    },
+    "/order-management/1/orders": {
+      "get": {
+        "description": "Получение информации о заказах по статусу.\nМаксимальное количество запросов в минуту - 500.\n",
+        "operationId": "getOrders",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          },
+          {
+            "description": "Идентификаторы заказов\n",
+            "in": "query",
+            "name": "ids",
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "description": "Статус, по которому нужно получить заказы.\n\n- on_confirmation - ожидает подтверждения\n\n- ready_to_ship - ждет отправки\n\n- in_transit - в пути\n\n- canceled - отменный заказ\n\n- delivered - доставлен покупателю\n\n- on_return - на возврате\n\n- in_dispute - по заказу открыт спор\n\n- closed - заказ закрыт\n",
+            "in": "query",
+            "name": "statuses",
+            "schema": {
+              "items": {
+                "$ref": "#/components/schemas/status"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "description": "Метка времени, с момента которого созданы покупки",
+            "example": 1686735089,
+            "in": "query",
+            "name": "dateFrom",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Номер страницы для пагинации",
+            "example": 1,
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Максимальное количество заказов на странице",
+            "example": 10,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "maximum": 20,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ordersInfo"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение информации о заказах",
+        "x-rate-limiter": {
+          "default": 500
+        }
+      }
+    },
+    "/order-management/1/orders/labels": {
+      "post": {
+        "description": "Создаёт задачу на генерацию PDF-этикеток для заказов (до 100 штук).  Возвращает идентификатор задачи для последующей проверки статуса и скачивания результата. \nМаксимальное количество запросов в минуту - 1000. Эта ручка доступна только для ПВЗ заказов.\n",
+        "operationId": "generateLabels",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ordersLabelsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ordersLabelsResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Создать задачу на генерацию этикеток (до 100).",
+        "x-rate-limiter": {
+          "default": 1000
+        }
+      }
+    },
+    "/order-management/1/orders/labels/extended": {
+      "post": {
+        "description": "Создаёт задачу на генерацию PDF-этикеток для заказов (до 1000 штук).  Возвращает идентификатор задачи для последующей проверки статуса и скачивания результата.\nМаксимальное количество запросов в минуту - 1. Эта ручка доступна только для ПВЗ заказов.\n",
+        "operationId": "generateLabelsExtended",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ordersLabelsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ordersLabelsResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Создать задачу на генерацию этикеток (до 1000).",
+        "x-rate-limiter": {
+          "default": 1
+        }
+      }
+    },
+    "/order-management/1/orders/labels/{taskID}/download": {
+      "get": {
+        "description": "Скачивание сгенерированного PDF-файла с этикетками по идентификатору задачи.  Файл доступен после успешного завершения генерации.\nМаксимальное количество запросов в минуту - 1000.\n",
+        "operationId": "downloadLabel",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/authHeader"
+          },
+          {
+            "description": "ID задачи на генерацию",
+            "in": "path",
+            "name": "taskID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/badRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/notFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/tooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/internalError"
+          }
+        },
+        "security": [
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Скачать сгенерированный PDF-файл (этикетку).",
+        "x-rate-limiter": {
+          "default": 1000
+        }
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ]
+}

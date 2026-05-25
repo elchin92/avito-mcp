@@ -1,0 +1,966 @@
+{
+  "components": {
+    "headers": {
+      "X-RateLimit-Limit": {
+        "description": "Количество запросов в минуту",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "X-RateLimit-Remaining": {
+        "description": "Доступное количество запросов в текущем временном окне",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      }
+    },
+    "parameters": {
+      "authHeader": {
+        "description": "Токен для авторизации",
+        "in": "header",
+        "name": "Authorization",
+        "required": true,
+        "schema": {
+          "example": "Bearer ACCESS_TOKEN",
+          "type": "string"
+        }
+      },
+      "chatId": {
+        "description": "Идентификатор чата (клиента)",
+        "in": "path",
+        "name": "chat_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "itemIds": {
+        "in": "query",
+        "name": "item_ids",
+        "schema": {
+          "example": "12345,6789",
+          "type": "string"
+        }
+      },
+      "limit": {
+        "description": "Количество сообщений на странице (положительное число больше 0 и меньше 100)",
+        "in": "query",
+        "name": "limit",
+        "schema": {
+          "default": 100,
+          "example": 50,
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "messageId": {
+        "description": "Идентификатор сообщения",
+        "in": "path",
+        "name": "message_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "offset": {
+        "in": "query",
+        "name": "offset",
+        "schema": {
+          "default": 0,
+          "example": 50,
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "page": {
+        "description": "Номер страницы",
+        "in": "query",
+        "name": "page",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "pathItemId": {
+        "description": "Идентификатор объявления на сайте",
+        "in": "path",
+        "name": "item_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "pathUserId": {
+        "description": "Номер пользователя в Личном кабинете Авито",
+        "in": "path",
+        "name": "user_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "pathVacancyId": {
+        "description": "Идентификатор вакансии на сайте",
+        "in": "path",
+        "name": "vacancy_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "perPage": {
+        "description": "Количество ресурсов на страницу",
+        "in": "query",
+        "name": "per_page",
+        "schema": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "unreadOnly": {
+        "in": "query",
+        "name": "unread_only",
+        "schema": {
+          "example": true,
+          "type": "boolean"
+        }
+      },
+      "userId": {
+        "description": "Идентификатор пользователя (клиента)",
+        "in": "path",
+        "name": "user_id",
+        "required": true,
+        "schema": {
+          "format": "int64",
+          "type": "integer"
+        }
+      }
+    },
+    "schemas": {
+      "CreateAnswerRequestBody": {
+        "properties": {
+          "message": {
+            "description": "Текст ответа на отзыв",
+            "example": "Спасибо за отзыв",
+            "type": "string"
+          },
+          "reviewId": {
+            "description": "ID отзыва",
+            "example": 1234567,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "reviewId",
+          "message"
+        ],
+        "type": "object"
+      },
+      "CreateAnswerResponse": {
+        "properties": {
+          "createdAt": {
+            "description": "Timestamp создания ответа",
+            "example": 1571654040,
+            "type": "integer"
+          },
+          "id": {
+            "description": "ID ответа",
+            "example": 1234567,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "GetRatingInfoResponse": {
+        "properties": {
+          "isEnabled": {
+            "description": "Включен ли рейтинг",
+            "example": true,
+            "type": "boolean"
+          },
+          "rating": {
+            "$ref": "#/components/schemas/Rating"
+          }
+        },
+        "required": [
+          "isEnabled"
+        ],
+        "type": "object"
+      },
+      "GetReviewsResponse": {
+        "properties": {
+          "reviews": {
+            "description": "Список отзывов",
+            "items": {
+              "$ref": "#/components/schemas/Review"
+            },
+            "type": "array"
+          },
+          "total": {
+            "description": "Количество всех отзывов",
+            "example": 35,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "reviews"
+        ],
+        "type": "object"
+      },
+      "Rating": {
+        "nullable": true,
+        "properties": {
+          "reviewsCount": {
+            "description": "Общее количество активных отзывов",
+            "example": 21,
+            "type": "integer"
+          },
+          "reviewsWithScoreCount": {
+            "description": "Количество активных отзывов, влияющих на формирование рейтинга",
+            "example": 12,
+            "type": "integer"
+          },
+          "score": {
+            "description": "Оценка рейтинга",
+            "example": 4.3,
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "required": [
+          "score",
+          "reviewsWithScoreCount",
+          "reviewsCount"
+        ],
+        "type": "object"
+      },
+      "RejectReason": {
+        "description": "Причина отклонения отзыва",
+        "properties": {
+          "id": {
+            "description": "ID причины отклонения",
+            "example": 100,
+            "type": "integer"
+          },
+          "title": {
+            "description": "Заголовок причины отклонения",
+            "example": "Нецензурная лексика",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "type": "object"
+      },
+      "RemoveAnswerResponse": {
+        "properties": {
+          "success": {
+            "description": "Статус успешности запроса",
+            "example": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "type": "object"
+      },
+      "Review": {
+        "description": "Структура отзыва",
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/ReviewAnswer"
+          },
+          "canAnswer": {
+            "description": "Можно ли оставить ответ на отзыв",
+            "example": true,
+            "type": "boolean"
+          },
+          "createdAt": {
+            "description": "Unix TimeStamp создания отзыва",
+            "example": 1571654040,
+            "type": "integer"
+          },
+          "extraParams": {
+            "description": "Дополнительные опциональные параметры отзыва",
+            "properties": {
+              "vin": {
+                "description": "VIN-номер автомобиля в объявлении",
+                "example": "4Y1SL65848Z411439",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "id": {
+            "description": "ID отзыва",
+            "example": 92312343,
+            "type": "integer"
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewImage"
+            },
+            "type": "array"
+          },
+          "item": {
+            "$ref": "#/components/schemas/ReviewItem"
+          },
+          "score": {
+            "description": "Оценка",
+            "example": 5,
+            "type": "integer"
+          },
+          "sender": {
+            "$ref": "#/components/schemas/ReviewSender"
+          },
+          "stage": {
+            "description": "Стадия сделки:\n  * `done` - Сделка состоялась\n  * `fell_through` - Сделка сорвалсь\n  * `not_agree` - Не договорились\n  * `not_communicate` - Не общались\n",
+            "enum": [
+              "done",
+              "fell_through",
+              "not_agree",
+              "not_communicate"
+            ],
+            "example": "fell_through",
+            "type": "string"
+          },
+          "text": {
+            "description": "Текст отзыва",
+            "example": "Отличный продавец! Рекомендую :)",
+            "type": "string"
+          },
+          "usedInScore": {
+            "description": "Участвует ли отзыв в формирование оценки",
+            "example": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "score",
+          "stage",
+          "text",
+          "usedInScore",
+          "canAnswer",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "ReviewAnswer": {
+        "description": "Структура ответа на отзыв",
+        "nullable": true,
+        "properties": {
+          "createdAt": {
+            "description": "Unix TimeStamp создания ответа",
+            "example": 1571654040,
+            "type": "integer"
+          },
+          "id": {
+            "description": "ID ответа",
+            "example": 1234567,
+            "type": "integer"
+          },
+          "reject_reasons": {
+            "description": "Список причин отклонения",
+            "items": {
+              "$ref": "#/components/schemas/RejectReason"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "Статус ответа:\n  * `moderation` - на модерации\n  * `published` - опубликован\n  * `rejected` - отклонен\n",
+            "enum": [
+              "moderation",
+              "published",
+              "rejected"
+            ],
+            "example": "published",
+            "type": "string"
+          },
+          "text": {
+            "description": "Текст ответа",
+            "example": "Спасибо за отзыв!",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "status",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "ReviewError": {
+        "description": "Ошибка Bad Request",
+        "properties": {
+          "code": {
+            "description": "Код ошибки",
+            "example": "validation",
+            "type": "string"
+          },
+          "message": {
+            "description": "Текст ошибки",
+            "example": "Field `offset` is not integer",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "ReviewImage": {
+        "description": "Структура изображения, приложенного к отзыву",
+        "properties": {
+          "number": {
+            "description": "Порядковый номер изображения",
+            "example": 1,
+            "type": "integer"
+          },
+          "sizes": {
+            "description": "Список размеров изображения",
+            "items": {
+              "$ref": "#/components/schemas/ReviewImageSize"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "number",
+          "sizes"
+        ],
+        "type": "object"
+      },
+      "ReviewImageSize": {
+        "description": "Структура изображения определенного разрешения",
+        "properties": {
+          "size": {
+            "description": "Разрешение изображения в формате 100x100",
+            "example": "100x100",
+            "type": "string"
+          },
+          "url": {
+            "description": "Ссылка на изображение",
+            "type": "string"
+          }
+        },
+        "required": [
+          "size",
+          "url"
+        ],
+        "type": "object"
+      },
+      "ReviewItem": {
+        "description": "Структура объявления",
+        "nullable": true,
+        "properties": {
+          "id": {
+            "description": "ID объявления",
+            "example": 1234567,
+            "type": "integer"
+          },
+          "title": {
+            "description": "Заголовок объявления",
+            "example": "Автомобиль 2020-го года",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ReviewSender": {
+        "description": "Структура отправителя отзыва",
+        "nullable": true,
+        "properties": {
+          "name": {
+            "description": "Имя отправителя",
+            "example": "Владимир",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "forbiddenError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 403,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Forbidden",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "internalError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 500,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Service is temporary unavailable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "notFoundError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 404,
+                "format": "int32",
+                "type": "integer"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Not found",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "tooManyRequestsError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 429,
+                "format": "int32",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "validatingError": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "Код ошибки",
+                "example": 400,
+                "format": "int32",
+                "type": "integer"
+              },
+              "fields": {
+                "description": "Информация об ошибке валидации параметров в формате ключ-значение",
+                "nullable": true,
+                "type": "object"
+              },
+              "message": {
+                "description": "Сообщение об ошибке",
+                "example": "Validation error",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "AuthorizationCode": {
+        "description": "Это API использует OAuth 2 с механизмом authorization_code. Используйте его для доступа к данным других пользователей при разработке стороннего приложения. [Подробнее](/api-catalog/auth/documentation#tag/ApplicationAccess)",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://avito.ru/oauth",
+            "scopes": {
+              "autoload:reports": "Получение отчетов Автозагрузки",
+              "items:apply_vas": "Применение дополнительных услуг",
+              "items:info": "Получение информации об объявлениях",
+              "job:applications": "Получение информации об откликах на вакансии",
+              "job:cv": "Получение информации резюме",
+              "job:write": "Изменение объявлений вертикали Работа",
+              "messenger:read": "Чтение сообщений в мессенджере Авито",
+              "messenger:write": "Модифицирование сообщений в мессенджере Авито",
+              "ratings:read": "Получение отзывов",
+              "ratings:write": "Отправка ответа на отзыв",
+              "short_term_rent:read": "Получение информации об объявлениях краткосрочной аренды",
+              "short_term_rent:write": "Изменение объявлений краткосрочной аренды",
+              "stats:read": "Получение статистики объявлений",
+              "user:read": "Получение информации о пользователе",
+              "user_balance:read": "Получение баланса пользователя",
+              "user_operations:read": "Получение истории операций пользователя"
+            },
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      },
+      "ClientCredentials": {
+        "description": "Это API использует OAuth 2 с механизмом client_credentials. Используйте его для доступа к возможностям своей личной учетной записи. [Подробнее](#tag/Access)",
+        "flows": {
+          "clientCredentials": {
+            "scopes": {},
+            "tokenUrl": "https://api.avito.ru/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "email": "supportautoload@avito.ru"
+    },
+    "description": "API для работы с рейтингами и отзывами на Авито.\n\n**Авито API для бизнеса предоставляется согласно [Условиям использования](https://www.avito.ru/legal/pro_tools/public-api).**\n",
+    "title": "Рейтинги и отзывы",
+    "version": "1"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/ratings/v1/answers": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ],
+      "post": {
+        "operationId": "createReviewAnswerV1",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAnswerRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateAnswerResponse"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ReviewError"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Неверный запрос"
+          },
+          "401": {
+            "description": "Требуется аутентификация"
+          },
+          "403": {
+            "description": "Нет доступа к созданию ответов на отзывы"
+          },
+          "404": {
+            "description": "Отзыв не найден"
+          },
+          "500": {
+            "description": "Внутренняя ошибка метода API"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "ratings:write"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Отправка ответа на отзыв",
+        "tags": [
+          "Ratings"
+        ]
+      }
+    },
+    "/ratings/v1/answers/{answer_id}": {
+      "delete": {
+        "operationId": "removeReviewAnswerV1",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoveAnswerResponse"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ReviewError"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Неверный запрос"
+          },
+          "401": {
+            "description": "Требуется аутентификация"
+          },
+          "403": {
+            "description": "Нет доступа к удалению ответов на отзывы"
+          },
+          "404": {
+            "description": "Ответ не найден"
+          },
+          "500": {
+            "description": "Внутренняя ошибка метода API"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "ratings:write"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Запрос на удаление ответа на отзыв",
+        "tags": [
+          "Ratings"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        },
+        {
+          "description": "Идентификатор ответа на отзыв",
+          "example": 1234567,
+          "in": "path",
+          "name": "answer_id",
+          "required": true,
+          "schema": {
+            "format": "int64",
+            "type": "integer"
+          }
+        }
+      ]
+    },
+    "/ratings/v1/info": {
+      "get": {
+        "operationId": "getRatingsInfoV1",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetRatingInfoResponse"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "401": {
+            "description": "Требуется аутентификация"
+          },
+          "403": {
+            "description": "Нет доступа к рейтингу"
+          },
+          "500": {
+            "description": "Внутренняя ошибка метода API"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "ratings:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение информации о рейтинге пользователя",
+        "tags": [
+          "Ratings"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ]
+    },
+    "/ratings/v1/reviews": {
+      "get": {
+        "operationId": "getReviewsV1",
+        "parameters": [
+          {
+            "description": "Смещение",
+            "in": "query",
+            "name": "offset",
+            "required": true,
+            "schema": {
+              "example": 10,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Лимит количества отзывов",
+            "in": "query",
+            "name": "limit",
+            "required": true,
+            "schema": {
+              "example": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetReviewsResponse"
+                }
+              }
+            },
+            "description": "Успешный ответ"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ReviewError"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Неверный запрос"
+          },
+          "401": {
+            "description": "Требуется аутентификация"
+          },
+          "403": {
+            "description": "Нет доступа к списку отзывов"
+          },
+          "500": {
+            "description": "Внутренняя ошибка метода API"
+          }
+        },
+        "security": [
+          {
+            "AuthorizationCode": [
+              "ratings:read"
+            ]
+          },
+          {
+            "ClientCredentials": []
+          }
+        ],
+        "summary": "Получение списка активных отзывов на пользователя с пагинацией",
+        "tags": [
+          "Ratings"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/authHeader"
+        }
+      ]
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.avito.ru/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "API для работы с рейтингами и отзывами\n",
+      "name": "Ratings",
+      "x-displayName": "Рейтинги и отзывы"
+    }
+  ]
+}

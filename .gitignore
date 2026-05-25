@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.local
+.avito-token.json
+
+# Local MCP config (contains absolute paths, use .mcp.json.example as template)
+.mcp.json
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+
+# IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Claude Code local project settings
+.claude/
+
+# npm artifacts
+*.tgz
+.npm/
+
+# OS
+Thumbs.db

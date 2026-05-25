@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm run build
+      - run: npm test
+      - name: Verify npm tarball contents
+        run: |
+          npm pack --dry-run 2>&1 | tee /tmp/pack.log
+          # Fail if any sensitive file slipped into the tarball
+          if grep -E '\.env(\s|$)|\.avito-token\.json|\.mcp\.json[^.]' /tmp/pack.log; then
+            echo "ERROR: sensitive file would be published to npm"
+            exit 1
+          fi
