@@ -2,9 +2,13 @@
 
 [![npm version](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
+[![CI](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-39_passing-brightgreen)](./test)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue)](https://modelcontextprotocol.io)
+[![GitHub stars](https://img.shields.io/github/stars/elchin92/avito-mcp?style=social)](https://github.com/elchin92/avito-mcp/stargazers)
 [![Avito API snapshot](https://img.shields.io/badge/Avito_API_snapshot-2026--05--25-orange)](./swaggers)
 
 > **Дайте вашим AI-агентам руки и ноги в Avito.**
@@ -483,12 +487,13 @@ npx avito-mcp --help       # показать env-переменные и usage
 |---|---|
 | Tool не появился в Claude/Cursor | Полностью перезапустите клиент (через системный трей). Проверьте JSON-синтаксис конфига. |
 | `Invalid .env: Client_id is required` | Заполните credentials. Названия чувствительны к регистру: `Client_id`, не `client_id`. |
-| 401 при первом запросе | Проверьте credentials в [личном кабинете API](https://www.avito.ru/professionals/api). Удалите `.avito-token.json` и повторите. |
+| 401 при первом запросе | Проверьте credentials в [личном кабинете API](https://www.avito.ru/professionals/api). Удалите OAuth-кэш (см. "Сбросить токен" ниже) и повторите. |
 | 403 на конкретном tool | Не все scopes доступны для `client_credentials`-токена. Смотрите описание метода в `swaggers/`. |
 | 404 на большинстве `delivery_*` | Это нормально — большая часть `delivery_*` — для партнёров служб доставки, обычный аккаунт получит 403/404. |
 | 429 Rate-limited | Сервер сам retry с backoff (1с/2с/4с). `meta_get_rate_limits` покажет лимиты. |
 | Где логи | stderr. Claude Desktop: `~/Library/Logs/Claude/mcp-server-avito.log` (macOS). |
-| Сбросить токен | `rm $(pwd)/.avito-token.json` — следующий запрос сделает refresh. |
+| Tool заблокирован — `AVITO_SAFE_MODE=read-only` | Read-only режим включён. Уберите env-переменную или установите её в другое значение (см. секцию "Безопасность" про safe mode). |
+| Сбросить токен | Удалите OAuth-кэш по дефолтному пути: Linux — `rm ~/.local/state/avito-mcp/token.json`, macOS — `rm "$HOME/Library/Application Support/avito-mcp/token.json"`, Windows — `del %APPDATA%\avito-mcp\token.json`. Если задан `AVITO_TOKEN_FILE` — удалите файл по этому пути. |
 
 ---
 

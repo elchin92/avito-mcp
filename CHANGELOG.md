@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-05-25
+
+Hotfix release: v0.2.0 missed one tool, plus several doc tune-ups.
+
+### Fixed
+- **`messenger_upload_images`** — the only tool registered via `server.registerTool` directly (instead of `defineTool`), it slipped through the v0.2.0 risk classification and was **not blocked under `AVITO_SAFE_MODE=read-only`**. Now classified as `write`, gets MCP `ToolAnnotations`, and respects safe-mode like every other tool.
+
+### Docs
+- `CONTRIBUTING.md` — documents the required `risk` field on every new tool, with explicit semantics for each of the four categories. Adds a note that custom tools using `server.registerTool` directly must implement the safe-mode guard themselves.
+- `.github/PULL_REQUEST_TEMPLATE.md` — new checklist item: every new tool must declare `risk` explicitly.
+- `SECURITY.md` — token cache file reference generalised (was tied to the old `cwd/.avito-token.json` filename).
+- `README.ru.md` Troubleshooting — token-reset commands updated to the new per-OS state directory paths; added a row explaining `AVITO_SAFE_MODE` blocking.
+- README (EN + RU) header — added CI status, tests-passing, TypeScript-strict, and GitHub stars badges.
+
 ## [0.2.0] - 2026-05-25
 
 "Safe by default" — risk classification, safe-mode, and a real CLI.
@@ -93,6 +107,7 @@ Avito provides separate APIs for the following verticals; their swagger specs ar
 ### Fixed
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
 
+[0.2.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.2.1
 [0.2.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.2.0
 [0.1.4]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.4
 [0.1.3]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.3

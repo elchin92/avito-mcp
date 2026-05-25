@@ -295,8 +295,27 @@ export const register: DomainRegister = (server, ctx) => {
           .optional()
           .describe('По умолчанию — Profile_id из .env.'),
       },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async (args): Promise<CallToolResult> => {
+      if (process.env.AVITO_SAFE_MODE === 'read-only') {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text:
+                "Tool 'messenger_upload_images' (risk=write) blocked by AVITO_SAFE_MODE=read-only. " +
+                'Unset AVITO_SAFE_MODE or set it to a different value to allow non-read tools.',
+            },
+          ],
+        };
+      }
       try {
         const userId = (args.user_id as number | undefined) ?? ctx.config.profileId;
         const paths = args.paths as string[];

@@ -26,6 +26,7 @@
 - [ ] Обновил `CHANGELOG.md` (если изменение видно пользователю)
 - [ ] Нет реальных credentials, токенов, item-IDs, бизнес-данных в коде / тестах / примерах
 - [ ] Если добавлен новый swagger — есть запись в `src/meta/domain-registry.ts` и описания на русском
+- [ ] Каждый новый tool имеет явный `risk` (`'read'` / `'write'` / `'money'` / `'public'`) — см. [CONTRIBUTING.md](../CONTRIBUTING.md#conventions). Кастомные tools через `server.registerTool` напрямую — реализуют свой safe-mode guard.
 
 ## Notes for reviewer / Заметки для ревьюера
 

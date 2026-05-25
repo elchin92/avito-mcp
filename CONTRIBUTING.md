@@ -36,9 +36,17 @@ One `defineTool(server, ctx, { ... })` call in the appropriate `src/domains/<nam
 - **Tool naming:** `<domain>_<snake_case_operationId>`. Example: `items_get_item_info`. Resolve operationId collisions across files via the domain prefix (e.g. `delivery_check_confirmation_code` vs `orders_check_confirmation_code`).
 - **Versioned operations within a domain:** suffix with `_v1`/`_v2` (e.g. `cpa_chats_by_time_v1`, `cpa_chats_by_time_v2`).
 - **Descriptions are in Russian** — the target audience are Russian-speaking Avito sellers and their AI agents.
-- **Warn on write methods** — prefix description with `⚠️` when a tool sends a real message, changes price, charges money, or modifies live data.
+- **`risk` field is required** on every new tool. Without it, the tool defaults to `'write'` and is blocked under `AVITO_SAFE_MODE=read-only` — which is the right fail-closed behaviour, but you should be explicit:
+  - `'read'` — GETs and POST-as-query (analytics, statistics, balance, info). No side effects on the server.
+  - `'write'` — modifies your own data without immediate customer impact or money spent (drafts, settings, internal stock, marking chats as read).
+  - `'money'` — spends balance (VAS purchases, CPA bids, paid promotion orders).
+  - `'public'` — visible to customers or third parties (sending messages, replying to reviews, changing prices, setting tracking numbers, accepting returns).
+
+  The factory derives the MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`) from `risk` automatically — well-behaved MCP clients use these to warn users before destructive calls.
+- **Warn on write methods in the description** — prefix with `⚠️` for `money`/`public` tools as a belt-and-suspenders signal alongside the annotations.
 - **Path parameters with `{user_id}` or `{userId}`** — use `injectProfileId: 'user_id' | 'userId'` so the user's profile id is auto-filled if the agent doesn't pass it.
 - **Complex nested bodies** — `z.record(z.string(), z.unknown())` with a `.describe()` pointing to the swagger file is acceptable for rarely-used fields. Don't write 200 lines of Zod for every nested DTO.
+- **Custom tools via `server.registerTool` directly** (instead of `defineTool`) must implement the safe-mode guard themselves — `defineTool` does it for you, so prefer the factory unless you genuinely need a non-HTTP handler (e.g. `messenger_upload_images` reads files from disk).
 
 ## Tests
 

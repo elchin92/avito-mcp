@@ -16,7 +16,7 @@ We'll reply on the same advisory thread. Once a fix is released, the advisory be
 
 ## In scope
 
-- Leakage of `Client_secret`, `access_token`, or `.avito-token.json` to logs, stdout, or any endpoint other than `api.avito.ru`.
+- Leakage of `Client_secret`, `access_token`, or the OAuth token cache file (default location is per-user state dir, configurable via `AVITO_TOKEN_FILE`) to logs, stdout, or any endpoint other than `api.avito.ru`.
 - Arbitrary code execution from a malicious MCP-client message.
 - TLS / certificate-validation bypasses against `api.avito.ru`.
 - Race conditions in the OAuth token store that could expose tokens on shared machines.
