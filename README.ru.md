@@ -427,6 +427,17 @@ Settings → MCP Servers → Add. Поля UI: name `avito`, command `npx`, args
 - Credentials живут в блоке `env` MCP-клиента или в локальном `.env`. Никуда не отправляются кроме `api.avito.ru`.
 - OAuth-токены кешируются в `$cwd/.avito-token.json` (chmod 600). Удалите файл — следующий запрос автоматически выпишет новый.
 - **Все 139 tools работают с production** — sandbox у Avito нет. Write-методы тратят деньги или видны клиентам. Безопасные read-only для первого знакомства: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
+- **Нашли уязвимость?** Приватный канал — [SECURITY.md](./SECURITY.md). Не открывайте публичный issue.
+
+---
+
+## Сообщество и поддержка
+
+- **Баг?** [Создайте issue](https://github.com/elchin92/avito-mcp/issues/new/choose).
+- **Вопрос или идея?** [Откройте discussion](https://github.com/elchin92/avito-mcp/discussions).
+- **Нужна помощь по выбору tool'а или настройке клиента?** Смотрите [SUPPORT.md](./SUPPORT.md).
+- **Хотите помочь?** Добавить новый swagger Avito — это ~10 минут работы, см. [CONTRIBUTING.md](./CONTRIBUTING.md).
+- **Нравится проект?** Поставьте звезду и расскажите другому продавцу с Avito, который использует AI.
 
 ---
 

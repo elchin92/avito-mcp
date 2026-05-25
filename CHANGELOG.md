@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-05-25
+
+Community health files.
+
+### Added
+- **`SECURITY.md`** — security policy with private vulnerability reporting via GitHub Security Advisories. Defines in-scope vs out-of-scope and coordinated disclosure expectations.
+- **`SUPPORT.md`** — where to go for bugs, questions, security issues, Avito-API problems, and MCP-client issues (RU + EN).
+- **`.github/PULL_REQUEST_TEMPLATE.md`** — what/why, type-of-change checkboxes, and a pre-merge checklist (lint / tsc / build / test / changelog / no real credentials).
+- **`.github/dependabot.yml`** — weekly grouped npm + GitHub Actions updates with conventional-commit prefixes.
+
+### Changed
+- README (EN + RU): added **Community & support** section pointing at all community files; tightened Security section with a private-reporting pointer.
+- `CONTRIBUTING.md`: front-matter note linking to Code of Conduct, Support, and Security policy.
+
+### Confirmed
+- No code, swagger, or test changes — community-files-only release. All 31 unit tests still pass; 139 tools still exposed.
+
 ## [0.1.0] - 2026-05-25
 
 Initial public release.
@@ -48,6 +65,7 @@ Avito provides separate APIs for the following verticals; their swagger specs ar
 ### Fixed
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
 
+[0.1.4]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.4
 [0.1.3]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.3
 [0.1.2]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.1

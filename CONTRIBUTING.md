@@ -2,6 +2,8 @@
 
 Thank you for considering contributing! This project's main goal is to give AI agents the maximum useful coverage of Avito's public API. Most PRs will be either adding new domains, expanding tool descriptions, or fixing bugs.
 
+> **Before you start:** for help or questions see [SUPPORT.md](./SUPPORT.md). For security issues use the private channel in [SECURITY.md](./SECURITY.md) — **not** a public issue.
+
 ## Architecture in 30 seconds
 
 ```

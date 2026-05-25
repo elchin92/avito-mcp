@@ -427,6 +427,17 @@ Also out of scope: `authorization_code` OAuth flow (no public redirect URI on a 
 - Credentials live in your MCP client's `env` block or local `.env`. They're never sent anywhere except `api.avito.ru`.
 - OAuth tokens cached at `$cwd/.avito-token.json` (chmod 600). Delete the file to force a refresh.
 - **All 139 tools hit production** — Avito has no sandbox. Write methods cost real money or are visible to real customers. Read-only safe tools for first runs: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
+- **Found a security issue?** Private reporting via [SECURITY.md](./SECURITY.md) — don't open a public issue.
+
+---
+
+## Community & support
+
+- **Bug?** [Open an issue](https://github.com/elchin92/avito-mcp/issues/new/choose).
+- **Question or idea?** [Start a discussion](https://github.com/elchin92/avito-mcp/discussions).
+- **Need help picking the right tool or setting up your client?** See [SUPPORT.md](./SUPPORT.md).
+- **Want to contribute?** Adding a new Avito swagger takes ~10 minutes — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+- **Like the project?** Star the repo and tell another Avito seller who uses AI.
 
 ---
 
