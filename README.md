@@ -77,9 +77,12 @@ Avito provides **separate APIs** for these verticals — their swagger specs are
 
 | Category | Where to find |
 |---|---|
-| 🚗 **Cars** (auto, trucks, special vehicles) | [Avito Auto API](https://developers.avito.ru/api-catalog/auto/documentation) |
-| 🏠 **Real estate** | [Avito Real Estate API](https://developers.avito.ru/api-catalog/realty/documentation) |
+| 🏷️ **Auction** | [Avito Auction API](https://developers.avito.ru/api-catalog/auction/documentation) |
+| 🤖 **Auto-strategies** (automated promotion bidding) | [Avito Autostrategy API](https://developers.avito.ru/api-catalog/autostrategy/documentation) |
+| 🚗 **Autoteka** (vehicle history reports) | [Avito Autoteka API](https://developers.avito.ru/api-catalog/autoteka/documentation) |
 | 💼 **Jobs / Vacancies** | [Avito Jobs API](https://developers.avito.ru/api-catalog/job/documentation) |
+| 📊 **Real-estate reports** | [Avito Realty Reports API](https://developers.avito.ru/api-catalog/realty-reports/documentation) |
+| 🏠 **Short-term rent** (apartments, holiday rentals) | [Avito STR API](https://developers.avito.ru/api-catalog/str/documentation#ApiDescriptionBlock) |
 
 Also out of scope in v0.1.x: `authorization_code` OAuth flow (no public redirect URI on a local CLI), webhook receiver (needs a public URL), Avito sandbox (no sandbox credentials).
 

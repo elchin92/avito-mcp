@@ -21,6 +21,12 @@ Initial public release.
 `auth` (3) · `user` (3) · `items` (11) · `messenger` (14) · `autoload` (17) · `orders` (12) · `delivery` (31) · `promotion` (7) · `cpa` (11) · `cpa_target` (5) · `cpa_auction` (2) · `stock` (2) · `hierarchy` (5) · `reviews` (4) · `tariffs` (1) · `trxpromo` (3) · `calltracking` (3) · `msg_discounts` (5) · `meta` (1).
 
 ### Not supported in this release
-Auto/cars, real estate, jobs/vacancies — Avito provides separate APIs for these verticals; their swagger specs are not bundled.
+Avito provides separate APIs for the following verticals; their swagger specs are not bundled: Auction, Autostrategy, Autoteka, Jobs/Vacancies, Realty Reports, Short-term rent (STR).
 
+## [0.1.1] - 2026-05-25
+
+### Fixed
+- README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
+
+[0.1.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.1.0

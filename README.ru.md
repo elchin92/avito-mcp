@@ -253,9 +253,12 @@ claude mcp add avito npx -y avito-mcp \
 
 | Категория | Где искать |
 |---|---|
-| 🚗 **Авто** (легковые, грузовые, спецтехника) | [Avito Auto API](https://developers.avito.ru/api-catalog/auto/documentation) |
-| 🏠 **Недвижимость** (квартиры, дома, коммерческая) | [Avito Real Estate API](https://developers.avito.ru/api-catalog/realty/documentation) |
+| 🏷️ **Аукцион** | [Avito Auction API](https://developers.avito.ru/api-catalog/auction/documentation) |
+| 🤖 **Автостратегии** (автоматическое управление ставками продвижения) | [Avito Autostrategy API](https://developers.avito.ru/api-catalog/autostrategy/documentation) |
+| 🚗 **Автотека** (отчёты по истории автомобилей) | [Avito Autoteka API](https://developers.avito.ru/api-catalog/autoteka/documentation) |
 | 💼 **Работа / Вакансии** | [Avito Jobs API](https://developers.avito.ru/api-catalog/job/documentation) |
+| 📊 **Отчёты по недвижимости** | [Avito Realty Reports API](https://developers.avito.ru/api-catalog/realty-reports/documentation) |
+| 🏠 **Краткосрочная аренда** (квартиры посуточно) | [Avito STR API](https://developers.avito.ru/api-catalog/str/documentation#ApiDescriptionBlock) |
 
 Также **не реализовано** в v0.1.x:
 - `authorization_code` OAuth flow (нужен публичный redirect URI — out of scope для локального CLI)
