@@ -29,6 +29,7 @@ function defaultTokenFile(): string {
 }
 
 export type SafetyMode = 'read_only' | 'guarded' | 'full_access';
+export type ConfirmationMode = 'off' | 'money_public' | 'all_destructive';
 
 /**
  * Parses a comma- or whitespace-separated list from env into a deduplicated array.
@@ -42,6 +43,18 @@ function parseToolList(raw: string | undefined): string[] {
     if (t) seen.add(t);
   }
   return [...seen];
+}
+
+function parseBool(raw: string | undefined, fallback = false): boolean {
+  if (raw === undefined) return fallback;
+  const v = raw.trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 /**
@@ -75,6 +88,11 @@ const ConfigSchema = z.object({
   mode: z.enum(['read_only', 'guarded', 'full_access']).default('full_access'),
   allowTools: z.array(z.string()).default([]),
   denyTools: z.array(z.string()).default([]),
+  exposeAuthTools: z.boolean().default(false),
+  allowedUploadDirs: z.array(z.string()).default([]),
+  maxUploadMb: z.number().int().positive().default(15),
+  confirmationMode: z.enum(['off', 'money_public', 'all_destructive']).default('money_public'),
+  confirmationTtlSec: z.number().int().positive().default(900),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -90,6 +108,11 @@ function load(): Config {
     mode: resolveMode(),
     allowTools: parseToolList(process.env.AVITO_MCP_ALLOW_TOOLS),
     denyTools: parseToolList(process.env.AVITO_MCP_DENY_TOOLS),
+    exposeAuthTools: parseBool(process.env.AVITO_MCP_EXPOSE_AUTH_TOOLS),
+    allowedUploadDirs: parseToolList(process.env.AVITO_MCP_ALLOWED_UPLOAD_DIRS),
+    maxUploadMb: parsePositiveInt(process.env.AVITO_MCP_MAX_UPLOAD_MB, 15),
+    confirmationMode: (process.env.AVITO_MCP_CONFIRMATION_MODE as ConfirmationMode | undefined) ?? 'money_public',
+    confirmationTtlSec: parsePositiveInt(process.env.AVITO_MCP_CONFIRMATION_TTL_SEC, 900),
   };
 
   const parsed = ConfigSchema.safeParse(raw);

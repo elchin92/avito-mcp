@@ -15,9 +15,6 @@
  *   - postBlacklistV2 — блокирует пользователя
  *   - deleteMessage — удаляет сообщение
  */
-import { promises as fs } from 'node:fs';
-import { basename } from 'node:path';
-
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
@@ -25,6 +22,7 @@ import { logger } from '../logger.js';
 import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 import { errorToMcpContent } from '../core/errors.js';
 import { evaluatePolicy } from '../core/policy.js';
+import { validateUpload, UploadGuardError } from '../core/upload-guard.js';
 
 export const register: DomainRegister = (server, ctx) => {
   // ────────────────────────────── READ ──────────────────────────────
@@ -278,8 +276,17 @@ export const register: DomainRegister = (server, ctx) => {
 
   // ────────────────────────────── CUSTOM (multipart upload) ──────────────────────────────
 
-  // Custom tool (not via defineTool because it reads from local disk). Same policy gate
-  // applies — risk='write' means: blocked by mode=read_only, allowed by mode=guarded.
+  // v0.4.0: fail-closed на регистрации, если нет разрешённых директорий.
+  // Без AVITO_MCP_ALLOWED_UPLOAD_DIRS tool вообще не появляется в tools/list —
+  // защита от arbitrary-file-read через prompt injection.
+  if (ctx.config.allowedUploadDirs.length === 0) {
+    logger.info(
+      { tool: 'messenger_upload_images' },
+      'upload tool hidden: AVITO_MCP_ALLOWED_UPLOAD_DIRS is empty',
+    );
+    return;
+  }
+  // Policy gate (mode/allow/deny).
   const uploadDecision = evaluatePolicy('messenger_upload_images', 'write', ctx.config);
   if (!uploadDecision.allowed) {
     logger.info(
@@ -288,18 +295,25 @@ export const register: DomainRegister = (server, ctx) => {
     );
     return;
   }
+  const maxBytes = ctx.config.maxUploadMb * 1024 * 1024;
   server.registerTool(
     'messenger_upload_images',
     {
       description:
         'Загружает изображения с локального диска в мессенджер Avito (multipart). ' +
-        'Возвращает image_id, которые потом используются в messenger_post_send_image_message. ' +
-        'Поддерживает несколько файлов за раз.',
+        `Возвращает image_id для messenger_post_send_image_message. Принимает jpg/jpeg/png/webp ` +
+        `до ${ctx.config.maxUploadMb} MB. Файлы должны лежать в одной из ` +
+        `AVITO_MCP_ALLOWED_UPLOAD_DIRS — иначе tool не зарегистрирован, либо вернёт ошибку. ` +
+        'Проверки: realpath (symlink escape), allowlist директорий, размер, расширение, magic bytes.',
       inputSchema: {
         paths: z
           .array(z.string().min(1))
           .min(1)
-          .describe('Список абсолютных путей к локальным файлам изображений (jpg/png).'),
+          .describe(
+            'Список абсолютных путей к локальным файлам изображений (jpg/jpeg/png/webp). ' +
+              'Каждый файл проверяется на: попадание в AVITO_MCP_ALLOWED_UPLOAD_DIRS, размер, ' +
+              'расширение, magic bytes. Любая ошибка — отказ всей пачки.',
+          ),
         user_id: z
           .number()
           .int()
@@ -320,11 +334,31 @@ export const register: DomainRegister = (server, ctx) => {
         const userId = (args.user_id as number | undefined) ?? ctx.config.profileId;
         const paths = args.paths as string[];
 
-        const form = new FormData();
+        // Валидируем ВСЕ файлы перед началом upload — fail-fast.
+        const validated = [];
         for (const p of paths) {
-          const data = await fs.readFile(p);
-          const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-          form.append('uploadfile[]', new Blob([ab as ArrayBuffer]), basename(p));
+          try {
+            validated.push(
+              await validateUpload(p, {
+                allowedDirs: ctx.config.allowedUploadDirs,
+                maxBytes,
+              }),
+            );
+          } catch (err) {
+            if (err instanceof UploadGuardError) {
+              return {
+                isError: true,
+                content: [{ type: 'text', text: err.message }],
+              };
+            }
+            throw err;
+          }
+        }
+
+        const form = new FormData();
+        for (const v of validated) {
+          const ab = v.data.buffer.slice(v.data.byteOffset, v.data.byteOffset + v.data.byteLength);
+          form.append('uploadfile[]', new Blob([ab as ArrayBuffer], { type: v.mime }), v.filename);
         }
 
         const response = await ctx.client.request({

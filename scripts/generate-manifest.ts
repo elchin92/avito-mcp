@@ -20,6 +20,7 @@ import { randomBytes } from 'node:crypto';
 
 import { AvitoClient } from '../src/core/client.js';
 import { domains } from '../src/meta/domain-registry.js';
+import { PendingActionStore } from '../src/core/pending-actions.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config } from '../src/config.js';
 import { PACKAGE_NAME, VERSION } from '../src/version.js';
@@ -64,16 +65,25 @@ function makeFakeConfig(): Config {
     baseUrl: 'https://api.avito.ru',
     tokenFile: pathJoin(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
+    // Full surface: show every tool that could ever be exposed.
     mode: 'full_access',
     allowTools: [],
     denyTools: [],
+    exposeAuthTools: true,
+    allowedUploadDirs: [tmpdir()],
+    maxUploadMb: 15,
+    // Turn on confirmation so meta_confirm_action / meta_cancel_action / meta_list_pending_actions
+    // are included in the manifest — they exist only when confirmation is enabled.
+    confirmationMode: 'money_public',
+    confirmationTtlSec: 900,
   };
 }
 
 async function main(): Promise<void> {
   const server = new McpServer({ name: PACKAGE_NAME, version: VERSION });
   const cfg = makeFakeConfig();
-  const ctx: ToolContext = { client: new AvitoClient(cfg), config: cfg };
+  const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
+  const ctx: ToolContext = { client: new AvitoClient(cfg), config: cfg, pendingStore };
   for (const register of domains) register(server, ctx);
 
   const [a, b] = InMemoryTransport.createLinkedPair();
@@ -85,8 +95,15 @@ async function main(): Promise<void> {
   await client.close();
   await server.close();
 
-  type Risk = 'read' | 'write' | 'money' | 'public' | 'unknown';
-  const byRisk: Record<Risk, string[]> = { read: [], write: [], money: [], public: [], unknown: [] };
+  type Risk = 'sensitive' | 'read' | 'write' | 'money' | 'public' | 'unknown';
+  const byRisk: Record<Risk, string[]> = {
+    sensitive: [],
+    read: [],
+    write: [],
+    money: [],
+    public: [],
+    unknown: [],
+  };
   const byDomain: Record<string, string[]> = {};
   const flat: Array<{
     name: string;
@@ -121,6 +138,7 @@ async function main(): Promise<void> {
     generated_at: new Date().toISOString(),
     tool_count: tools.length,
     counts_by_risk: {
+      sensitive: byRisk.sensitive.length,
       read: byRisk.read.length,
       write: byRisk.write.length,
       money: byRisk.money.length,
@@ -141,12 +159,13 @@ async function main(): Promise<void> {
   const unknownCount = byRisk.unknown.length;
   process.stdout.write(
     `Wrote ${OUT_PATH}\n` +
-      `  tools:   ${tools.length}\n` +
-      `  read:    ${byRisk.read.length}\n` +
-      `  write:   ${byRisk.write.length}\n` +
-      `  money:   ${byRisk.money.length}\n` +
-      `  public:  ${byRisk.public.length}\n` +
-      `  unknown: ${unknownCount}\n`,
+      `  tools:     ${tools.length}\n` +
+      `  sensitive: ${byRisk.sensitive.length}\n` +
+      `  read:      ${byRisk.read.length}\n` +
+      `  write:     ${byRisk.write.length}\n` +
+      `  money:     ${byRisk.money.length}\n` +
+      `  public:    ${byRisk.public.length}\n` +
+      `  unknown:   ${unknownCount}\n`,
   );
   if (unknownCount > 0) {
     process.stderr.write(

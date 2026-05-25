@@ -18,6 +18,11 @@ function makeConfig(): Config {
     mode: 'full_access',
     allowTools: [],
     denyTools: [],
+    exposeAuthTools: false,
+    allowedUploadDirs: [],
+    maxUploadMb: 15,
+    confirmationMode: 'off',
+    confirmationTtlSec: 900,
   };
 }
 

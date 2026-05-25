@@ -6,37 +6,44 @@ import type { Config } from '../config.js';
 import { logger } from '../logger.js';
 import type { AvitoClient, BodyContentType, HttpMethod } from './client.js';
 import { errorToMcpContent } from './errors.js';
-import { evaluatePolicy } from './policy.js';
+import type { PendingActionStore } from './pending-actions.js';
+import { evaluatePolicy, requiresConfirmation } from './policy.js';
 import type { Primitive, QueryValue } from './url.js';
 
 /**
  * Контекст, передаваемый в register-функции доменов.
- * Объединяет всё, что нужно tool-handler'у: HTTP-клиент и конфиг (для autoinject).
+ * Объединяет всё, что нужно tool-handler'у: HTTP-клиент, конфиг и pending-store
+ * для confirmation flow.
  */
 export interface ToolContext {
   client: AvitoClient;
   config: Config;
+  pendingStore: PendingActionStore;
 }
 
 export type ProfileIdKey = 'user_id' | 'userId';
 
 /**
  * Семантика воздействия tool на боевой аккаунт. Используется для:
- *   - AVITO_SAFE_MODE=read-only — блокирует всё, что не `read`
- *   - MCP ToolAnnotations (readOnlyHint / destructiveHint / idempotentHint) — клиенты типа
- *     Claude Desktop / Cursor показывают эти подсказки в UI и могут спросить подтверждение
+ *   - AVITO_MCP_MODE — блокирует категории на этапе регистрации
+ *   - AVITO_MCP_CONFIRMATION_MODE — требует подтверждения на runtime
+ *   - MCP ToolAnnotations (readOnlyHint / destructiveHint / idempotentHint)
  *
  * Категории:
- *   - `read`   — только чтение, без побочных эффектов. GET и POST-as-query (analytics).
- *   - `write`  — меняет данные пользователя, но без денежных затрат и без visibility клиентам.
- *                Drafts, settings, internal stock, разрешения и пр.
- *   - `money`  — тратит деньги с баланса (VAS, promotion, CPA bids).
- *   - `public` — видно клиентам или внешним сторонам: отправка сообщения, ответ на отзыв,
- *                смена цены/статуса объявления.
+ *   - `sensitive` — возвращает credentials / tokens / секреты. Скрыт по default
+ *                   даже в full_access. Включается через AVITO_MCP_EXPOSE_AUTH_TOOLS=1.
+ *                   Примеры: auth_get_access_token, auth_refresh_*.
+ *   - `read`      — только чтение, без побочных эффектов и без секретов в ответе.
+ *                   GET и POST-as-query (analytics, balance, info, list).
+ *   - `write`     — меняет данные пользователя, без денежных затрат и без visibility клиентам.
+ *                   Drafts, settings, internal stock, отметка прочитанного.
+ *   - `money`     — тратит деньги с баланса (VAS, promotion, CPA bids).
+ *   - `public`    — видно клиентам или третьим сторонам (сообщения, ответы на отзывы,
+ *                   смена цены/статуса/трекинга).
  *
  * Default if omitted: `write` (fail-closed для safe-mode).
  */
-export type ToolRisk = 'read' | 'write' | 'money' | 'public';
+export type ToolRisk = 'sensitive' | 'read' | 'write' | 'money' | 'public';
 
 /**
  * Декларативное описание одного MCP tool, обёртывающего HTTP-вызов Avito API.
@@ -98,6 +105,10 @@ export interface ToolSpec<I extends ZodRawShape = ZodRawShape> {
 /** MCP ToolAnnotations выводятся из ToolRisk детерминированно. */
 function riskToAnnotations(risk: ToolRisk): ToolAnnotations {
   switch (risk) {
+    case 'sensitive':
+      // Read-only на стороне Avito, но возвращает секреты — для клиента это тоже
+      // важный сигнал. Сама защита secrets — в policy.ts (hidden by default).
+      return { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true };
     case 'read':
       return { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
     case 'write':
@@ -140,9 +151,10 @@ export function defineTool<I extends ZodRawShape>(
     return;
   }
 
-  const handler = async (rawArgs: Record<string, unknown>): Promise<CallToolResult> => {
+  // Реальный исполнитель — отделён от обёртки, чтобы переиспользовать его
+  // при подтверждении через meta_confirm_action.
+  const execute = async (args: Record<string, unknown>): Promise<CallToolResult> => {
     try {
-      const args = rawArgs ?? {};
       const { pathParams, query, body } = splitArgs(args, spec, ctx);
       const response = await ctx.client.request({
         method: spec.method,
@@ -165,6 +177,43 @@ export function defineTool<I extends ZodRawShape>(
     } catch (err) {
       return errorToMcpContent(err);
     }
+  };
+
+  const handler = async (rawArgs: Record<string, unknown>): Promise<CallToolResult> => {
+    const args = rawArgs ?? {};
+    if (requiresConfirmation(risk, ctx.config)) {
+      const pending = ctx.pendingStore.create({
+        toolName: spec.name,
+        risk,
+        summary: summarisePending(spec, args),
+        args,
+        execute: () => execute(args),
+      });
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                requires_confirmation: true,
+                confirmation_id: pending.id,
+                tool: spec.name,
+                risk,
+                summary: pending.summary,
+                expires_at: new Date(pending.expiresAt).toISOString(),
+                next_step:
+                  'Call meta_confirm_action with this confirmation_id ONLY after explicit human approval. ' +
+                  'Confirmation flow is a server-side two-step safety guard against accidental one-shot execution; ' +
+                  'it is not a cryptographic human-approval mechanism by itself.',
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
+    return execute(args);
   };
 
   // SDK типизирует callback через internal BaseToolCallback с собственными inferred CallToolResult,
@@ -241,6 +290,20 @@ function formatResponse(status: number, data: unknown): string {
     return `status=${status}\n${data}`;
   }
   return `status=${status}\n${JSON.stringify(data, null, 2)}`;
+}
+
+/**
+ * Короткое (~100-200 символов) описание pending action для UI/log/list_pending.
+ * Не дампит args целиком — выдержки самых типичных идентификаторов.
+ */
+function summarisePending(spec: ToolSpec, args: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const key of ['item_id', 'itemId', 'order_id', 'chat_id', 'message_id', 'vas_id', 'price']) {
+    const v = args[key];
+    if (v !== undefined) parts.push(`${key}=${String(v)}`);
+  }
+  const tail = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+  return `${spec.method} ${spec.path}${tail}`;
 }
 
 /** Регистрационная функция домена. Каждый файл в src/domains/ экспортирует одну. */

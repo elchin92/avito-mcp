@@ -3,6 +3,71 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-25
+
+"Sensitive surface + upload guard + confirmation flow" — the safety hardening pass recommended by the v0.3.0 audit. Three new gates added on top of v0.3.0's mode + allow/deny system:
+sensitive-class hiding for auth tools, fail-closed file-access guard for the multipart upload tool, and runtime confirmation flow for destructive operations.
+
+### Breaking changes
+
+> `0.x` versions can break — read these carefully before upgrading unattended deployments.
+
+- **`auth_*` tools are now hidden by default.** They return OAuth tokens and are reclassified as `risk: 'sensitive'`. To restore previous behaviour:
+  ```bash
+  AVITO_MCP_EXPOSE_AUTH_TOOLS=1
+  ```
+- **`messenger_upload_images` is hidden by default.** It reads files from disk and the previous version allowed arbitrary paths. To restore:
+  ```bash
+  AVITO_MCP_ALLOWED_UPLOAD_DIRS=/path/to/safe/dir1,/path/to/safe/dir2
+  ```
+  Even with allowed dirs, every upload now goes through `realpath`/extension/size/magic-byte validation.
+- **`money` and `public` tools now require a two-step confirmation by default.** First call returns `{requires_confirmation: true, confirmation_id: "..."}` instead of executing. Agent must then call `meta_confirm_action` with that id. To restore one-shot execution:
+  ```bash
+  AVITO_MCP_CONFIRMATION_MODE=off
+  ```
+
+### Added
+- **New risk class `sensitive`** in addition to `read` / `write` / `money` / `public`. Used for tools that return credentials. Hidden by default at registration time regardless of mode. Opt-in via `AVITO_MCP_EXPOSE_AUTH_TOOLS=1`. Currently covers 3 tools: `auth_get_access_token`, `auth_get_access_token_authorization_code`, `auth_refresh_access_token_authorization_code`.
+- **`messenger_upload_images` hardening** with new env vars:
+  - `AVITO_MCP_ALLOWED_UPLOAD_DIRS` (comma- or whitespace-separated) — without it the tool isn't registered at all. Validation uses `fs.realpath` on both file and directory to defeat symlink escape and `/safe-malicious` prefix attacks. Strict `dir + sep` startsWith.
+  - `AVITO_MCP_MAX_UPLOAD_MB` (default `15`) — size cap per file.
+  - Extension allowlist hard-coded: jpg/jpeg/png/webp.
+  - Magic-byte sniff (JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`, WEBP `RIFF...WEBP`) cross-checked against extension. Mismatch is rejected.
+  - All validation runs before any byte is sent to Avito. Fail-closed everywhere.
+- **Runtime confirmation flow** with new env vars and three new meta tools:
+  - `AVITO_MCP_CONFIRMATION_MODE` (`off` / `money_public` (default) / `all_destructive`) — `money_public` requires confirmation for `money` and `public`; `all_destructive` adds `write`. `off` keeps v0.3.x behaviour.
+  - `AVITO_MCP_CONFIRMATION_TTL_SEC` (default `900`) — pending action TTL.
+  - `meta_confirm_action(confirmation_id)` — executes the pending. One-shot; re-evaluates policy at confirm time (in case config changed); deletes the pending before executing so race-double-confirm fails.
+  - `meta_cancel_action(confirmation_id)` — removes a pending without executing.
+  - `meta_list_pending_actions()` — sanitized list (no args dump, no execute closure) for "what did I just queue?" diagnostics.
+  - Pending store is **in-memory only** — rebooting the server loses all pending. Deliberate: better than accidentally confirming an old action.
+  - All three meta tools are registered **only** when `AVITO_MCP_CONFIRMATION_MODE != off` — no clutter when flow is disabled.
+- **24 new tests** (74 → 98 total): 10 for confirmation flow (pending creation, one-shot confirm, double-confirm rejected, cancel, expiry, list, mode toggles, policy re-evaluation), 14 for upload guard (every reason path: outside dirs, symlink escape, extension mismatch, magic-byte mismatch, size limit, directory disguised as file, naive prefix attack, empty allowlist, path traversal).
+- New module `src/core/pending-actions.ts` (TTL'd in-memory store, sanitised list view).
+- New module `src/core/upload-guard.ts` (`validateUpload`, `UploadGuardError`).
+
+### Changed
+- `ToolContext` now includes `pendingStore: PendingActionStore` (internal API; only domain authors affected).
+- `dist/manifest.json` now includes `counts_by_risk.sensitive` and the three new confirmation tools. With confirmation on, 142 tools total: 3 sensitive / 77 read / 43 write / 9 money / 10 public.
+- Server startup log adds `exposeAuthTools`, `uploadDirsCount`, `confirmationMode` fields so the active safety profile is auditable from the first line of stderr.
+- `--help` documents every new env var. `.env.example` documents every new env var, organised into three labeled sections (registration gates / upload guard / runtime confirmation).
+- README EN + RU Security sections rewritten around the three-layer model.
+- `docs/safety.md` rewritten — fixed `stock_get_stocks_info` typo (should have been `stock_update_stocks`), added confirmation flow explanation with explicit "what it isn't" disclaimer about autonomous agents.
+
+### Fixed
+- `dist/manifest.json` generator now correctly counts `sensitive` (previously crashed on unknown risk).
+- `.github/ISSUE_TEMPLATE/bug_report.md` added — was missing in v0.3.x. Now asks reporters for their active safety env vars.
+
+### Notes on the audit
+This release closes the high-priority items from the v0.3.0 audit: sensitive surface, upload hardening, confirmation. P1 items kept for follow-ups (v0.4.1 / v0.5.0):
+- `gitleaks` / secret scanning in CI
+- `npm audit` warning gate in CI
+- Type-check `scripts/` separately
+- Snapshot tests on exact tool counts
+- Binary endpoint UX (PDF/audio as base64)
+- `AVITO_MCP_CONFIRMATION_SECRET` for hard-confirmation (human-typed secret)
+- Per-tool spending caps
+
 ## [0.3.0] - 2026-05-25
 
 "Defence in depth" — three safety modes, per-tool allowlist/denylist, generated tool manifest, and registry-invariant tests. Plus a `docs/safety.md` with ready-to-paste configurations for common agent personas.
@@ -146,6 +211,7 @@ Avito provides separate APIs for the following verticals; their swagger specs ar
 ### Fixed
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
 
+[0.4.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.4.0
 [0.3.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.3.0
 [0.2.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.2.1
 [0.2.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.2.0

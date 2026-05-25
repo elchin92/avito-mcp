@@ -10,10 +10,23 @@ import { promises as fs } from 'node:fs';
 
 import { AvitoClient } from '../src/core/client.js';
 import { defineTool, type ToolContext } from '../src/core/tool-factory.js';
+import { PendingActionStore } from '../src/core/pending-actions.js';
 import type { Config, SafetyMode } from '../src/config.js';
 
 function makeConfig(
-  overrides: Partial<Pick<Config, 'mode' | 'allowTools' | 'denyTools'>> = {},
+  overrides: Partial<
+    Pick<
+      Config,
+      | 'mode'
+      | 'allowTools'
+      | 'denyTools'
+      | 'exposeAuthTools'
+      | 'allowedUploadDirs'
+      | 'maxUploadMb'
+      | 'confirmationMode'
+      | 'confirmationTtlSec'
+    >
+  > = {},
 ): Config {
   return {
     clientId: 'cid',
@@ -25,6 +38,11 @@ function makeConfig(
     mode: 'full_access',
     allowTools: [],
     denyTools: [],
+    exposeAuthTools: false,
+    allowedUploadDirs: [],
+    maxUploadMb: 15,
+    confirmationMode: 'off',
+    confirmationTtlSec: 900,
     ...overrides,
   };
 }
@@ -91,7 +109,8 @@ function makeCtx(mode: SafetyMode, allow: string[] = [], deny: string[] = []): {
   const avito = new AvitoClient(cfg, {
     retry: { retry429BaseMs: 1, max429Retries: 0, retry5xxBackoffMs: 1, max5xxRetries: 0 },
   });
-  return { ctx: { client: avito, config: cfg }, cfg, fetchMock };
+  const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
+  return { ctx: { client: avito, config: cfg, pendingStore }, cfg, fetchMock };
 }
 
 describe('defineTool — risk annotations', () => {

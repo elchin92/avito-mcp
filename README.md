@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![CI](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-50_passing-brightgreen)](./test)
+[![Tests](https://img.shields.io/badge/tests-74_passing-brightgreen)](./test)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
@@ -434,12 +434,14 @@ Also out of scope: `authorization_code` OAuth flow (no public redirect URI on a 
   - macOS: `~/Library/Application Support/avito-mcp/token.json`
   - Windows: `%APPDATA%\avito-mcp\token.json`
   - Override with `AVITO_TOKEN_FILE`. Delete the file to force a refresh.
-- **Three safety modes via `AVITO_MCP_MODE`** (default: `full_access`):
-  - `read_only` — only the ~79 `read` tools register; nothing that writes, spends, or talks to customers is even visible to the agent
-  - `guarded` — adds `write` tools (~41 more), still hides `money` and `public`
-  - `full_access` — all 139 tools, like v0.1.x. Legacy `AVITO_SAFE_MODE=read-only` still works as a deprecated alias for `AVITO_MCP_MODE=read_only`.
-- **Per-tool allowlist / denylist:** `AVITO_MCP_ALLOW_TOOLS=foo,bar` registers only those names. `AVITO_MCP_DENY_TOOLS=baz` hides them, deny wins over allow. Useful for building purpose-built agent personas — see [`docs/safety.md`](./docs/safety.md) for ready-to-paste configs (analytics-only, support, listings-only, full admin).
-- Every tool is tagged with one of four risk levels (`read` / `write` / `money` / `public`), exposed both as MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`) and in `dist/manifest.json`. Well-behaved MCP clients warn before destructive calls.
+- **Three-layer safety model** (every layer opt-in via env vars; defaults preserve v0.1.x behaviour for trivial calls but harden everything destructive):
+  - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — registration-time gate. Hidden tools never appear in `tools/list`. `read_only` ≈ 77 tools, `guarded` adds writes (~120 tools), `full_access` is all 139.
+  - **`AVITO_MCP_ALLOW_TOOLS` / `AVITO_MCP_DENY_TOOLS`** — per-tool gating. Deny wins over allow.
+  - **`AVITO_MCP_CONFIRMATION_MODE`** (`off` / `money_public` (default) / `all_destructive`) — runtime gate. Destructive tools return `{requires_confirmation: true, confirmation_id: ...}`; agent must call `meta_confirm_action` to execute. Pending state is in-memory, TTL'd (default 15 min), one-shot.
+  - **`AVITO_MCP_EXPOSE_AUTH_TOOLS`** (default: `0`) — `auth_*` tools return OAuth tokens; classed as `sensitive` and hidden by default even in `full_access`.
+  - **`AVITO_MCP_ALLOWED_UPLOAD_DIRS`** — `messenger_upload_images` reads files from disk; without an explicit directory allowlist it doesn't register at all. Path validation uses `realpath` (symlink-escape proof), extension allowlist (jpg/jpeg/png/webp), size cap (`AVITO_MCP_MAX_UPLOAD_MB`, default 15), magic-byte sniff with extension cross-check.
+- Every tool is tagged with one of five risks (`sensitive` / `read` / `write` / `money` / `public`), exposed as MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`) and as `_meta.risk`, and listed in [`dist/manifest.json`](./dist/manifest.json). Well-behaved MCP clients warn before destructive calls.
+- See [`docs/safety.md`](./docs/safety.md) for ready-to-paste configs (analytics-only, customer-support with confirmation, listings-only, full admin) and a frank discussion of what the confirmation flow is and isn't (it's a server-side two-step + audit layer, not a cryptographic human-approval mechanism).
 - **All 139 tools hit production** — Avito has no sandbox. Write methods cost real money or are visible to real customers. Safe read-only tools for first runs: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
 - **Found a security issue?** Private reporting via [SECURITY.md](./SECURITY.md) — don't open a public issue.
 

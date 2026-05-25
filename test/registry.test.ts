@@ -17,6 +17,7 @@ import { randomBytes } from 'node:crypto';
 
 import { AvitoClient } from '../src/core/client.js';
 import { domains } from '../src/meta/domain-registry.js';
+import { PendingActionStore } from '../src/core/pending-actions.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config } from '../src/config.js';
 
@@ -28,9 +29,15 @@ function makeConfig(): Config {
     baseUrl: 'https://api.test.example',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
+    // Full surface for registry inventory: expose everything that exists.
     mode: 'full_access',
     allowTools: [],
     denyTools: [],
+    exposeAuthTools: true,
+    allowedUploadDirs: [tmpdir()],
+    maxUploadMb: 15,
+    confirmationMode: 'off',
+    confirmationTtlSec: 900,
   };
 }
 
@@ -51,7 +58,8 @@ let tools: Array<{
 beforeAll(async () => {
   const server = new McpServer({ name: 'avito-mcp-test', version: '0.0.0' });
   const cfg = makeConfig();
-  const ctx: ToolContext = { client: new AvitoClient(cfg), config: cfg };
+  const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
+  const ctx: ToolContext = { client: new AvitoClient(cfg), config: cfg, pendingStore };
   for (const register of domains) register(server, ctx);
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a);

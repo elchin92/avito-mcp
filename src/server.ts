@@ -36,12 +36,14 @@ function printHelp(): void {
 
 async function startServer(): Promise<void> {
   // Deferred so --version / --help don't trigger dotenv loading or config validation.
-  const [{ config }, { logger }, { AvitoClient }, { domains }] = await Promise.all([
-    import('./config.js'),
-    import('./logger.js'),
-    import('./core/client.js'),
-    import('./meta/domain-registry.js'),
-  ]);
+  const [{ config }, { logger }, { AvitoClient }, { domains }, { PendingActionStore }] =
+    await Promise.all([
+      import('./config.js'),
+      import('./logger.js'),
+      import('./core/client.js'),
+      import('./meta/domain-registry.js'),
+      import('./core/pending-actions.js'),
+    ]);
 
   const server = new McpServer({
     name: PACKAGE_NAME,
@@ -49,7 +51,8 @@ async function startServer(): Promise<void> {
   });
 
   const client = new AvitoClient(config);
-  const ctx: ToolContext = { client, config };
+  const pendingStore = new PendingActionStore(config.confirmationTtlSec * 1000);
+  const ctx: ToolContext = { client, config, pendingStore };
 
   for (const register of domains) {
     register(server, ctx);
@@ -67,6 +70,9 @@ async function startServer(): Promise<void> {
       mode: config.mode,
       allowToolsCount: config.allowTools.length,
       denyToolsCount: config.denyTools.length,
+      exposeAuthTools: config.exposeAuthTools,
+      uploadDirsCount: config.allowedUploadDirs.length,
+      confirmationMode: config.confirmationMode,
     },
     'avito-mcp started',
   );

@@ -1,6 +1,6 @@
 {
   "name": "avito-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server for Avito API — 139 tools across 18 domains. Give your AI agents hands and feet on Russia's largest classifieds marketplace.",
   "type": "module",
   "bin": {

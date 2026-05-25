@@ -9,13 +9,15 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 import { config } from '../src/config.js';
 import { AvitoClient } from '../src/core/client.js';
+import { PendingActionStore } from '../src/core/pending-actions.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import { domains } from '../src/meta/domain-registry.js';
 import { PACKAGE_NAME, VERSION } from '../src/version.js';
 
 async function main() {
   const server = new McpServer({ name: PACKAGE_NAME, version: VERSION });
-  const ctx: ToolContext = { client: new AvitoClient(config), config };
+  const pendingStore = new PendingActionStore(config.confirmationTtlSec * 1000);
+  const ctx: ToolContext = { client: new AvitoClient(config), config, pendingStore };
   for (const register of domains) register(server, ctx);
 
   const [a, b] = InMemoryTransport.createLinkedPair();
