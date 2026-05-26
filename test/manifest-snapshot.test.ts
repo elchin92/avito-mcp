@@ -45,10 +45,10 @@ beforeAll(() => {
 });
 
 describe('manifest snapshot', () => {
-  it('has stable counts_by_risk (with confirmation tools enabled — 142 total)', () => {
+  it('has stable counts_by_risk (v0.7.0: +3 meta tools — 145 total)', () => {
     expect(manifest.counts_by_risk).toEqual({
       sensitive: 3,
-      read: 77,
+      read: 80, // +3 in v0.7.0: meta_health, meta_auth_status, meta_capabilities
       write: 43,
       money: 9,
       public: 10,
@@ -56,8 +56,8 @@ describe('manifest snapshot', () => {
     });
   });
 
-  it('has total tool_count = 142', () => {
-    expect(manifest.tool_count).toBe(142);
+  it('has total tool_count = 145', () => {
+    expect(manifest.tool_count).toBe(145);
   });
 
   it('covers exactly the expected 19 domain prefixes', () => {

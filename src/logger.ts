@@ -10,11 +10,42 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
  * фильтровать через `logging/setLevel`. pino-output в stderr остаётся как было — для
  * локальной отладки и для случая когда клиент не поддерживает logging.
  */
+/**
+ * v0.7.0: pino redact paths. Defence-in-depth — текущий код намеренно не логирует
+ * headers / token. Но если в будущем кто-то случайно сделает logger.info({ headers })
+ * или прокинет полный Response через err.cause, мы хотим, чтобы любое поле с
+ * чувствительным именем заменилось на '[redacted]' до сериализации.
+ *
+ * Пути с '*.' матчат на любом уровне вложенности. Если pino не найдёт path —
+ * молча игнорирует. Можно расширять смело.
+ */
+const REDACT_PATHS = [
+  '*.Authorization',
+  '*.authorization',
+  '*.accessToken',
+  '*.access_token',
+  '*.refresh_token',
+  '*.refreshToken',
+  '*.client_secret',
+  '*.clientSecret',
+  '*.bearer',
+  '*.Bearer',
+  '*.token',
+  'headers.Authorization',
+  'headers.authorization',
+];
+
 export const logger = pino(
   {
     level: process.env.LOG_LEVEL ?? 'info',
     base: { service: 'avito-mcp' },
     timestamp: pino.stdTimeFunctions.isoTime,
+    redact: {
+      paths: REDACT_PATHS,
+      censor: '[redacted]',
+      // remove: false (default) — оставляем ключи как есть, только censor значение,
+      // чтобы по присутствию ключа в логе всё ещё можно было понять "был ли Authorization"
+    },
   },
   pino.destination(2),
 );

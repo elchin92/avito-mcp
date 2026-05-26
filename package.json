@@ -1,7 +1,7 @@
 {
   "name": "avito-mcp",
-  "version": "0.6.0",
-  "description": "MCP server for Avito API — 142 tools, MCP resources, prompts, structured outputs. Aligned with MCP spec 2025-11-25. Give your AI agents hands and feet on Russia's largest classifieds marketplace.",
+  "version": "0.7.0",
+  "description": "Universal MCP server for the Avito API — 142+ tools, safe-by-default with dry-run, idempotency, structured errors and cross-process token lock. Install via npx, plug into any MCP-compatible client.",
   "type": "module",
   "bin": {
     "avito-mcp": "dist/server.js"

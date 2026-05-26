@@ -43,6 +43,10 @@ function makeConfig(
     maxUploadMb: 15,
     confirmationMode: 'off',
     confirmationTtlSec: 900,
+    maxBinaryMb: 20,
+    dryRunDefault: false,
+    idempotencyTtlSec: 3600,
+    tokenLockTimeoutMs: 30_000,
     ...overrides,
   };
 }

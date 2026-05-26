@@ -9,36 +9,93 @@ function printHelp(): void {
   process.stdout.write(
     `${PACKAGE_NAME} ${VERSION}\n` +
       `\n` +
-      `Local MCP server for the Avito API.\n` +
+      `Universal MCP server for the Avito API.\n` +
       `\n` +
       `Usage:\n` +
-      `  avito-mcp                Start the MCP stdio server\n` +
-      `  avito-mcp --version      Print version and exit\n` +
-      `  avito-mcp --help         Print this help and exit\n` +
+      `  avito-mcp                  Start the MCP stdio server\n` +
+      `  avito-mcp --version        Print version and exit\n` +
+      `  avito-mcp --help           Print this help and exit\n` +
+      `  avito-mcp --health         Print health snapshot as JSON and exit\n` +
+      `\n` +
+      `CLI flags (v0.7.0 — sugar for env vars; do not require a value):\n` +
+      `  --readonly                 Same as AVITO_MCP_MODE=read_only (only risk='read' tools)\n` +
+      `  --guarded                  Same as AVITO_MCP_MODE=guarded (blocks money/public)\n` +
+      `  --dry-run                  Same as AVITO_MCP_DRY_RUN_DEFAULT=true (every destructive\n` +
+      `                             tool returns preview by default; agent can override with\n` +
+      `                             dryRun: false)\n` +
+      `  --no-confirmation          Same as AVITO_MCP_CONFIRMATION_MODE=off\n` +
       `\n` +
       `Environment variables (see .env.example for the full list):\n` +
-      `  Client_id, Client_secret, Profile_id   Required Avito credentials\n` +
+      `  Client_id, Client_secret, Profile_id   Required Avito OAuth credentials\n` +
       `  AVITO_BASE_URL          Override Avito API base URL (default: https://api.avito.ru)\n` +
       `  AVITO_TOKEN_FILE        Override OAuth token cache path\n` +
       `  AVITO_ENV_FILE          Path to .env file (default: ./.env)\n` +
       `  AVITO_MCP_MODE          read_only | guarded | full_access (default: full_access)\n` +
-      `                          - read_only:   only risk='read' tools are registered\n` +
-      `                          - guarded:     blocks risk='money' and risk='public'\n` +
-      `                          - full_access: all tools (default; legacy behaviour)\n` +
       `  AVITO_MCP_ALLOW_TOOLS   Comma-separated tool names; if set, only these register\n` +
       `  AVITO_MCP_DENY_TOOLS    Comma-separated tool names; always blocked (wins over allow)\n` +
       `  AVITO_MCP_CONFIRMATION_MODE     off | money_public (default) | all_destructive\n` +
       `  AVITO_MCP_CONFIRMATION_TTL_SEC  Pending action TTL in seconds (default: 900)\n` +
-      `  AVITO_MCP_CONFIRMATION_SECRET   v0.5.0: enables hard-confirmation (human-typed secret)\n` +
+      `  AVITO_MCP_CONFIRMATION_SECRET   Enables hard-confirmation (v0.5.0)\n` +
       `  AVITO_MCP_EXPOSE_AUTH_TOOLS     1 to expose sensitive auth_* tools (default: hidden)\n` +
-      `  AVITO_MCP_ALLOWED_UPLOAD_DIRS   Comma-separated dirs that messenger_upload_images may read\n` +
+      `  AVITO_MCP_ALLOWED_UPLOAD_DIRS   Comma-separated dirs for messenger_upload_images\n` +
       `  AVITO_MCP_MAX_UPLOAD_MB         Max per-file upload size in MB (default: 15)\n` +
       `  AVITO_MCP_MAX_BINARY_MB         Max binary response size in MB (default: 20)\n` +
+      `  AVITO_MCP_DRY_RUN_DEFAULT       v0.7.0: default for dryRun on destructive tools\n` +
+      `                                  (true|false; default: false)\n` +
+      `  AVITO_MCP_IDEMPOTENCY_TTL_SEC   v0.7.0: TTL of idempotency ledger entries (default: 3600)\n` +
+      `  AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS v0.7.0: max wait for cross-process token lock (default: 30000)\n` +
       `  AVITO_SAFE_MODE         DEPRECATED: use AVITO_MCP_MODE=read_only instead\n` +
       `  LOG_LEVEL               pino log level (default: info)\n` +
       `\n` +
       `Docs: https://github.com/elchin92/avito-mcp\n`,
   );
+}
+
+/**
+ * v0.7.0: применяет CLI-флаги к process.env ДО загрузки config.ts.
+ * Это позволяет существующему config-loader-у не знать про CLI вообще —
+ * для него флаги выглядят как переменные окружения, выставленные пользователем.
+ *
+ * Флаги НЕ перетирают значения, которые пользователь уже поставил в env —
+ * env wins. Это соответствует общему UNIX-принципу: явное env override CLI sugar.
+ */
+function applyCliFlagsToEnv(argv: string[]): void {
+  const setIfMissing = (key: string, value: string): void => {
+    if (process.env[key] === undefined || process.env[key] === '') {
+      process.env[key] = value;
+    }
+  };
+  if (argv.includes('--readonly')) setIfMissing('AVITO_MCP_MODE', 'read_only');
+  if (argv.includes('--guarded')) setIfMissing('AVITO_MCP_MODE', 'guarded');
+  if (argv.includes('--dry-run')) setIfMissing('AVITO_MCP_DRY_RUN_DEFAULT', 'true');
+  if (argv.includes('--no-confirmation')) setIfMissing('AVITO_MCP_CONFIRMATION_MODE', 'off');
+}
+
+/**
+ * v0.7.0: --health печатает JSON-снимок состояния и выходит. Не подключает
+ * stdio transport, не дёргает Avito API. Полезно для probes / docker healthcheck /
+ * быстрой диагностики "почему не работает".
+ */
+async function printHealthAndExit(): Promise<void> {
+  const { config } = await import('./config.js');
+  const payload = {
+    ok: true,
+    name: PACKAGE_NAME,
+    version: VERSION,
+    timestamp: new Date().toISOString(),
+    safety: {
+      mode: config.mode,
+      confirmationMode: config.confirmationMode,
+      hardConfirmation: !!config.confirmationSecret,
+      dryRunDefault: config.dryRunDefault,
+      exposeAuthTools: config.exposeAuthTools,
+      allowToolsCount: config.allowTools.length,
+      denyToolsCount: config.denyTools.length,
+    },
+    credentialsConfigured: !!config.clientId && !!config.clientSecret,
+    baseUrl: config.baseUrl,
+  };
+  process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
 }
 
 async function startServer(): Promise<void> {
@@ -49,6 +106,7 @@ async function startServer(): Promise<void> {
     { AvitoClient },
     { domains },
     { PendingActionStore },
+    { IdempotencyStore },
     { registerResources },
     { registerPrompts },
   ] = await Promise.all([
@@ -57,6 +115,7 @@ async function startServer(): Promise<void> {
     import('./core/client.js'),
     import('./meta/domain-registry.js'),
     import('./core/pending-actions.js'),
+    import('./core/idempotency.js'),
     import('./resources.js'),
     import('./prompts.js'),
   ]);
@@ -96,7 +155,8 @@ async function startServer(): Promise<void> {
 
   const client = new AvitoClient(config);
   const pendingStore = new PendingActionStore(config.confirmationTtlSec * 1000);
-  const ctx: ToolContext = { client, config, pendingStore, server };
+  const idempotencyStore = new IdempotencyStore(config.idempotencyTtlSec * 1000);
+  const ctx: ToolContext = { client, config, pendingStore, idempotencyStore, server };
 
   for (const register of domains) {
     register(server, ctx);
@@ -124,6 +184,9 @@ async function startServer(): Promise<void> {
       uploadDirsCount: config.allowedUploadDirs.length,
       confirmationMode: config.confirmationMode,
       hardConfirmation: !!config.confirmationSecret,
+      dryRunDefault: config.dryRunDefault,
+      idempotencyTtlSec: config.idempotencyTtlSec,
+      tokenLockTimeoutMs: config.tokenLockTimeoutMs,
       capabilities: ['tools', 'resources', 'prompts', 'logging'],
     },
     'avito-mcp started',
@@ -138,6 +201,11 @@ async function main(): Promise<void> {
   }
   if (argv.includes('--help') || argv.includes('-h')) {
     printHelp();
+    return;
+  }
+  applyCliFlagsToEnv(argv);
+  if (argv.includes('--health')) {
+    await printHealthAndExit();
     return;
   }
   await startServer();

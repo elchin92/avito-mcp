@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![CI](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-110_passing-brightgreen)](./test)
+[![Tests](https://img.shields.io/badge/tests-141_passing-brightgreen)](./test)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
@@ -16,7 +16,9 @@
 
 🇷🇺 **[Русская версия / Russian version →](./README.ru.md)**
 
-> **New in v0.6.0** — full **MCP 2025-11-25 alignment**: 6 MCP resources (`avito://docs/safety`, `avito://manifest`, live `state/*`, swagger templates), 5 ready-made prompts, structured tool outputs (`structuredContent`), MCP logging mirroring, subscribable `state/pending-actions`. Zero new env vars, zero breaking changes. See [CHANGELOG](./CHANGELOG.md#060---2026-05-25).
+> **New in v0.7.0** — **universal-package hardening**: opt-in `dryRun` and `idempotencyKey` on every destructive tool, cross-process token-file lock, structured error taxonomy (`error.type`, `retryable`, `retryAfter`), three new typed meta tools (`meta_health`, `meta_auth_status`, `meta_capabilities`), CLI flags (`--readonly` / `--dry-run` / `--health` / `--no-confirmation`). No breaking changes; safe defaults preserved. See [CHANGELOG](./CHANGELOG.md#070---2026-05-26).
+>
+> v0.6.0 — full **MCP 2025-11-25 alignment**: 6 MCP resources, 5 prompts, structured tool outputs, MCP logging mirroring, subscribable `state/pending-actions`.
 
 ---
 
@@ -246,6 +248,94 @@ Every tool now returns `structuredContent` alongside the text block — clients 
 ### MCP logging
 
 Selected pino events (mode changes, hidden-tool reports, confirmation lifecycle, rate-limit warnings) are forwarded to the client as `notifications/message` with `logger: "avito-mcp"`. Clients that adjust verbosity via `logging/setLevel` work as expected. Pino → stderr is preserved.
+
+---
+
+## Universal safety primitives (v0.7.0)
+
+These are opt-in primitives meant to make the package safe to use in **any** automation context — manual chat, scheduled jobs, multi-agent runtimes, server farms — without committing to a specific orchestrator or backend.
+
+### Dry-run
+
+Every destructive tool (`risk: write | money | public`) accepts an optional `dryRun: boolean` parameter. When `true`, the tool returns a structured preview of the HTTP request it *would have* made — no call to Avito. Useful both for human inspection ("what is the agent about to do?") and for agents that want to think before acting.
+
+```json
+{
+  "name": "items_update_price",
+  "arguments": { "item_id": 12345, "price": 1400, "dryRun": true }
+}
+```
+
+→ `structuredContent: { dryRun: true, operation: { tool, method, path, ... }, request_preview: { ... } }` and `fetch` is never called.
+
+You can flip the default for the entire server: `AVITO_MCP_DRY_RUN_DEFAULT=true` or `--dry-run`. Then every destructive tool short-circuits unless the agent explicitly passes `dryRun: false`.
+
+### Idempotency
+
+Every destructive tool also accepts an optional `idempotencyKey: string`. The server keeps an in-memory ledger keyed by `(tool, key, hash(args))`:
+
+- First call with a key: executes, caches the result.
+- Repeat call with the same key + identical args within TTL: returns the cached result, marked `structuredContent.idempotent_replay: true`. No second HTTP call.
+- Repeat call with the same key + different args: returns a structured `IdempotencyConflictError` (the dedupe contract was violated).
+
+This is the simplest reliable defence against duplicate sends after retries, crashes, or race conditions between concurrent agents. TTL via `AVITO_MCP_IDEMPOTENCY_TTL_SEC` (default 1 hour).
+
+### Structured error taxonomy
+
+All errors return both human text and a machine envelope:
+
+```json
+{
+  "isError": true,
+  "structuredContent": {
+    "error": {
+      "type": "AVITO_RATE_LIMIT",
+      "message": "Avito API 429 for POST ...",
+      "retryable": true,
+      "retryAfter": 60,
+      "httpStatus": 429
+    }
+  }
+}
+```
+
+`type` ∈ `AVITO_BAD_REQUEST | AVITO_UNAUTHORIZED | AVITO_FORBIDDEN | AVITO_NOT_FOUND | AVITO_RATE_LIMIT | AVITO_SERVER_ERROR | AVITO_API_ERROR | NETWORK_ERROR | TIMEOUT | INTERNAL_ERROR`.
+
+Agents can branch on `retryable` and `retryAfter` programmatically — no regex over English text.
+
+### Health / auth / capabilities meta-tools
+
+| Tool | What it returns |
+|---|---|
+| `meta_health` | Overall health snapshot: version, uptime, capabilities, safety mode, counters (pending actions, idempotency entries, rate-limit snapshots) |
+| `meta_auth_status` | OAuth token *metadata* only — `tokenPresent`, `expiresInSec`, last error. The token value is NEVER exposed. With `probe: true` will attempt a refresh. |
+| `meta_capabilities` | Machine-readable config: mode, allow/deny counts, feature flags (`dryRun`, `idempotency`, `confirmation`, `hardConfirmation`, `fileUploads`, `sensitiveAuthTools`) |
+
+All three have strict `outputSchema` (zod) — clients can validate against the contract.
+
+### Cross-process token lock
+
+If you run multiple avito-mcp processes against the same token file (cron + chat + CLI), they no longer hit Avito's `/token` endpoint in parallel. The first to acquire `{tokenFile}.lock` refreshes; the rest wait, then read the freshly-refreshed token from disk. Stale locks (dead PID, ancient timestamp) are reclaimed automatically. Tunable via `AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS` (default 30s).
+
+### CLI flags
+
+Convenience shortcuts that translate to env vars (env wins if both set):
+
+```bash
+avito-mcp --readonly             # AVITO_MCP_MODE=read_only
+avito-mcp --guarded              # AVITO_MCP_MODE=guarded
+avito-mcp --dry-run              # AVITO_MCP_DRY_RUN_DEFAULT=true
+avito-mcp --no-confirmation      # AVITO_MCP_CONFIRMATION_MODE=off
+avito-mcp --health               # print JSON health snapshot and exit
+```
+
+`--health` does not connect stdio transport — ideal for Docker / Kubernetes / supervisord health probes:
+
+```yaml
+healthcheck:
+  test: ["CMD", "avito-mcp", "--health"]
+  interval: 30s
+```
 
 ---
 

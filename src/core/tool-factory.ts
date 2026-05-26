@@ -1,14 +1,31 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import type { ZodRawShape } from 'zod';
+import { z, type ZodRawShape } from 'zod';
 
 import type { Config } from '../config.js';
 import { logger } from '../logger.js';
 import type { AvitoClient, BodyContentType, HttpMethod } from './client.js';
 import { errorToMcpContent } from './errors.js';
+import { hashArgs, type IdempotencyStore, IdempotencyConflictError } from './idempotency.js';
 import type { PendingActionStore } from './pending-actions.js';
 import { evaluatePolicy, requiresConfirmation } from './policy.js';
 import type { Primitive, QueryValue } from './url.js';
+
+/** Имена служебных полей, автоматически добавляемых к destructive tools. */
+const META_PARAMS = ['dryRun', 'idempotencyKey'] as const;
+
+function isDestructive(risk: ToolRisk): boolean {
+  return risk === 'write' || risk === 'money' || risk === 'public';
+}
+
+/** Чистые args для tool — без служебных meta-параметров. */
+function stripMeta(args: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    if (!(META_PARAMS as readonly string[]).includes(k)) out[k] = v;
+  }
+  return out;
+}
 
 /**
  * Контекст, передаваемый в register-функции доменов.
@@ -22,6 +39,13 @@ export interface ToolContext {
   config: Config;
   pendingStore: PendingActionStore;
   server?: McpServer;
+  /**
+   * v0.7.0: opt-in idempotency ledger. Если не передан — параметр
+   * idempotencyKey всё равно разрешён в schema (агент может его передать),
+   * но дедуп не выполняется. Это упрощает миграцию: existing tests могут
+   * не передавать idempotencyStore.
+   */
+  idempotencyStore?: IdempotencyStore;
 }
 
 export type ProfileIdKey = 'user_id' | 'userId';
@@ -170,9 +194,11 @@ export function defineTool<I extends ZodRawShape>(
 
   // Реальный исполнитель — отделён от обёртки, чтобы переиспользовать его
   // при подтверждении через meta_confirm_action.
-  const execute = async (args: Record<string, unknown>): Promise<CallToolResult> => {
+  // ВАЖНО: принимает чистые args (без dryRun/idempotencyKey) — meta-параметры
+  // обрабатываются в handler выше.
+  const execute = async (cleanArgs: Record<string, unknown>): Promise<CallToolResult> => {
     try {
-      const { pathParams, query, body } = splitArgs(args, spec, ctx);
+      const { pathParams, query, body } = splitArgs(cleanArgs, spec, ctx);
       const response = await ctx.client.request({
         method: spec.method,
         path: spec.path,
@@ -202,15 +228,65 @@ export function defineTool<I extends ZodRawShape>(
     }
   };
 
+  const destructive = isDestructive(risk);
+
   const handler = async (rawArgs: Record<string, unknown>): Promise<CallToolResult> => {
     const args = rawArgs ?? {};
+    const cleanArgs = destructive ? stripMeta(args) : args;
+
+    // v0.7.0: dry-run на destructive tools. Если args.dryRun === true ИЛИ
+    // конфиг включает dryRunDefault, возвращаем preview запроса без HTTP-вызова.
+    // dry-run обходит confirmation и idempotency — preview безопасен и не имеет
+    // эффекта, поэтому ни confirm, ни dedup не нужны.
+    const dryRunRequested = args.dryRun === true;
+    const effectiveDryRun =
+      destructive && (dryRunRequested || ctx.config.dryRunDefault === true);
+    if (effectiveDryRun) {
+      return dryRunPreview(spec, cleanArgs, ctx, dryRunRequested);
+    }
+
+    // v0.7.0: idempotency. Если агент передал idempotencyKey И сервер имеет store,
+    // проверяем (toolName, key, hash(args)).
+    //   - hit + matching args → возвращаем кэш с пометкой idempotent_replay=true
+    //   - hit + different args → возвращаем структурированную ошибку (conflict)
+    //   - miss → выполняем, потом запоминаем
+    const idempotencyKey =
+      destructive && typeof args.idempotencyKey === 'string' && args.idempotencyKey.length > 0
+        ? args.idempotencyKey
+        : undefined;
+    const argsHash = idempotencyKey ? hashArgs(cleanArgs) : undefined;
+
+    if (idempotencyKey && ctx.idempotencyStore && argsHash) {
+      try {
+        const cached = ctx.idempotencyStore.lookup(idempotencyKey, spec.name, argsHash);
+        if (cached) {
+          logger.info(
+            { tool: spec.name, idempotencyKey, ageMs: Date.now() - cached.createdAt },
+            'idempotent replay served from ledger',
+          );
+          return annotateReplay(cached.result);
+        }
+      } catch (err) {
+        if (err instanceof IdempotencyConflictError) {
+          return errorToMcpContent(err);
+        }
+        throw err;
+      }
+    }
+
     if (requiresConfirmation(risk, ctx.config)) {
       const pending = ctx.pendingStore.create({
         toolName: spec.name,
         risk,
-        summary: summarisePending(spec, args),
-        args,
-        execute: () => execute(args),
+        summary: summarisePending(spec, cleanArgs),
+        args: cleanArgs,
+        execute: async () => {
+          const r = await execute(cleanArgs);
+          if (idempotencyKey && ctx.idempotencyStore && argsHash) {
+            ctx.idempotencyStore.remember(idempotencyKey, spec.name, argsHash, r);
+          }
+          return r;
+        },
       });
       return {
         content: [
@@ -234,9 +310,21 @@ export function defineTool<I extends ZodRawShape>(
             ),
           },
         ],
+        structuredContent: {
+          requires_confirmation: true,
+          confirmation_id: pending.id,
+          tool: spec.name,
+          risk,
+          expires_at: new Date(pending.expiresAt).toISOString(),
+        },
       };
     }
-    return execute(args);
+
+    const result = await execute(cleanArgs);
+    if (idempotencyKey && ctx.idempotencyStore && argsHash) {
+      ctx.idempotencyStore.remember(idempotencyKey, spec.name, argsHash, result);
+    }
+    return result;
   };
 
   // SDK типизирует callback через internal BaseToolCallback с собственными inferred CallToolResult,
@@ -248,18 +336,104 @@ export function defineTool<I extends ZodRawShape>(
     environment: spec.environment ?? 'prod',
   };
   if (spec.accessesLocalFiles) metaRecord.accessesLocalFiles = true;
+
+  // v0.7.0: destructive tools получают опциональные dryRun + idempotencyKey
+  // в inputSchema. Read/sensitive — нет (для них эти параметры бессмысленны).
+  const finalInputSchema: ZodRawShape = destructive
+    ? {
+        ...(inputSchema as ZodRawShape),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe(
+            'v0.7.0: если true — возвращает preview HTTP-запроса без вызова Avito API. ' +
+              'Безопасно для просмотра, что именно будет сделано. Default: значение ' +
+              'AVITO_MCP_DRY_RUN_DEFAULT (обычно false).',
+          ),
+        idempotencyKey: z
+          .string()
+          .min(8)
+          .optional()
+          .describe(
+            'v0.7.0: опциональный ключ для защиты от дублей. Повторный вызов с тем же ключом ' +
+              'в течение AVITO_MCP_IDEMPOTENCY_TTL_SEC возвращает закешированный результат. ' +
+              'Тот же ключ с другими args вернёт ошибку conflict — это безопасно по дизайну.',
+          ),
+      }
+    : inputSchema;
+
+  if (destructive) {
+    metaRecord.supportsDryRun = true;
+    metaRecord.supportsIdempotency = true;
+  }
+
   server.registerTool(
     spec.name,
     {
       title: spec.title,
       description: spec.description,
-      inputSchema,
+      inputSchema: finalInputSchema,
       annotations,
       _meta: metaRecord,
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     handler as any,
   );
+}
+
+/**
+ * Возвращает preview HTTP-запроса без реального вызова Avito API.
+ * v0.7.0: используется когда dryRun=true или AVITO_MCP_DRY_RUN_DEFAULT=true.
+ *
+ * Cодержит pathParams, query, body и итоговый method+path — агент может убедиться,
+ * что параметры собрались правильно, перед боевым вызовом.
+ */
+function dryRunPreview(
+  spec: ToolSpec,
+  cleanArgs: Record<string, unknown>,
+  ctx: ToolContext,
+  explicit: boolean,
+): CallToolResult {
+  let preview: { pathParams: Record<string, unknown>; query: Record<string, unknown>; body: unknown };
+  try {
+    const split = splitArgs(cleanArgs, spec, ctx);
+    preview = split as typeof preview;
+  } catch (err) {
+    return errorToMcpContent(err);
+  }
+  const payload = {
+    dryRun: true,
+    explicit_request: explicit,
+    operation: {
+      tool: spec.name,
+      method: spec.method,
+      path: spec.path,
+      domain: spec.domain ?? null,
+    },
+    request_preview: preview,
+    notice:
+      'No HTTP request was made. To execute for real, call again with dryRun: false ' +
+      '(or unset AVITO_MCP_DRY_RUN_DEFAULT).',
+  };
+  return {
+    content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+    structuredContent: payload,
+  };
+}
+
+/**
+ * Добавляет к закешированному idempotency-результату пометку, что это replay.
+ * Так агент видит "это не свежий результат, я уже выполнял этот ключ".
+ */
+function annotateReplay(result: CallToolResult): CallToolResult {
+  const cloned: CallToolResult = {
+    ...result,
+    structuredContent: {
+      ...(result.structuredContent ?? {}),
+      idempotent_replay: true,
+    },
+  };
+  return cloned;
 }
 
 /**

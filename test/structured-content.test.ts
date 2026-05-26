@@ -36,6 +36,9 @@ function makeConfig(): Config {
     confirmationMode: 'off',
     confirmationTtlSec: 900,
     maxBinaryMb: 20,
+    dryRunDefault: false,
+    idempotencyTtlSec: 3600,
+    tokenLockTimeoutMs: 30_000,
   };
 }
 
@@ -163,9 +166,15 @@ describe('structuredContent', () => {
     };
     const res = await client.callTool({ name: 'echo', arguments: {} });
     expect(res.isError).toBe(true);
+    // v0.7.0: structuredContent.error — формальный envelope.
+    // error_kind остаётся для backwards-compat с v0.6.0 consumers.
     expect(res.structuredContent).toMatchObject({
+      error: {
+        type: 'AVITO_BAD_REQUEST',
+        retryable: false,
+        httpStatus: 400,
+      },
       error_kind: 'avito_api_error',
-      status: 400,
     });
   });
 

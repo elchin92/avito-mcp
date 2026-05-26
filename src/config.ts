@@ -95,6 +95,13 @@ const ConfigSchema = z.object({
   confirmationTtlSec: z.number().int().positive().default(900),
   confirmationSecret: z.string().optional(),
   maxBinaryMb: z.number().int().positive().default(20),
+  // v0.7.0 ───────────────────────────────────────────────────
+  /** Default for `dryRun` parameter on write/money/public tools. */
+  dryRunDefault: z.boolean().default(false),
+  /** TTL for idempotency ledger entries, seconds. */
+  idempotencyTtlSec: z.number().int().positive().default(3600),
+  /** Max wait for cross-process token file lock, ms. */
+  tokenLockTimeoutMs: z.number().int().positive().default(30_000),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -117,6 +124,10 @@ function load(): Config {
     confirmationTtlSec: parsePositiveInt(process.env.AVITO_MCP_CONFIRMATION_TTL_SEC, 900),
     confirmationSecret: process.env.AVITO_MCP_CONFIRMATION_SECRET,
     maxBinaryMb: parsePositiveInt(process.env.AVITO_MCP_MAX_BINARY_MB, 20),
+    // v0.7.0 ───────────────────────────────────────────────────
+    dryRunDefault: parseBool(process.env.AVITO_MCP_DRY_RUN_DEFAULT),
+    idempotencyTtlSec: parsePositiveInt(process.env.AVITO_MCP_IDEMPOTENCY_TTL_SEC, 3600),
+    tokenLockTimeoutMs: parsePositiveInt(process.env.AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS, 30_000),
   };
 
   const parsed = ConfigSchema.safeParse(raw);

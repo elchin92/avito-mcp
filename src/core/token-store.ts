@@ -3,6 +3,7 @@ import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 import { logger } from '../logger.js';
+import { withFileLock } from './file-lock.js';
 
 export interface TokenRecord {
   accessToken: string;
@@ -30,9 +31,16 @@ export class TokenStore {
   private inflight?: Promise<TokenRecord>;
   private skewMs = 60_000; // обновляем за минуту до истечения
 
+  /**
+   * v0.7.0: межпроцессный lock. Default 30s timeout — если другой процесс
+   * висит дольше, мы всё равно бросим понятную ошибку, а не зависнем навсегда.
+   * Можно переопределить через AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS — но не в TokenStore;
+   * на этом уровне просто принимаем число.
+   */
   constructor(
     private readonly filePath: string,
     private readonly fetcher: TokenFetcher,
+    private readonly lockTimeoutMs: number = 30_000,
   ) {}
 
   async getToken(): Promise<string> {
@@ -65,21 +73,42 @@ export class TokenStore {
   }
 
   /**
-   * Принудительный refresh. Защищён mutex'ом: параллельные вызовы получают один Promise.
+   * Принудительный refresh. Двухслойная защита от storm'а:
+   *   1) in-process: один Promise inflight на процесс
+   *   2) cross-process: file lock на {filePath}.lock с PID + stale-detection
+   *
+   * Внутри cross-process lock сразу re-read файла: вдруг другой процесс уже
+   * обновил токен пока мы ждали lock. Тогда не дёргаем /token Avito повторно.
    */
   async refresh(): Promise<TokenRecord> {
     if (this.inflight) return this.inflight;
     this.inflight = (async () => {
       try {
-        logger.info('refreshing avito access token');
-        const fresh = await this.fetcher();
-        const record: TokenRecord = {
-          accessToken: fresh.accessToken,
-          expiresAt: Date.now() + fresh.expiresIn * 1000,
-        };
-        this.cache = record;
-        await this.writeFile(record);
-        return record;
+        return await withFileLock(
+          this.filePath,
+          async () => {
+            // Re-read под lock'ом — может, другой процесс уже всё сделал.
+            const fromFile = await this.readFile();
+            if (fromFile && fromFile.expiresAt - Date.now() > this.skewMs) {
+              logger.debug(
+                { filePath: this.filePath },
+                'token refreshed by another process while we waited for lock',
+              );
+              this.cache = fromFile;
+              return fromFile;
+            }
+            logger.info('refreshing avito access token');
+            const fresh = await this.fetcher();
+            const record: TokenRecord = {
+              accessToken: fresh.accessToken,
+              expiresAt: Date.now() + fresh.expiresIn * 1000,
+            };
+            this.cache = record;
+            await this.writeFile(record);
+            return record;
+          },
+          { timeoutMs: this.lockTimeoutMs },
+        );
       } finally {
         this.inflight = undefined;
       }

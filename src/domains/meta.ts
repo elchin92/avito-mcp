@@ -1,12 +1,13 @@
 /**
  * Мета-tools — не относятся к swagger, нужны для observability и safety самого MCP-сервера.
  *
- * - `meta_get_rate_limits` — последние X-RateLimit-* по доменам Avito API
- * - `meta_confirm_action` — подтверждает pending action из confirmation flow
- * - `meta_cancel_action` — отменяет pending action
- * - `meta_list_pending_actions` — список текущих pending actions (без секретов в выводе)
+ * v0.6.x: rate-limits + confirmation flow.
+ * v0.7.0: добавлены health / auth_status / capabilities со строгим outputSchema —
+ *         универсальные диагностические tools, полезные любому MCP-клиенту.
  *
- * Три последних регистрируются только когда AVITO_MCP_CONFIRMATION_MODE != 'off'.
+ * Confirmation tools регистрируются только когда AVITO_MCP_CONFIRMATION_MODE != 'off'.
+ * Все meta_* — local environment, без обращения к Avito API (кроме auth_status,
+ * который опционально пробует ping через client_credentials refresh).
  */
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { timingSafeEqual } from 'node:crypto';
@@ -15,6 +16,7 @@ import { z } from 'zod';
 import { logger } from '../logger.js';
 import { evaluatePolicy, requiresConfirmation } from '../core/policy.js';
 import type { DomainRegister } from '../core/tool-factory.js';
+import { PACKAGE_NAME, VERSION } from '../version.js';
 
 /**
  * Constant-time secret comparison. Equal-length buffers required by Node's
@@ -69,6 +71,247 @@ export const register: DomainRegister = (server, ctx) => {
           structuredContent: { snapshots: snaps, count: snaps.length },
         };
       },
+    );
+  }
+
+  // ───────────────── v0.7.0: meta_health ─────────────────
+
+  const healthDecision = evaluatePolicy('meta_health', 'read', ctx.config);
+  if (healthDecision.allowed) {
+    server.registerTool(
+      'meta_health',
+      {
+        title: 'Health: общее состояние сервера',
+        description:
+          'Универсальный health-check: версия пакета, активные capabilities, состояние ' +
+          'rate-limits, idempotency ledger size, pending actions count, dryRun-default. ' +
+          'Не дёргает Avito API. Безопасно вызывать сколько угодно.',
+        inputSchema: {},
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        outputSchema: {
+          ok: z.boolean(),
+          name: z.string(),
+          version: z.string(),
+          uptimeSec: z.number(),
+          capabilities: z.object({
+            tools: z.boolean(),
+            resources: z.boolean(),
+            prompts: z.boolean(),
+            logging: z.boolean(),
+          }),
+          safety: z.object({
+            mode: z.string(),
+            confirmationMode: z.string(),
+            hardConfirmation: z.boolean(),
+            dryRunDefault: z.boolean(),
+            exposeAuthTools: z.boolean(),
+          }),
+          counters: z.object({
+            pendingActions: z.number().int(),
+            idempotencyEntries: z.number().int(),
+            rateLimitSnapshots: z.number().int(),
+          }),
+          timestamp: z.string(),
+        },
+        _meta: { risk: 'read', environment: 'local' },
+      },
+      async (): Promise<CallToolResult> => {
+        const payload = {
+          ok: true,
+          name: PACKAGE_NAME,
+          version: VERSION,
+          uptimeSec: Math.round(process.uptime()),
+          capabilities: {
+            tools: true,
+            resources: true,
+            prompts: true,
+            logging: true,
+          },
+          safety: {
+            mode: ctx.config.mode,
+            confirmationMode: ctx.config.confirmationMode,
+            hardConfirmation: !!ctx.config.confirmationSecret,
+            dryRunDefault: ctx.config.dryRunDefault,
+            exposeAuthTools: ctx.config.exposeAuthTools,
+          },
+          counters: {
+            pendingActions: ctx.pendingStore.size(),
+            idempotencyEntries: ctx.idempotencyStore?.size() ?? 0,
+            rateLimitSnapshots: ctx.client.rateLimiter.getStatus().length,
+          },
+          timestamp: new Date().toISOString(),
+        };
+        return {
+          content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+          structuredContent: payload,
+        };
+      },
+    );
+  } else {
+    logger.info(
+      { tool: 'meta_health', risk: 'read', reason: healthDecision.reason },
+      'tool hidden by policy',
+    );
+  }
+
+  // ───────────────── v0.7.0: meta_auth_status ─────────────────
+
+  const authStatusDecision = evaluatePolicy('meta_auth_status', 'read', ctx.config);
+  if (authStatusDecision.allowed) {
+    server.registerTool(
+      'meta_auth_status',
+      {
+        title: 'Auth: состояние OAuth-токена (без секретов)',
+        description:
+          'Сообщает только МЕТАДАННЫЕ токена: present/absent, expiresInSec, последняя ошибка ' +
+          'refresh. Сам токен НИКОГДА не отдаётся — для этого используйте auth_* tools под ' +
+          'AVITO_MCP_EXPOSE_AUTH_TOOLS=1 (скрыты по default). По умолчанию не вынуждает refresh — ' +
+          'если probe=true, попытается getToken() (это может вызвать refresh).',
+        inputSchema: {
+          probe: z
+            .boolean()
+            .optional()
+            .describe(
+              'Если true — попробовать getToken(), что может вызвать refresh при истёкшем токене. Default false.',
+            ),
+        },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+        outputSchema: {
+          configured: z.boolean(),
+          tokenPresent: z.boolean(),
+          expiresInSec: z.number().int().nullable(),
+          probeOk: z.boolean().nullable(),
+          lastError: z.string().nullable(),
+          tokenFile: z.string(),
+        },
+        _meta: { risk: 'read', environment: 'local' },
+      },
+      async (args): Promise<CallToolResult> => {
+        const configured = !!ctx.config.clientId && !!ctx.config.clientSecret;
+        // tokenStore.cache — internal; используем тонкий путь: getToken() возвращает строку,
+        // но мы не должны её отдавать наружу. Поэтому только метаданные через приватный пробник.
+        let probeOk: boolean | null = null;
+        let lastError: string | null = null;
+        let expiresInSec: number | null = null;
+        if (args.probe === true && configured) {
+          try {
+            await ctx.client.tokenStore.getToken();
+            probeOk = true;
+          } catch (err) {
+            probeOk = false;
+            lastError = err instanceof Error ? err.message : String(err);
+          }
+        }
+        // Читаем файл напрямую — токен сам в выходе НЕ показываем, только expiresAt.
+        try {
+          const fs = await import('node:fs/promises');
+          const raw = await fs.readFile(ctx.config.tokenFile, 'utf8');
+          const parsed = JSON.parse(raw) as { expiresAt?: number };
+          if (typeof parsed.expiresAt === 'number') {
+            expiresInSec = Math.max(0, Math.floor((parsed.expiresAt - Date.now()) / 1000));
+          }
+        } catch {
+          /* нет файла — токен ещё не получен */
+        }
+        const payload = {
+          configured,
+          tokenPresent: expiresInSec !== null,
+          expiresInSec,
+          probeOk,
+          lastError,
+          tokenFile: ctx.config.tokenFile,
+        };
+        return {
+          content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+          structuredContent: payload,
+        };
+      },
+    );
+  } else {
+    logger.info(
+      { tool: 'meta_auth_status', risk: 'read', reason: authStatusDecision.reason },
+      'tool hidden by policy',
+    );
+  }
+
+  // ───────────────── v0.7.0: meta_capabilities ─────────────────
+
+  const capDecision = evaluatePolicy('meta_capabilities', 'read', ctx.config);
+  if (capDecision.allowed) {
+    server.registerTool(
+      'meta_capabilities',
+      {
+        title: 'Capabilities: что включено в этом запуске',
+        description:
+          'Возвращает машинно-читаемое описание текущей конфигурации: режим, allow/deny lists, ' +
+          'confirmation, dry-run, idempotency, доступ к локальным файлам. Полезно агенту чтобы ' +
+          'понять, какие операции принципиально доступны до того как пробовать вызывать tools.',
+        inputSchema: {},
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        outputSchema: {
+          name: z.string(),
+          version: z.string(),
+          mode: z.string(),
+          allowToolsCount: z.number().int(),
+          denyToolsCount: z.number().int(),
+          features: z.object({
+            dryRun: z.boolean(),
+            idempotency: z.boolean(),
+            confirmation: z.boolean(),
+            hardConfirmation: z.boolean(),
+            fileUploads: z.boolean(),
+            sensitiveAuthTools: z.boolean(),
+          }),
+          confirmationMode: z.string(),
+          dryRunDefault: z.boolean(),
+          idempotencyTtlSec: z.number().int(),
+        },
+        _meta: { risk: 'read', environment: 'local' },
+      },
+      async (): Promise<CallToolResult> => {
+        const payload = {
+          name: PACKAGE_NAME,
+          version: VERSION,
+          mode: ctx.config.mode,
+          allowToolsCount: ctx.config.allowTools.length,
+          denyToolsCount: ctx.config.denyTools.length,
+          features: {
+            dryRun: true,
+            idempotency: !!ctx.idempotencyStore,
+            confirmation: ctx.config.confirmationMode !== 'off',
+            hardConfirmation: !!ctx.config.confirmationSecret,
+            fileUploads: ctx.config.allowedUploadDirs.length > 0,
+            sensitiveAuthTools: ctx.config.exposeAuthTools,
+          },
+          confirmationMode: ctx.config.confirmationMode,
+          dryRunDefault: ctx.config.dryRunDefault,
+          idempotencyTtlSec: ctx.config.idempotencyTtlSec,
+        };
+        return {
+          content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+          structuredContent: payload,
+        };
+      },
+    );
+  } else {
+    logger.info(
+      { tool: 'meta_capabilities', risk: 'read', reason: capDecision.reason },
+      'tool hidden by policy',
     );
   }
 

@@ -78,6 +78,9 @@ function makeFakeConfig(): Config {
     confirmationTtlSec: 900,
     confirmationSecret: undefined,
     maxBinaryMb: 20,
+    dryRunDefault: false,
+    idempotencyTtlSec: 3600,
+    tokenLockTimeoutMs: 30_000,
   };
 }
 

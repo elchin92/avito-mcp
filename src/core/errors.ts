@@ -48,44 +48,93 @@ export class AvitoTransportError extends Error {
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 /**
+ * Структурированная таксономия ошибок (v0.7.0).
+ * type — машинно-читаемая категория, retryable + retryAfter — подсказки для агента
+ * стоит ли пробовать ещё раз и через сколько секунд. httpStatus сохраняется для
+ * совместимости с предыдущими версиями. Эти типы попадают в structuredContent.error.
+ */
+export type ErrorType =
+  | 'AVITO_UNAUTHORIZED'
+  | 'AVITO_FORBIDDEN'
+  | 'AVITO_NOT_FOUND'
+  | 'AVITO_BAD_REQUEST'
+  | 'AVITO_RATE_LIMIT'
+  | 'AVITO_SERVER_ERROR'
+  | 'AVITO_API_ERROR'
+  | 'NETWORK_ERROR'
+  | 'TIMEOUT'
+  | 'INTERNAL_ERROR';
+
+export interface ErrorEnvelope {
+  type: ErrorType;
+  message: string;
+  retryable: boolean;
+  retryAfter?: number;
+  httpStatus?: number;
+  request?: RequestInfo;
+  body?: unknown;
+}
+
+function classifyApiError(err: AvitoApiError): ErrorEnvelope {
+  const s = err.status;
+  if (s === 400) return { type: 'AVITO_BAD_REQUEST', message: err.message, retryable: false, httpStatus: s };
+  if (s === 401) return { type: 'AVITO_UNAUTHORIZED', message: err.message, retryable: false, httpStatus: s };
+  if (s === 403) return { type: 'AVITO_FORBIDDEN', message: err.message, retryable: false, httpStatus: s };
+  if (s === 404) return { type: 'AVITO_NOT_FOUND', message: err.message, retryable: false, httpStatus: s };
+  if (s === 429) return { type: 'AVITO_RATE_LIMIT', message: err.message, retryable: true, retryAfter: err.retryAfter, httpStatus: s };
+  if (s >= 500 && s < 600) return { type: 'AVITO_SERVER_ERROR', message: err.message, retryable: true, retryAfter: err.retryAfter, httpStatus: s };
+  return { type: 'AVITO_API_ERROR', message: err.message, retryable: false, httpStatus: s };
+}
+
+/**
  * Формирует payload для MCP-tool ответа из ошибки.
  * SDK ожидает isError + content[].text для пользовательского сообщения.
- * v0.6.0: добавлен structuredContent — клиенты могут парсить error_kind/status/url
- * без regex по тексту.
+ * v0.6.0: добавлен structuredContent с error_kind.
+ * v0.7.0: structuredContent.error содержит формальный таксономический тип
+ * (см. ErrorType), retryable, retryAfter — агент может принимать решение
+ * программно без regex по тексту.
  */
 export function errorToMcpContent(err: unknown): CallToolResult {
   let text: string;
-  let structured: Record<string, unknown>;
+  let envelope: ErrorEnvelope;
   if (err instanceof AvitoApiError) {
     const bodyStr = typeof err.body === 'string' ? err.body : JSON.stringify(err.body, null, 2);
     text =
       `Avito API error ${err.status}\n` +
       `request: ${err.request.method} ${err.request.url}\n` +
       `response body: ${bodyStr}`;
-    structured = {
-      error_kind: 'avito_api_error',
-      status: err.status,
-      request: err.request,
-      body: err.body,
-    };
-    if (err.retryAfter !== undefined) structured.retry_after_sec = err.retryAfter;
+    envelope = { ...classifyApiError(err), request: err.request, body: err.body };
   } else if (err instanceof AvitoTransportError) {
     text = `Transport error: ${err.message}`;
-    structured = {
-      error_kind: 'transport_error',
-      request: err.request,
+    const isTimeout = /abort|timeout/i.test(String((err.cause as Error)?.message ?? ''));
+    envelope = {
+      type: isTimeout ? 'TIMEOUT' : 'NETWORK_ERROR',
       message: err.message,
+      retryable: true,
+      request: err.request,
     };
   } else if (err instanceof Error) {
     text = `Unexpected error: ${err.name}: ${err.message}`;
-    structured = { error_kind: 'internal_error', name: err.name, message: err.message };
+    envelope = { type: 'INTERNAL_ERROR', message: err.message, retryable: false };
   } else {
     text = `Unexpected error: ${String(err)}`;
-    structured = { error_kind: 'internal_error', message: String(err) };
+    envelope = { type: 'INTERNAL_ERROR', message: String(err), retryable: false };
   }
   return {
     isError: true,
     content: [{ type: 'text', text }],
-    structuredContent: structured,
+    // v0.7.0: новая структура — `error: { type, message, retryable, ... }`.
+    // Старое поле error_kind сохраняем для backwards-compat: код, который читал
+    // structuredContent.error_kind в v0.6.0, продолжит работать.
+    structuredContent: {
+      error: envelope,
+      error_kind: legacyKindFromType(envelope.type),
+    },
   };
+}
+
+function legacyKindFromType(t: ErrorType): string {
+  if (t === 'NETWORK_ERROR' || t === 'TIMEOUT') return 'transport_error';
+  if (t === 'INTERNAL_ERROR') return 'internal_error';
+  return 'avito_api_error';
 }

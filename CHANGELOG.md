@@ -3,6 +3,47 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-26
+
+**Universal package hardening.** Pure-additive defaults: every change is opt-in via env or CLI flag, no existing user-facing tool surface changed. Brings five public-package primitives: cross-process token lock, structured error taxonomy, idempotency ledger, dry-run middleware, and health/auth/capabilities meta-tools — without any tie-in to a specific user, business, or backend.
+
+### Added
+
+- **Cross-process token file-lock** — `src/core/file-lock.ts`. OAuth refresh in `TokenStore.refresh` is now guarded by a `{tokenFile}.lock` file with PID + timestamp + stale-detection (`process.kill(pid, 0)`). Inside the lock a double-check re-reads the token file — if another process already refreshed, no extra `/token` call is made. Defends against thundering-herd from multiple workers / cron / CLI hitting Avito's `/token` endpoint at once. Configurable via `AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS` (default 30000ms).
+- **Structured error taxonomy** — `errorToMcpContent` now classifies errors into a formal `ErrorType` union: `AVITO_BAD_REQUEST` / `AVITO_UNAUTHORIZED` / `AVITO_FORBIDDEN` / `AVITO_NOT_FOUND` / `AVITO_RATE_LIMIT` / `AVITO_SERVER_ERROR` / `AVITO_API_ERROR` / `NETWORK_ERROR` / `TIMEOUT` / `INTERNAL_ERROR`. The envelope carries `retryable: boolean`, `retryAfter?: number` and `httpStatus?: number` — agents make programmatic retry decisions without regex over text. Legacy `error_kind` preserved for v0.6.x consumers.
+- **Idempotency ledger** — `src/core/idempotency.ts`. Every write/money/public tool now accepts an optional `idempotencyKey: string` parameter (min 8 chars) in its input schema. With an `IdempotencyStore` attached to `ToolContext`: same key + identical args replays the cached `CallToolResult` (marked `structuredContent.idempotent_replay: true`); same key + different args returns a structured conflict error. TTL via `AVITO_MCP_IDEMPOTENCY_TTL_SEC` (default 3600s). Argument hashing is order-stable (`sha256` over sorted JSON). In-memory only; persistent backends are an extension point.
+- **Dry-run middleware** — every destructive tool now accepts `dryRun: boolean` in its input schema. When `true` (or when `AVITO_MCP_DRY_RUN_DEFAULT=true`), the tool returns a structured preview `{ dryRun, explicit_request, operation, request_preview }` without calling Avito — agents and operators can inspect *what would happen* before going live. Dry-run bypasses both confirmation flow and idempotency ledger (no effect to dedupe).
+- **Three new meta-tools with strict `outputSchema` (zod)** — `meta_health`, `meta_auth_status`, `meta_capabilities`. All read-only, local environment, no Avito API calls. `meta_auth_status` returns only token *metadata* (presence, `expiresInSec`, last refresh error) — the access token value itself is NEVER returned, even with `probe: true`.
+- **CLI flags** — `--readonly`, `--guarded`, `--dry-run`, `--no-confirmation` as syntactic sugar for the corresponding env vars (env wins if both set). `--health` prints a JSON health snapshot and exits without opening stdio transport — perfect for container/k8s probes or quick diagnostics.
+- **pino redact paths for token defence-in-depth** — `logger.ts` now redacts any field named `Authorization`, `authorization`, `accessToken`, `access_token`, `refresh_token`, `refreshToken`, `client_secret`, `clientSecret`, `bearer`, `Bearer`, `token` from logged objects. Current code never logged these, but future regressions are caught automatically.
+
+### Test coverage
+
+5 new test files, 31 additional cases. **Total: 141 passing (was 110, +31).**
+- `test/file-lock.test.ts` — 5: serialisation, stale-by-PID, stale-by-age, timeout, release-on-throw
+- `test/idempotency.test.ts` — 6: stable hash, hit/miss, cross-tool isolation, TTL expiry, conflict, list()
+- `test/dry-run.test.ts` — 5: schema injection only on destructive, preview without HTTP, dryRun=false executes, env default, bypasses confirmation
+- `test/meta-tools.test.ts` — 4: health snapshot, capabilities reflects config, auth_status without token, auth_status without leaking token value
+- `test/error-taxonomy.test.ts` — 10: every HTTP status class, network/timeout, internal, retryable/retryAfter propagation
+
+### Manifest
+
+- `dist/manifest.json` tool_count: 142 → **145** (+3 new meta tools, all `risk: read`).
+- `counts_by_risk.read`: 77 → 80.
+- New per-tool `_meta` flags: `supportsDryRun: true`, `supportsIdempotency: true` for destructive tools — programmatic discoverability of v0.7.0 features.
+
+### New env vars (all opt-in, safe defaults)
+
+- `AVITO_MCP_DRY_RUN_DEFAULT` — `true|false` (default `false`)
+- `AVITO_MCP_IDEMPOTENCY_TTL_SEC` — positive integer (default `3600`)
+- `AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS` — positive integer (default `30000`)
+
+### Compatibility
+
+- No tools removed, no tools renamed, no defaults changed for existing knobs.
+- Every existing v0.6.x client continues to work unchanged — the new `dryRun` and `idempotencyKey` parameters are *optional*; if not passed, behaviour is identical to v0.6.x.
+- Test fixtures that construct `Config` objects in user code may need three new fields (`dryRunDefault`, `idempotencyTtlSec`, `tokenLockTimeoutMs`); using the zod-parsed loader (`config.ts`) requires no changes.
+
 ## [0.6.0] - 2026-05-25
 
 MCP **2025-11-25 alignment release**. Adds first-class **Resources**, **Prompts**, **structured tool outputs**, **MCP logging** and a richer **server `Implementation`**. Pure additive on the protocol layer — every v0.5.x client continues to work unchanged; clients that understand the new MCP fields just see more.

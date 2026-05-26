@@ -70,7 +70,11 @@ export class AvitoClient {
     private readonly config: Config,
     opts: { retry?: Partial<RetryConfig> } = {},
   ) {
-    this.tokenStore = new TokenStore(config.tokenFile, () => this.fetchTokenViaClientCredentials());
+    this.tokenStore = new TokenStore(
+      config.tokenFile,
+      () => this.fetchTokenViaClientCredentials(),
+      config.tokenLockTimeoutMs,
+    );
     this.retry = { ...DEFAULT_RETRY, ...opts.retry };
   }
 
