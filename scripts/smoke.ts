@@ -10,6 +10,15 @@ import { logger } from '../src/logger.js';
 
 async function main() {
   logger.info({ profileId: config.profileId }, 'smoke starting');
+  // Smoke runs against the live account — credentials are required here (unlike the
+  // MCP server itself, which since v0.7.4 starts without them for introspection).
+  if (config.profileId === undefined || !config.clientId || !config.clientSecret) {
+    process.stderr.write(
+      'SMOKE requires credentials: set Client_id, Client_secret and Profile_id in .env.\n',
+    );
+    process.exit(1);
+  }
+  const profileId: number = config.profileId;
   const client = new AvitoClient(config);
 
   await runStep('GET /core/v1/accounts/self', () =>
@@ -20,7 +29,7 @@ async function main() {
     client.request({
       method: 'GET',
       path: '/core/v1/accounts/{user_id}/balance/',
-      pathParams: { user_id: config.profileId },
+      pathParams: { user_id: profileId },
     }),
   );
 

@@ -77,9 +77,15 @@ function resolveMode(): SafetyMode {
 }
 
 const ConfigSchema = z.object({
-  clientId: z.string().min(1, 'Client_id is required in .env'),
-  clientSecret: z.string().min(1, 'Client_secret is required in .env'),
-  profileId: z.coerce.number().int().positive('Profile_id must be a positive integer'),
+  // v0.7.4: credentials are OPTIONAL at load time so the server can start and serve
+  // tools/list, resources and prompts WITHOUT credentials (introspection-only mode —
+  // needed by registry indexers like Glama, by inspectors, and for `npx avito-mcp` to
+  // preview the catalogue before configuring). Credentials are enforced lazily: the
+  // first tool call that hits Avito fails with a clear CONFIG_ERROR if they're absent.
+  // If Profile_id is provided but malformed, that's still a hard error below.
+  clientId: z.string().default(''),
+  clientSecret: z.string().default(''),
+  profileId: z.coerce.number().int().positive('Profile_id must be a positive integer').optional(),
   baseUrl: z.string().url().default('https://api.avito.ru'),
   tokenFile: z.string().default(defaultTokenFile()),
   logLevel: z

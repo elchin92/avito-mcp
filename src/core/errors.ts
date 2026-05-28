@@ -31,6 +31,22 @@ export class AvitoApiError extends Error {
 }
 
 /**
+ * v0.7.4: креды Avito не сконфигурированы. Бросается лениво — только когда tool
+ * реально пытается обратиться к Avito (получить токен). До этого момента сервер
+ * спокойно отдаёт tools/list / resources / prompts без кредов (introspection mode).
+ */
+export class MissingCredentialsError extends Error {
+  constructor(message?: string) {
+    super(
+      message ??
+        'Avito credentials are not configured. Set Client_id, Client_secret and Profile_id ' +
+          '(env vars or .env) to make API calls. The server runs in introspection-only mode until then.',
+    );
+    this.name = 'MissingCredentialsError';
+  }
+}
+
+/**
  * Сетевая ошибка (DNS, таймаут, обрыв). Отличаем от доменных, чтобы агент видел разницу.
  */
 export class AvitoTransportError extends Error {
@@ -54,6 +70,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
  * совместимости с предыдущими версиями. Эти типы попадают в structuredContent.error.
  */
 export type ErrorType =
+  | 'CONFIG_ERROR'
   | 'AVITO_UNAUTHORIZED'
   | 'AVITO_FORBIDDEN'
   | 'AVITO_NOT_FOUND'
@@ -104,6 +121,9 @@ export function errorToMcpContent(err: unknown): CallToolResult {
       `request: ${err.request.method} ${err.request.url}\n` +
       `response body: ${bodyStr}`;
     envelope = { ...classifyApiError(err), request: err.request, body: err.body };
+  } else if (err instanceof MissingCredentialsError) {
+    text = err.message;
+    envelope = { type: 'CONFIG_ERROR', message: err.message, retryable: false };
   } else if (err instanceof AvitoTransportError) {
     text = `Transport error: ${err.message}`;
     const isTimeout = /abort|timeout/i.test(String((err.cause as Error)?.message ?? ''));
@@ -135,6 +155,6 @@ export function errorToMcpContent(err: unknown): CallToolResult {
 
 function legacyKindFromType(t: ErrorType): string {
   if (t === 'NETWORK_ERROR' || t === 'TIMEOUT') return 'transport_error';
-  if (t === 'INTERNAL_ERROR') return 'internal_error';
+  if (t === 'INTERNAL_ERROR' || t === 'CONFIG_ERROR') return 'internal_error';
   return 'avito_api_error';
 }

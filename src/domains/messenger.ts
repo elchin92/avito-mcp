@@ -20,7 +20,7 @@ import { z } from 'zod';
 
 import { logger } from '../logger.js';
 import { defineTool, type DomainRegister } from '../core/tool-factory.js';
-import { errorToMcpContent } from '../core/errors.js';
+import { errorToMcpContent, MissingCredentialsError } from '../core/errors.js';
 import { evaluatePolicy } from '../core/policy.js';
 import { validateUpload, UploadGuardError } from '../core/upload-guard.js';
 
@@ -345,6 +345,13 @@ export const register: DomainRegister = (server, ctx) => {
     async (args): Promise<CallToolResult> => {
       try {
         const userId = (args.user_id as number | undefined) ?? ctx.config.profileId;
+        if (userId === undefined) {
+          // v0.7.4: no user_id arg and no Profile_id configured → can't build the path.
+          throw new MissingCredentialsError(
+            'messenger_upload_images requires Profile_id (or an explicit user_id). ' +
+              'Set Profile_id env var or pass user_id.',
+          );
+        }
         const paths = args.paths as string[];
 
         // Валидируем ВСЕ файлы перед началом upload — fail-fast.

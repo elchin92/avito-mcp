@@ -158,6 +158,12 @@ async function startServer(): Promise<void> {
   const idempotencyStore = new IdempotencyStore(config.idempotencyTtlSec * 1000);
   const ctx: ToolContext = { client, config, pendingStore, idempotencyStore, server };
 
+  // v0.7.4: credentials are optional at startup. If absent, we still register the full
+  // catalogue (tools/list works) but warn loudly — any API call will fail with CONFIG_ERROR
+  // until Client_id/Client_secret/Profile_id are set. Enables introspection by registry
+  // indexers / inspectors and `npx avito-mcp` previews.
+  const credentialsConfigured = !!config.clientId && !!config.clientSecret && config.profileId !== undefined;
+
   for (const register of domains) {
     register(server, ctx);
   }
@@ -171,6 +177,19 @@ async function startServer(): Promise<void> {
   // notifications. Pino keeps writing to stderr; MCP-clients now see them too.
   bindMcpLogger(server);
 
+  if (!credentialsConfigured) {
+    logger.warn(
+      {
+        hasClientId: !!config.clientId,
+        hasClientSecret: !!config.clientSecret,
+        hasProfileId: config.profileId !== undefined,
+      },
+      'avito-mcp running in INTROSPECTION-ONLY mode: credentials missing. tools/list, resources ' +
+        'and prompts work, but every Avito API call will fail with CONFIG_ERROR until Client_id, ' +
+        'Client_secret and Profile_id are set.',
+    );
+  }
+
   logger.info(
     {
       version: VERSION,
@@ -178,6 +197,7 @@ async function startServer(): Promise<void> {
       profileId: config.profileId,
       domains: domains.length,
       mode: config.mode,
+      credentialsConfigured,
       allowToolsCount: config.allowTools.length,
       denyToolsCount: config.denyTools.length,
       exposeAuthTools: config.exposeAuthTools,

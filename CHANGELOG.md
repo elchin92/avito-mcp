@@ -3,6 +3,28 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-05-28
+
+**Introspection without credentials + Docker.** The server now starts and serves `tools/list`, resources and prompts even when `Client_id` / `Client_secret` / `Profile_id` are absent — needed by registry indexers (Glama) to score the server, by MCP inspectors, and so `npx avito-mcp` can preview the catalogue before configuration. Credentials are enforced lazily.
+
+### Changed
+
+- **Credentials are optional at startup** — `config.ts` no longer `process.exit(1)` when `Client_id`/`Client_secret`/`Profile_id` are missing. The full 145-tool catalogue still registers; `tools/list` works with zero config. A clear startup `WARNING` notes "introspection-only mode".
+- **Lazy credential enforcement** — the first tool call that needs to hit Avito throws a new `MissingCredentialsError`, surfaced as a structured `CONFIG_ERROR` (`structuredContent.error.type`), not a network attempt. No empty-credential request is ever sent to Avito's `/token`.
+- `Config.profileId` is now `number | undefined`; `injectProfileId` only injects when a profile id is configured.
+
+### Added
+
+- **`Dockerfile`** (multi-stage, `node:20-alpine`) + **`.dockerignore`** — builds and runs the stdio server; verified to start and answer `tools/list` (141 tools) with no credentials. Registry indexers can build + introspect it. Run: `docker run --rm -i -e Client_id=… -e Client_secret=… -e Profile_id=… avito-mcp`.
+- **New error type `CONFIG_ERROR`** in the structured taxonomy, with `MissingCredentialsError`.
+- Tests: `test/no-credentials.test.ts` (3) — tools/list without creds, tool call → `CONFIG_ERROR` (no fetch), full registry loads unconfigured. **Total: 144 passing (was 141).**
+- The registry `server.json` description is now agent-focused ("for autonomous AI agents … not a scraper") and ships to the official MCP Registry with this version.
+
+### Compatibility
+
+- Configured deployments are unaffected — credentials present → identical behaviour to v0.7.3.
+- No tools added/removed/renamed; manifest stays at 145 tools.
+
 ## [0.7.3] - 2026-05-28
 
 **Registry metadata.** Adds the `mcpName` field (`io.github.elchin92/avito-mcp`) to `package.json` so the package can be published to and verified by the [official MCP Registry](https://registry.modelcontextprotocol.io). No code change — pure metadata for discovery. The registry verifies ownership by matching this `mcpName` against the `name` in the server's `server.json`.

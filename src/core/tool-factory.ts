@@ -499,8 +499,15 @@ function splitArgs(
     }
   }
 
-  // Auto-inject Profile_id для отсутствующего path-параметра
-  if (spec.injectProfileId && pathParams[spec.injectProfileId] === undefined) {
+  // Auto-inject Profile_id для отсутствующего path-параметра.
+  // v0.7.4: profileId опционален — инжектим только если он задан. Если нет и tool
+  // требует path-параметр, запрос уйдёт с незаполненным {user_id} и Avito вернёт
+  // понятную ошибку; до этого момента tools/list работает без кредов.
+  if (
+    spec.injectProfileId &&
+    pathParams[spec.injectProfileId] === undefined &&
+    ctx.config.profileId !== undefined
+  ) {
     pathParams[spec.injectProfileId] = ctx.config.profileId;
   }
 

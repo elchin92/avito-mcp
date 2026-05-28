@@ -1,7 +1,7 @@
 import { logger } from '../logger.js';
 import type { Config } from '../config.js';
 import { USER_AGENT } from '../version.js';
-import { AvitoApiError, AvitoTransportError, type RequestInfo } from './errors.js';
+import { AvitoApiError, AvitoTransportError, MissingCredentialsError, type RequestInfo } from './errors.js';
 import { TokenStore } from './token-store.js';
 import { RateLimiter, sleep } from './rate-limiter.js';
 import { buildUrl, type Primitive, type QueryValue } from './url.js';
@@ -208,6 +208,12 @@ export class AvitoClient {
     accessToken: string;
     expiresIn: number;
   }> {
+    // v0.7.4: lazy credential enforcement. tools/list works without creds; the first
+    // tool call that needs a token lands here. If creds are absent, fail with a clear
+    // CONFIG_ERROR instead of POSTing empty client_id/secret to Avito.
+    if (!this.config.clientId || !this.config.clientSecret) {
+      throw new MissingCredentialsError();
+    }
     const url = `${this.config.baseUrl.replace(/\/+$/, '')}/token`;
     const params = new URLSearchParams({
       grant_type: 'client_credentials',

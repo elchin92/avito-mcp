@@ -1,0 +1,22 @@
+# Keep the build context lean and never leak local secrets into the image.
+node_modules
+dist
+coverage
+.git
+.github
+.claude
+test
+swaggers/*.local.json
+
+# Secrets / local state — MUST never enter the image.
+.env
+.env.local
+.avito-token.json
+*.tgz
+logs
+*.log
+
+# Editor / OS
+.DS_Store
+.vscode
+.idea
