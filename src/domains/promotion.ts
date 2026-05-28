@@ -15,6 +15,31 @@ const ItemBudget = z
   })
   .passthrough();
 
+// Реальный контракт Avito BBIP create (BbipOrderByItemV1): требует itemId+duration+oldPrice+price.
+// Значения берутся из promotion_get_bbip_suggests_by_items_v1: budgets[].{oldPrice,price} (копейки/день)
+// и duration.recommended (дни). Поле `budget` Avito НЕ принимает — отсюда была ошибка
+// «Не удалось найти бюджет продвижения по указанным параметрам».
+const BbipOrderItem = z
+  .object({
+    itemId: z.number().int().positive().describe('ID объявления.'),
+    duration: z
+      .number()
+      .int()
+      .positive()
+      .describe('Период продвижения в днях (suggests.duration.recommended, обычно 7).'),
+    oldPrice: z
+      .number()
+      .int()
+      .positive()
+      .describe('Общая ценность продвижения за один день, в копейках (suggests budgets[].oldPrice).'),
+    price: z
+      .number()
+      .int()
+      .positive()
+      .describe('Стоимость продвижения за один день, в копейках (suggests budgets[].price).'),
+  })
+  .passthrough();
+
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'promotion_get_bbip_forecasts_by_items_v1',
@@ -46,13 +71,19 @@ export const register: DomainRegister = (server, ctx) => {
     name: 'promotion_create_bbip_order_for_items_v1',
     risk: 'money',
     description:
-      '⚠️ ПЛАТНОЕ. BBIP — подключение услуги продвижения для объявлений. ' +
-      'Списывает деньги с баланса. Подтверждайте у пользователя.',
+      '⚠️ ПЛАТНОЕ. BBIP — подключение услуги продвижения для объявлений. Списывает деньги с баланса. ' +
+      'Сначала вызови promotion_get_bbip_suggests_by_items_v1; для каждого товара возьми вариант из ' +
+      'budgets[] (поля oldPrice и price, в копейках за день) и duration.recommended (дни), и передай ' +
+      'их сюда как {itemId, duration, oldPrice, price}. Полный бюджет = price × duration.',
     method: 'PUT',
     path: '/promotion/v1/items/services/bbip/orders/create',
     domain: 'promotion',
     input: {
-      items: z.array(ItemBudget).min(1).max(100).describe('Объявления с бюджетами для продвижения.'),
+      items: z
+        .array(BbipOrderItem)
+        .min(1)
+        .max(100)
+        .describe('Объявления для продвижения: {itemId, duration, oldPrice, price} из suggests.'),
     },
     body: { contentType: 'application/json', fields: ['items'] },
   });

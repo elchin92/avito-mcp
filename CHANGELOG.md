@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-05-28
+
+**Bugfix.** BBIP order creation was unusable: Avito rejected every `promotion_create_bbip_order_for_items_v1` call with «Не удалось найти бюджет продвижения по указанным параметрам», so no client could ever launch a BBIP campaign. Pure fix — no new features, no other tool surface changed.
+
+### Fixed
+
+- **`promotion_create_bbip_order_for_items_v1` input schema now matches the Avito `BbipOrderByItemV1` contract** — `src/domains/promotion.ts`. The tool declared each item as `{ itemId, budget? }`, but `PUT /promotion/v1/items/services/bbip/orders/create` actually requires `{ itemId, duration, oldPrice, price }` — all required, `oldPrice`/`price` in **kopecks per day**, `duration` in **days**. The non-existent `budget` field made every payload invalid. Added a dedicated `BbipOrderItem` schema for the create tool; `ItemBudget` is kept for `promotion_get_bbip_forecasts_by_items_v1` (which does take a per-item `budget`). The create tool description now documents the suggests→create flow: take `budgets[].{oldPrice,price}` and `duration.recommended` from `promotion_get_bbip_suggests_by_items_v1`; full budget = `price × duration`. No other tool changed; manifest snapshot test unaffected (141/141 pass).
+
 ## [0.7.0] - 2026-05-26
 
 **Universal package hardening.** Pure-additive defaults: every change is opt-in via env or CLI flag, no existing user-facing tool surface changed. Brings five public-package primitives: cross-process token lock, structured error taxonomy, idempotency ledger, dry-run middleware, and health/auth/capabilities meta-tools — without any tie-in to a specific user, business, or backend.
