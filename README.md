@@ -12,11 +12,13 @@
 [![Avito API snapshot](https://img.shields.io/badge/Avito_API_snapshot-2026--05--25-orange)](./swaggers)
 
 > **Give your AI agents hands and feet on Avito.**
-> Local MCP server that lets Claude, Cursor, Cline and any other AI assistant **do real work on Avito for you** — answer customers, manage listings, run promotions, fulfil orders, analyse stats. **138 Avito API tools** + **4 local/meta tools** = up to **142 MCP tools** across **18 official Avito APIs**, one `npx` command to install.
+> Local MCP server that lets Claude, Cursor, Cline and any other AI assistant **do real work on Avito for you** — answer customers, manage listings, run promotions, fulfil orders, analyse stats. **138 Avito API tools** + **7 local/meta tools** = up to **145 MCP tools** across **18 official Avito APIs**, one `npx` command to install.
 
 🇷🇺 **[Русская версия / Russian version →](./README.ru.md)**
 
-> **New in v0.7.0** — **universal-package hardening**: opt-in `dryRun` and `idempotencyKey` on every destructive tool, cross-process token-file lock, structured error taxonomy (`error.type`, `retryable`, `retryAfter`), three new typed meta tools (`meta_health`, `meta_auth_status`, `meta_capabilities`), CLI flags (`--readonly` / `--dry-run` / `--health` / `--no-confirmation`). No breaking changes; safe defaults preserved. See [CHANGELOG](./CHANGELOG.md#070---2026-05-26).
+> **New in v0.7.1** — bugfix: `promotion_create_bbip_order_for_items_v1` now matches the real Avito `BbipOrderByItemV1` contract (`{itemId, duration, oldPrice, price}`); the old `budget` field made every BBIP order fail. See [CHANGELOG](./CHANGELOG.md#071---2026-05-28).
+>
+> v0.7.0 — **universal-package hardening**: opt-in `dryRun` and `idempotencyKey` on every destructive tool, cross-process token-file lock, structured error taxonomy (`error.type`, `retryable`, `retryAfter`), three new typed meta tools (`meta_health`, `meta_auth_status`, `meta_capabilities`), CLI flags (`--readonly` / `--dry-run` / `--health` / `--no-confirmation`). No breaking changes; safe defaults preserved.
 >
 > v0.6.0 — full **MCP 2025-11-25 alignment**: 6 MCP resources, 5 prompts, structured tool outputs, MCP logging mirroring, subscribable `state/pending-actions`.
 
@@ -81,19 +83,19 @@ The stdio transport keeps every credential and API response on your machine. No 
 
 ---
 
-## What's included — up to 142 tools
+## What's included — up to 145 tools
 
 | Configuration | Tools visible |
 |---|---|
-| Default (`AVITO_MCP_MODE=full_access`, no opt-ins) | **138** |
-| + `AVITO_MCP_EXPOSE_AUTH_TOOLS=1` | 141 (+3 auth) |
-| + `AVITO_MCP_ALLOWED_UPLOAD_DIRS=…` | 139 (+1 upload) |
-| + Both opt-ins | **142** |
+| Default (`AVITO_MCP_MODE=full_access`, no opt-ins) | **141** |
+| + `AVITO_MCP_EXPOSE_AUTH_TOOLS=1` | 144 (+3 auth) |
+| + `AVITO_MCP_ALLOWED_UPLOAD_DIRS=…` | 142 (+1 upload) |
+| + Both opt-ins | **145** |
 | `AVITO_MCP_CONFIRMATION_MODE=off` | −3 (hides meta_*_action) |
-| `AVITO_MCP_MODE=read_only` | ~77 (only `risk=read`) |
-| `AVITO_MCP_MODE=guarded` | ~120 (adds `write`, hides `money`/`public`) |
+| `AVITO_MCP_MODE=read_only` | ~80 (only `risk=read`) |
+| `AVITO_MCP_MODE=guarded` | ~123 (adds `write`, hides `money`/`public`) |
 
-138 wrap Avito API endpoints; 4 are local (`meta_get_rate_limits`, plus three `meta_*_action` for confirmation flow when enabled). Run `npm run generate:manifest` to dump the full inventory to `dist/manifest.json`.
+138 wrap Avito API endpoints; 7 are local meta tools: `meta_get_rate_limits`, three `meta_*_action` for the confirmation flow (when enabled), plus `meta_health`, `meta_auth_status`, `meta_capabilities` (v0.7.0). Run `npm run generate:manifest` to dump the full inventory to `dist/manifest.json`.
 
 Every public endpoint from Avito's 18 OpenAPI specs is exposed. Click any group to expand.
 
@@ -581,7 +583,7 @@ Also out of scope: `authorization_code` OAuth flow (no public redirect URI on a 
   - Windows: `%APPDATA%\avito-mcp\token.json`
   - Override with `AVITO_TOKEN_FILE`. Delete the file to force a refresh.
 - **Three-layer safety model** (every layer opt-in via env vars; defaults preserve v0.1.x behaviour for trivial calls but harden everything destructive):
-  - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — registration-time gate. Hidden tools never appear in `tools/list`. `read_only` ≈ 77 tools, `guarded` adds writes (~120 tools), `full_access` is the full 138 (+ opt-in extras).
+  - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — registration-time gate. Hidden tools never appear in `tools/list`. `read_only` ≈ 80 tools, `guarded` adds writes (~123 tools), `full_access` is the full 138 Avito + 7 meta (+ opt-in extras).
   - **`AVITO_MCP_ALLOW_TOOLS` / `AVITO_MCP_DENY_TOOLS`** — per-tool gating. Deny wins over allow.
   - **`AVITO_MCP_CONFIRMATION_MODE`** (`off` / `money_public` (default) / `all_destructive`) — runtime gate. Destructive tools return `{requires_confirmation: true, confirmation_id: ...}`; agent must call `meta_confirm_action` to execute. Pending state is in-memory, TTL'd (default 15 min), one-shot.
   - **`AVITO_MCP_EXPOSE_AUTH_TOOLS`** (default: `0`) — `auth_*` tools return OAuth tokens; classed as `sensitive` and hidden by default even in `full_access`.

@@ -12,11 +12,13 @@
 [![Avito API snapshot](https://img.shields.io/badge/Avito_API_snapshot-2026--05--25-orange)](./swaggers)
 
 > **Дайте вашим AI-агентам руки и ноги в Avito.**
-> Локальный MCP-сервер, через который Claude, Cursor, Cline и любой другой AI-ассистент **делает реальную работу на Avito за вас** — отвечает клиентам, ведёт объявления, запускает продвижение, обрабатывает заказы, анализирует статистику. **138 Avito API tools** + **4 локальных meta-tools** = до **142 MCP tools** из **18 официальных API Avito**. Установка одной командой.
+> Локальный MCP-сервер, через который Claude, Cursor, Cline и любой другой AI-ассистент **делает реальную работу на Avito за вас** — отвечает клиентам, ведёт объявления, запускает продвижение, обрабатывает заказы, анализирует статистику. **138 Avito API tools** + **7 локальных meta-tools** = до **145 MCP tools** из **18 официальных API Avito**. Установка одной командой.
 
 🇬🇧 **[English version →](./README.md)**
 
-> **Новое в v0.7.0** — **universal-package hardening**: опциональные `dryRun` и `idempotencyKey` на каждом destructive tool, межпроцессный file-lock на токен, структурированная таксономия ошибок (`error.type`, `retryable`, `retryAfter`), три новых типизированных meta-tool (`meta_health`, `meta_auth_status`, `meta_capabilities`), CLI флаги (`--readonly` / `--dry-run` / `--health` / `--no-confirmation`). Без breaking changes; безопасные дефолты сохранены. См. [CHANGELOG](./CHANGELOG.md#070---2026-05-26).
+> **Новое в v0.7.1** — багфикс: `promotion_create_bbip_order_for_items_v1` приведён к реальному контракту Avito `BbipOrderByItemV1` (`{itemId, duration, oldPrice, price}`); старое поле `budget` ломало любой BBIP-ордер. См. [CHANGELOG](./CHANGELOG.md#071---2026-05-28).
+>
+> v0.7.0 — **universal-package hardening**: опциональные `dryRun` и `idempotencyKey` на каждом destructive tool, межпроцессный file-lock на токен, структурированная таксономия ошибок (`error.type`, `retryable`, `retryAfter`), три новых типизированных meta-tool (`meta_health`, `meta_auth_status`, `meta_capabilities`), CLI флаги (`--readonly` / `--dry-run` / `--health` / `--no-confirmation`). Без breaking changes; безопасные дефолты сохранены.
 >
 > v0.6.0 — полное выравнивание под **MCP-спеку 2025-11-25**: 6 MCP-ресурсов, 5 готовых промптов, structured-выводы, MCP-logging, подписки на `state/pending-actions`.
 
@@ -81,19 +83,19 @@ stdio-транспорт оставляет credentials и ответы API на
 
 ---
 
-## Что включено — до 142 инструментов
+## Что включено — до 145 инструментов
 
 | Конфигурация | Видимо tools |
 |---|---|
-| По умолчанию (`AVITO_MCP_MODE=full_access`, без opt-in) | **138** |
-| + `AVITO_MCP_EXPOSE_AUTH_TOOLS=1` | 141 (+3 auth) |
-| + `AVITO_MCP_ALLOWED_UPLOAD_DIRS=…` | 139 (+1 upload) |
-| + Оба opt-in | **142** |
+| По умолчанию (`AVITO_MCP_MODE=full_access`, без opt-in) | **141** |
+| + `AVITO_MCP_EXPOSE_AUTH_TOOLS=1` | 144 (+3 auth) |
+| + `AVITO_MCP_ALLOWED_UPLOAD_DIRS=…` | 142 (+1 upload) |
+| + Оба opt-in | **145** |
 | `AVITO_MCP_CONFIRMATION_MODE=off` | −3 (скрывает meta_*_action) |
-| `AVITO_MCP_MODE=read_only` | ~77 (только `risk=read`) |
-| `AVITO_MCP_MODE=guarded` | ~120 (добавляет `write`, скрывает `money`/`public`) |
+| `AVITO_MCP_MODE=read_only` | ~80 (только `risk=read`) |
+| `AVITO_MCP_MODE=guarded` | ~123 (добавляет `write`, скрывает `money`/`public`) |
 
-138 — обёртки над эндпойнтами Avito API; 4 — локальные (`meta_get_rate_limits` + три `meta_*_action` для confirmation flow). Полный реестр — в `dist/manifest.json` (`npm run generate:manifest`).
+138 — обёртки над эндпойнтами Avito API; 7 — локальные meta-tools: `meta_get_rate_limits`, три `meta_*_action` для confirmation flow (когда включён), плюс `meta_health`, `meta_auth_status`, `meta_capabilities` (v0.7.0). Полный реестр — в `dist/manifest.json` (`npm run generate:manifest`).
 
 Каждый публичный endpoint из 18 OpenAPI-спецификаций Avito. Раскрывайте любую группу.
 
@@ -581,7 +583,7 @@ Settings → MCP Servers → Add. Поля UI: name `avito`, command `npx`, args
   - Windows: `%APPDATA%\avito-mcp\token.json`
   - Изменить путь — через `AVITO_TOKEN_FILE`. Удалите файл — следующий запрос автоматически выпишет новый.
 - **Три слоя безопасности** (каждый opt-in через env vars; defaults сохраняют v0.1.x для тривиальных вызовов, но харднят всё destructive):
-  - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — фильтр на регистрации. Скрытые tools не появляются в `tools/list`. `read_only` ≈ 77 tools, `guarded` добавляет writes (~120), `full_access` — все 138 (+ opt-in расширения).
+  - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — фильтр на регистрации. Скрытые tools не появляются в `tools/list`. `read_only` ≈ 80 tools, `guarded` добавляет writes (~123), `full_access` — все 138 Avito + 7 meta (+ opt-in расширения).
   - **`AVITO_MCP_ALLOW_TOOLS` / `AVITO_MCP_DENY_TOOLS`** — per-tool фильтр. Deny всегда побеждает allow.
   - **`AVITO_MCP_CONFIRMATION_MODE`** (`off` / `money_public` (default) / `all_destructive`) — runtime gate. Destructive tools возвращают `{requires_confirmation: true, confirmation_id: ...}`; агент должен вызвать `meta_confirm_action` чтобы выполнить. Pending хранится in-memory, с TTL (default 15 мин), одноразовый.
   - **`AVITO_MCP_EXPOSE_AUTH_TOOLS`** (default: `0`) — `auth_*` tools возвращают OAuth токены; помечены как `sensitive` и скрыты по default даже в `full_access`.
@@ -658,7 +660,7 @@ src/domains/<имя>.ts                ← один файл = один swagger,
         ↓
 src/meta/domain-registry.ts         ← одна строка регистрации
         ↓
-138 Avito + 4 local meta tools через stdio
+138 Avito + 7 local meta tools через stdio
 ```
 
 Сердце — `src/core/tool-factory.ts`: `defineTool(server, ctx, spec)` превращает декларативную spec в работающий MCP tool с HTTP, OAuth-токеном, retry, маппингом ошибок и автоподстановкой `Profile_id`. Никаких `fetch()` внутри handler'ов.
