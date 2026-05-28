@@ -13,6 +13,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'calltracking_get_call_by_id',
+    title: 'Колтрекинг: звонок по ID',
     risk: 'read',
     description: 'Информация о звонке по callId (метаданные, длительность, статус).',
     method: 'POST',
@@ -26,6 +27,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'calltracking_get_calls',
+    title: 'Колтрекинг: список звонков',
     risk: 'read',
     description:
       'Список звонков за период с пагинацией. dateTimeFrom/To — ISO 8601. ' +
@@ -47,6 +49,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'calltracking_get_record_by_call_id',
+    title: 'Колтрекинг: аудиозапись звонка',
     risk: 'read',
     description:
       'Получение аудиозаписи звонка по callId. С v0.5.0 возвращает структурированный ' +

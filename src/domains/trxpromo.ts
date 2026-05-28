@@ -13,6 +13,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'trxpromo_get_commissions',
+    title: 'TrxPromo: комиссии',
     risk: 'read',
     description:
       'Проверка доступности продвижения и размера комиссий для объявлений. ' +
@@ -28,6 +29,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'trxpromo_apply',
+    title: '⚠️ TrxPromo: запустить продвижение',
     risk: 'money',
     description:
       '⚠️ ЗАПУСКАЕТ транзакционное продвижение для объявлений. ' +
@@ -46,6 +48,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'trxpromo_cancel',
+    title: '⚠️ TrxPromo: остановить',
     risk: 'write',
     description: '⚠️ ОСТАНАВЛИВАЕТ транзакционное продвижение для объявлений.',
     method: 'POST',

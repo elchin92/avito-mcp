@@ -17,6 +17,7 @@ export const register: DomainRegister = (server, ctx) => {
   // 1. client_credentials — получение app-токена (то же, что делает TokenStore автоматически).
   defineTool(server, ctx, {
     name: 'auth_get_access_token',
+    title: 'OAuth: токен приложения',
     risk: 'sensitive',
     description:
       'OAuth 2.0 client_credentials: получить access_token приложения. ' +
@@ -41,6 +42,7 @@ export const register: DomainRegister = (server, ctx) => {
   // 2. authorization_code — обмен кода авторизации на токен пользователя.
   defineTool(server, ctx, {
     name: 'auth_get_access_token_authorization_code',
+    title: 'OAuth: обмен кода авторизации',
     risk: 'sensitive',
     description:
       'OAuth 2.0 authorization_code: обмен кода авторизации (полученного после редиректа ' +
@@ -71,6 +73,7 @@ export const register: DomainRegister = (server, ctx) => {
   // 3. refresh_token — обновление токена пользователя.
   defineTool(server, ctx, {
     name: 'auth_refresh_access_token_authorization_code',
+    title: 'OAuth: обновить токен пользователя',
     risk: 'sensitive',
     description:
       'OAuth 2.0 refresh_token: обновление истёкшего access_token пользователя через refresh_token. ' +

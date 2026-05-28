@@ -21,6 +21,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_get_profile',
+    title: 'Автозагрузка: получить профиль (v1, deprecated)',
     risk: 'read',
     description: '(deprecated, используйте autoload_get_profile_v2) Профиль автозагрузки v1.',
     method: 'GET',
@@ -31,6 +32,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_create_or_update_profile',
+    title: 'Автозагрузка: сохранить профиль (v1, deprecated)',
     risk: 'write',
     description:
       '(deprecated, используйте autoload_create_or_update_profile_v2) ' +
@@ -55,6 +57,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_upload',
+    title: '⚠️ Автозагрузка: запустить выгрузку',
     risk: 'write',
     description:
       '⚠️ ЗАПУСКАЕТ процесс автозагрузки объявлений из файла по URL, указанному в настройках профиля. ' +
@@ -69,6 +72,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_user_docs_tree',
+    title: 'Автозагрузка: дерево категорий',
     risk: 'read',
     description: 'Полное дерево категорий товаров Avito для автозагрузки.',
     method: 'GET',
@@ -79,6 +83,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_user_docs_node_fields',
+    title: 'Автозагрузка: поля категории',
     risk: 'read',
     description:
       'Список полей (атрибутов) для конкретной категории. ' +
@@ -96,6 +101,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_get_ad_ids_by_avito_ids',
+    title: 'Автозагрузка: Ad ID по Avito ID',
     risk: 'read',
     description:
       'Получить Ad ID (из файла) по Avito ID. query — CSV-список Avito ID.',
@@ -110,6 +116,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_get_avito_ids_by_ad_ids',
+    title: 'Автозагрузка: Avito ID по Ad ID',
     risk: 'read',
     description: 'Получить Avito ID по Ad ID (из файла). query — CSV-список Ad ID.',
     method: 'GET',
@@ -125,6 +132,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_get_profile_v2',
+    title: 'Автозагрузка: профиль',
     risk: 'read',
     description: 'Профиль автозагрузки v2 (актуальная версия).',
     method: 'GET',
@@ -135,6 +143,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_create_or_update_profile_v2',
+    title: 'Автозагрузка: сохранить профиль',
     risk: 'write',
     description:
       'Создание/редактирование настроек профиля автозагрузки v2. ' +
@@ -161,6 +170,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_get_reports_v2',
+    title: 'Автозагрузка: список отчётов',
     risk: 'read',
     description: 'Список отчётов автозагрузки с пагинацией и фильтром по датам.',
     method: 'GET',
@@ -177,6 +187,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_get_autoload_items_info_v2',
+    title: 'Автозагрузка: инфо об объявлениях',
     risk: 'read',
     description: 'Информация об объявлениях в автозагрузке по ID. query — CSV-список ID.',
     method: 'GET',
@@ -190,6 +201,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_get_last_completed_report',
+    title: 'Автозагрузка: последний отчёт (v1, deprecated)',
     risk: 'read',
     description: '(deprecated, используйте v3) Статистика по последней завершённой выгрузке.',
     method: 'GET',
@@ -200,6 +212,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_get_report_by_id_v2',
+    title: 'Автозагрузка: отчёт по ID (v2, deprecated)',
     risk: 'read',
     description: '(deprecated, используйте v3) Статистика по конкретной выгрузке.',
     method: 'GET',
@@ -213,6 +226,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_get_report_items_by_id',
+    title: 'Автозагрузка: объявления выгрузки',
     risk: 'read',
     description: 'Все объявления из конкретной выгрузки (с пагинацией и фильтрами).',
     method: 'GET',
@@ -237,6 +251,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_get_report_items_fees_by_id',
+    title: 'Автозагрузка: списания за выгрузку',
     risk: 'read',
     description: 'Списания за объявления в конкретной выгрузке.',
     method: 'GET',
@@ -257,6 +272,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_get_last_completed_report_v3',
+    title: 'Автозагрузка: последний отчёт',
     risk: 'read',
     description: 'Статистика по последней завершённой выгрузке (v3).',
     method: 'GET',
@@ -267,6 +283,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'autoload_get_report_by_id_v3',
+    title: 'Автозагрузка: отчёт по ID',
     risk: 'read',
     description: 'Статистика по конкретной выгрузке (v3).',
     method: 'GET',

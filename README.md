@@ -16,7 +16,9 @@
 
 🇷🇺 **[Русская версия / Russian version →](./README.ru.md)**
 
-> **New in v0.7.1** — bugfix: `promotion_create_bbip_order_for_items_v1` now matches the real Avito `BbipOrderByItemV1` contract (`{itemId, duration, oldPrice, price}`); the old `budget` field made every BBIP order fail. See [CHANGELOG](./CHANGELOG.md#071---2026-05-28).
+> **New in v0.7.2** — bugfix sweep: 6 input schemas brought in line with the real Avito request bodies (`stock_update_stocks` quantity, BBIP forecasts, account spendings grouping, promotion orders `perPage`, delivery custom-area-schedule array, create-parcel required fields) + README tool-count correction (145). See [CHANGELOG](./CHANGELOG.md#072---2026-05-28).
+>
+> v0.7.1 — `promotion_create_bbip_order_for_items_v1` matches the Avito `BbipOrderByItemV1` contract (`{itemId, duration, oldPrice, price}`); the old `budget` field made every BBIP order fail.
 >
 > v0.7.0 — **universal-package hardening**: opt-in `dryRun` and `idempotencyKey` on every destructive tool, cross-process token-file lock, structured error taxonomy (`error.type`, `retryable`, `retryAfter`), three new typed meta tools (`meta_health`, `meta_auth_status`, `meta_capabilities`), CLI flags (`--readonly` / `--dry-run` / `--health` / `--no-confirmation`). No breaking changes; safe defaults preserved.
 >

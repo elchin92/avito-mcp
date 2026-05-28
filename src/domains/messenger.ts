@@ -58,6 +58,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_chat_by_id_v2',
+    title: 'Чат по ID',
     risk: 'read',
     description: 'Детали одного чата по chat_id: участники, объявление, контекст, последнее сообщение.',
     method: 'GET',
@@ -100,6 +101,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_voice_files',
+    title: 'Голосовые сообщения',
     risk: 'read',
     description:
       'Получение URL для скачивания голосовых сообщений по их идентификаторам. ' +
@@ -118,6 +120,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_subscriptions',
+    title: 'Webhook-подписки',
     risk: 'read',
     description: 'Текущие подписки на webhooks (URL получения уведомлений + статус).',
     method: 'POST',
@@ -158,6 +161,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_send_image_message',
+    title: '⚠️ Отправить изображение',
     risk: 'public',
     description:
       '⚠️ ОТПРАВЛЯЕТ изображение в чат. Сначала загрузите изображение через messenger_upload_images ' +
@@ -180,6 +184,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_delete_message',
+    title: '⚠️ Удалить сообщение',
     risk: 'public',
     description: '⚠️ УДАЛЯЕТ сообщение в чате. Подтверждайте у пользователя.',
     method: 'POST',
@@ -212,6 +217,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_blacklist_v2',
+    title: '⚠️ Заблокировать пользователей',
     risk: 'write',
     description:
       '⚠️ БЛОКИРУЕТ пользователей. users: массив {user_id, context?:{item_id, reason_id}}. ' +
@@ -246,6 +252,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_webhook_v3',
+    title: '⚠️ Включить webhook',
     risk: 'write',
     description:
       '⚠️ ВКЛЮЧАЕТ webhook-уведомления о новых сообщениях. ' +
@@ -264,6 +271,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_webhook_unsubscribe',
+    title: 'Отключить webhook',
     risk: 'write',
     description: 'Отключает webhook-подписку по URL.',
     method: 'POST',
@@ -303,6 +311,7 @@ export const register: DomainRegister = (server, ctx) => {
   server.registerTool(
     'messenger_upload_images',
     {
+      title: 'Загрузить изображения',
       description:
         'Загружает изображения с локального диска в мессенджер Avito (multipart). ' +
         `Возвращает image_id для messenger_post_send_image_message. Принимает jpg/jpeg/png/webp ` +

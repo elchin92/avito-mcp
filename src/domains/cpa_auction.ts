@@ -10,6 +10,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'cpa_auction_get_user_bids',
+    title: 'CPA-аукцион: мои ставки',
     risk: 'read',
     description:
       'Текущие и доступные ставки в CPA-аукционе с курсорной пагинацией. ' +
@@ -26,6 +27,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_auction_save_item_bids',
+    title: '⚠️ CPA-аукцион: сохранить ставки',
     risk: 'money',
     description:
       '⚠️ Сохранение новых ставок в CPA-аукционе для объявлений (до 200 за запрос). ' +

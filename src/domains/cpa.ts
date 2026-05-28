@@ -14,6 +14,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'cpa_get_call',
+    title: 'CPA: запись звонка (v1, deprecated)',
     risk: 'read',
     description: '(deprecated, используйте cpa_get_call_by_id_v2) Запись звонка по call_id.',
     method: 'GET',
@@ -27,6 +28,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_chat_by_action_id',
+    title: 'CPA: чат по actionId',
     risk: 'read',
     description: 'Информация о чате CPA по actionId.',
     method: 'GET',
@@ -40,6 +42,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_chats_by_time_v1',
+    title: 'CPA: чаты за период (v1, deprecated)',
     risk: 'read',
     description: '(deprecated, используйте cpa_chats_by_time_v2) Чаты CPA за период.',
     method: 'POST',
@@ -55,6 +58,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_post_create_complaint',
+    title: '⚠️ CPA: жалоба на звонок',
     risk: 'write',
     description: '⚠️ Создание жалобы на звонок CPA (необратимо).',
     method: 'POST',
@@ -69,6 +73,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_create_complaint_by_action_id',
+    title: '⚠️ CPA: жалоба по actionId',
     risk: 'write',
     description: '⚠️ Создание жалобы на звонок или чат CPA по actionId (необратимо).',
     method: 'POST',
@@ -83,6 +88,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_phones_info_from_chats',
+    title: 'CPA: телефоны из чатов',
     risk: 'read',
     description: 'Информация по номерам телефонов из целевых чатов CPA за период.',
     method: 'POST',
@@ -98,6 +104,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_balance_info_v2',
+    title: 'CPA: баланс (v2, deprecated)',
     risk: 'read',
     description: '(deprecated, используйте cpa_balance_info_v3) Баланс CPA. Body: пустой `{}`.',
     method: 'POST',
@@ -109,6 +116,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_get_call_by_id_v2',
+    title: 'CPA: звонок по callId',
     risk: 'read',
     description: 'Звонок CPA по callId с записью.',
     method: 'POST',
@@ -122,6 +130,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_get_calls_by_time_v2',
+    title: 'CPA: звонки за период',
     risk: 'read',
     description: 'Звонки CPA за период (с пагинацией). dateTimeFrom — ISO 8601.',
     method: 'POST',
@@ -137,6 +146,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_chats_by_time_v2',
+    title: 'CPA: чаты за период',
     risk: 'read',
     description: 'Чаты CPA за период v2 (с пагинацией).',
     method: 'POST',
@@ -152,6 +162,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_balance_info_v3',
+    title: 'CPA: баланс',
     risk: 'read',
     description: 'Баланс CPA (v3 — актуальная). Body: пустой `{}`.',
     method: 'POST',

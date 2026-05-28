@@ -78,6 +78,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_calls_stats',
+    title: 'Статистика звонков',
     risk: 'read',
     description:
       'Статистика звонков по объявлениям за период (всего/новые/отвеченные/новые отвеченные, ' +
@@ -105,6 +106,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_vas_prices',
+    title: 'Цены услуг VAS',
     risk: 'read',
     description:
       'Информация о стоимости услуг продвижения (VAS) и доступных значках для заданных объявлений. ' +
@@ -129,6 +131,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_item_stats_shallow',
+    title: 'Статистика объявлений',
     risk: 'read',
     description:
       'Поверхностная статистика по объявлениям за период (просмотры, контакты). ' +
@@ -164,6 +167,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_item_analytics',
+    title: 'Аналитика объявлений',
     risk: 'read',
     description:
       'Расширенная аналитика по объявлениям (views, contacts, presenceSpending и др.) с группировкой и сортировкой. ' +
@@ -214,10 +218,12 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_account_spendings',
+    title: 'Расходы профиля',
     risk: 'read',
     description:
       'Статистика расходов профиля (по типам услуг — vas/cpa/tariff и т.п.) за период. ' +
-      'Поддерживает группировку и фильтры по категориям/сотрудникам.',
+      'grouping — строка "day"|"week"|"month" (НЕ объект). filter — по категориям/объявлениям/локациям. ' +
+      'Обязательны: dateFrom, dateTo, spendingTypes, grouping.',
     method: 'POST',
     path: '/stats/v2/accounts/{user_id}/spendings',
     domain: 'stats',
@@ -229,19 +235,17 @@ export const register: DomainRegister = (server, ctx) => {
         .min(1)
         .describe('Типы расходов: vas, perf_vas, lf, cv, tariff, subscription, cpa, bundle.'),
       grouping: z
-        .object({
-          period: z.enum(['day', 'week', 'month']).optional(),
-        })
-        .passthrough()
-        .describe('Группировка расходов.'),
+        .enum(['day', 'week', 'month'])
+        .describe('Группировка расходов по периоду: "day" | "week" | "month" (строка, обязательно).'),
       filter: z
         .object({
-          categoryIDs: z.array(z.number().int()).optional(),
-          employeeIDs: z.array(z.number().int()).optional(),
+          categoryIDs: z.array(z.number().int()).optional().describe('Фильтр по ID категорий.'),
+          itemIDs: z.array(z.number().int()).optional().describe('Фильтр по ID объявлений.'),
+          locationIDs: z.array(z.number().int()).optional().describe('Фильтр по ID локаций.'),
         })
         .passthrough()
         .optional()
-        .describe('Фильтры по категориям/сотрудникам.'),
+        .describe('Фильтры по категориям / объявлениям / локациям (employeeIDs НЕ поддерживается).'),
       user_id: z.number().int().positive().optional().describe('По умолчанию — Profile_id из .env.'),
     },
     pathParams: ['user_id'],
@@ -277,6 +281,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_put_item_vas',
+    title: '⚠️ Применить VAS',
     risk: 'money',
     description:
       '⚠️ ПЛАТНОЕ. Применяет одну дополнительную услугу (VAS) к объявлению — тратит деньги с баланса. ' +
@@ -299,6 +304,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_put_item_vas_package_v2',
+    title: '⚠️ Применить пакет VAS',
     risk: 'money',
     description:
       '⚠️ ПЛАТНОЕ. Применяет пакет услуг VAS к объявлению — тратит деньги. ' +
@@ -321,6 +327,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_apply_vas',
+    title: '⚠️ Применить услуги VAS',
     risk: 'money',
     description:
       '⚠️ ПЛАТНОЕ. Применяет несколько услуг продвижения (slugs) и/или стикеры (stickers) ' +

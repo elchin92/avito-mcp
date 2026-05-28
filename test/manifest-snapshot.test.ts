@@ -95,13 +95,12 @@ describe('manifest snapshot', () => {
     expect(inventory).toMatchSnapshot();
   });
 
-  it('v0.6.0: at least 7 tools have human-readable Russian title', () => {
+  it('v0.7.2: EVERY tool has a non-empty human-readable title', () => {
     const withTitle = manifest.tools.filter((t) => typeof t.title === 'string' && t.title.length > 0);
-    // Initial wave (user/items/messenger/meta). New domains добавят свои titles постепенно.
-    expect(withTitle.length).toBeGreaterThanOrEqual(7);
-    // Sanity: titles содержат русские буквы (cyrillic) — то ради чего поле и добавлялось.
-    const cyrillic = /[А-Яа-яЁё]/;
-    const localizedCount = withTitle.filter((t) => cyrillic.test(t.title!)).length;
-    expect(localizedCount).toBeGreaterThanOrEqual(7);
+    // v0.7.2 backfilled titles across all domains — full coverage is now an invariant.
+    // A new tool added without a title will fail this test (re-run generate:manifest + add a title).
+    expect(withTitle.length).toBe(manifest.tool_count);
+    const missing = manifest.tools.filter((t) => !t.title).map((t) => t.name);
+    expect(missing).toEqual([]);
   });
 });

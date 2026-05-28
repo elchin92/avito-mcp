@@ -1,7 +1,7 @@
 {
   "name": "avito-mcp",
-  "version": "0.7.1",
-  "description": "Universal MCP server for the Avito API — 142+ tools, safe-by-default with dry-run, idempotency, structured errors and cross-process token lock. Install via npx, plug into any MCP-compatible client.",
+  "version": "0.7.2",
+  "description": "Universal MCP server for the Avito API — 145 tools across 18 domains, safe-by-default with dry-run, idempotency, structured errors, MCP resources/prompts and cross-process token lock. Install via npx, plug into any MCP-compatible client.",
   "type": "module",
   "bin": {
     "avito-mcp": "dist/server.js"

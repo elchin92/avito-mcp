@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-05-28
+
+**Bugfix sweep.** Five more tools had input schemas that didn't match the real Avito request body (same class as the v0.7.1 BBIP-create bug) plus a docs-count correction. All six fixes verified against the bundled swagger snapshot. No new features, no tool added/removed/renamed; manifest stays at 145 tools and 141/141 tests pass.
+
+### Fixed
+
+- **`stock_update_stocks`** — `src/domains/stock.ts`. Each item was `{ item_id, stock }`, but `PUT /stock-management/1/stocks` requires `{ item_id, quantity }` (both required) with optional `external_id`. The wrong `stock` field meant quantity updates silently failed. High impact — live inventory.
+- **`promotion_get_bbip_forecasts_by_items_v1`** — `src/domains/promotion.ts`. Still used the old `ItemBudget` (`{ itemId, budget }`), but `BbipForecastRequestByItemV1` requires the **same** `{ itemId, duration, oldPrice, price }` as BBIP-create. v0.7.1 fixed only the create tool; this fixes forecasts too. The now-unused `ItemBudget` schema was removed; `BbipOrderItem` is shared by both tools.
+- **`items_post_account_spendings`** — `src/domains/items.ts`. `grouping` was an object `{ period }` but `SpendingsRequest.grouping` is a **string enum** `"day" | "week" | "month"`. Also dropped the non-existent `filter.employeeIDs`; the valid filter fields are `categoryIDs` / `itemIDs` / `locationIDs`.
+- **`promotion_list_orders_by_user_v1`** — `src/domains/promotion.ts`. Pagination field was `per_page`; the API expects `perPage` (camelCase). Page size was being ignored.
+- **`delivery_custom_area_schedule`** — `src/domains/delivery.ts`. `customAreaScheduleRequest` is a top-level JSON **array**, but the tool wrapped it as `{ schedules: [...] }`. Now sends the array directly via `transform`, matching the five neighbouring array-body delivery tools. (Sandbox endpoint — low impact.)
+- **`delivery_create_parcel`** — `src/domains/delivery.ts`. Declared only `barcodes`, but `CreateParcelRequest` requires `orderID`, `parcelID`, `items`, `sender`, `receiver`, `payment` (with `barcodes` / `directOrderID` / `options` / `package` optional). (3PL partner endpoint — low impact on regular accounts.)
+- **README tool count** — `README.md` / `README.ru.md`. v0.7.0 added 3 meta tools but the docs still said "4 local/meta = 142". Corrected to "7 local/meta = 145" across headline, configuration table, prose and architecture diagram in both languages.
+
+### Added
+
+- **Human-readable `title` on all 145 tools.** v0.6.0 introduced `ToolSpec.title` but only 17 high-traffic tools carried one; the other 128 fell back to their snake_case `name` in MCP clients. This release backfills Russian display titles across every domain (auth, autoload, calltracking, cpa, cpa_auction, cpa_target, delivery, hierarchy, items, messenger, msg_discounts, orders, promotion, reviews, stock, tariffs, trxpromo). Destructive tools are prefixed `⚠️`. The manifest snapshot test now asserts **full title coverage** as an invariant — a new tool without a title fails CI. (Additive metadata; no behaviour change.)
+
 ## [0.7.1] - 2026-05-28
 
 **Bugfix.** BBIP order creation was unusable: Avito rejected every `promotion_create_bbip_order_for_items_v1` call with «Не удалось найти бюджет продвижения по указанным параметрам», so no client could ever launch a BBIP campaign. Pure fix — no new features, no other tool surface changed.

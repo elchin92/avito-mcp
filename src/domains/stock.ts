@@ -12,6 +12,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'stock_get_stocks_info',
+    title: 'Остатки: получить',
     risk: 'read',
     description:
       'Получение текущих остатков для списка объявлений. strong_consistency — гарантия свежих данных.',
@@ -34,9 +35,11 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'stock_update_stocks',
+    title: '⚠️ Остатки: изменить',
     risk: 'public',
     description:
-      '⚠️ ИЗМЕНЯЕТ остатки в объявлениях. stocks — массив {item_id, stock} (количество товара).',
+      '⚠️ ИЗМЕНЯЕТ остатки в объявлениях. stocks — массив {item_id, quantity} (количество товара); ' +
+      'опционально external_id (идентификатор во внешней системе). Поля item_id и quantity обязательны.',
     method: 'PUT',
     path: '/stock-management/1/stocks',
     domain: 'stock-management',
@@ -44,8 +47,12 @@ export const register: DomainRegister = (server, ctx) => {
       stocks: z
         .array(
           z.object({
-            item_id: z.number().int().positive(),
-            stock: z.number().int().min(0).describe('Новый остаток (>= 0).'),
+            item_id: z.number().int().positive().describe('Идентификатор объявления на сайте.'),
+            quantity: z.number().int().min(0).describe('Новое количество товара (>= 0).'),
+            external_id: z
+              .string()
+              .optional()
+              .describe('Идентификатор объявления во внешней системе (опционально).'),
           }),
         )
         .min(1)

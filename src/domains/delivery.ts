@@ -25,6 +25,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_create_announcement_3pl',
+    title: 'Доставка: создать анонс [3PL]',
     risk: 'write',
     description: 'Создание анонса посылки в СД (для партнёров служб доставки).',
     method: 'POST',
@@ -47,6 +48,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_cancel_announcement_3pl',
+    title: 'Доставка: отмена анонса [3PL]',
     risk: 'write',
     description: 'Отмена анонса посылки в СД.',
     method: 'POST',
@@ -61,21 +63,49 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_create_parcel',
+    title: '⚠️ Доставка: создать посылку [3PL]',
     risk: 'write',
-    description: 'Создание посылки в боевой системе доставки. barcodes — штрихкоды.',
+    description:
+      '3PL-партнёрское создание посылки (CreateParcelRequest). Обязательны: orderID, parcelID, items, ' +
+      'sender, receiver, payment. Опционально: barcodes, directOrderID, options, package. Вложенные ' +
+      'объекты — см. соответствующие схемы в swaggers/Доставка.json.',
     method: 'POST',
     path: '/createParcel',
     domain: 'delivery',
     input: {
-      barcodes: z.array(z.string()).min(1).describe('Штрихкоды посылки.'),
+      orderID: z.string().describe('Идентификатор заказа.'),
+      parcelID: z.string().describe('Идентификатор посылки.'),
+      items: z.array(opaque('CreateParcelItem')).min(1).describe('Состав посылки (товары).'),
+      sender: opaque('CreateParcelClient').describe('Отправитель.'),
+      receiver: opaque('CreateParcelClient').describe('Получатель.'),
+      payment: opaque('CreateParcelPayment').describe('Параметры оплаты.'),
+      barcodes: z.array(z.string()).optional().describe('Штрихкоды посылки (опционально).'),
+      directOrderID: z.string().optional().describe('Прямой идентификатор заказа (опционально).'),
+      options: opaque('CreateParcelOptions').optional().describe('Доп. опции (опционально).'),
+      package: opaque('CreateParcelPackage').optional().describe('Параметры упаковки (опционально).'),
     },
-    body: { contentType: 'application/json', fields: ['barcodes'] },
+    body: {
+      contentType: 'application/json',
+      fields: [
+        'orderID',
+        'parcelID',
+        'items',
+        'sender',
+        'receiver',
+        'payment',
+        'barcodes',
+        'directOrderID',
+        'options',
+        'package',
+      ],
+    },
   });
 
   // ────────────────────────────── Sandbox: announcements ──────────────────────────────
 
   defineTool(server, ctx, {
     name: 'delivery_sandbox_create_announcement',
+    title: 'Доставка: создать анонс [sandbox]',
     risk: 'write',
     description: '[SANDBOX] Создание анонса в тестовой среде Avito.',
     method: 'POST',
@@ -98,6 +128,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_sandbox_track_announcement',
+    title: 'Доставка: трекинг анонса [sandbox]',
     risk: 'read',
     description: '[SANDBOX] Трекинг события анонса.',
     method: 'POST',
@@ -115,6 +146,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_custom_area_schedule',
+    title: 'Доставка: график зоны [sandbox]',
     risk: 'write',
     description:
       '[SANDBOX] Установка графика работы зоны доставки на определённый день. ' +
@@ -127,13 +159,16 @@ export const register: DomainRegister = (server, ctx) => {
         .array(opaque('CustomAreaSchedule'))
         .describe('Список уникальных кастомных расписаний.'),
     },
-    body: { contentType: 'application/json', fields: ['schedules'] },
+    // customAreaScheduleRequest = top-level JSON array. Шлём массив напрямую,
+    // как соседние array-tools (sorting-center / areas / tags / terminals / zones).
+    body: { contentType: 'application/json', transform: (b) => (b.schedules as unknown[]) ?? [] },
   });
 
   // ────────────────────────────── Sandbox: parcel ops ──────────────────────────────
 
   defineTool(server, ctx, {
     name: 'delivery_sandbox_cancel_parcel',
+    title: 'Доставка: отмена посылки [sandbox]',
     risk: 'write',
     description: '[SANDBOX] Отмена тестовой посылки. actor: sender/receiver.',
     method: 'POST',
@@ -148,6 +183,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_check_confirmation_code',
+    title: 'Доставка: проверка кода [sandbox]',
     risk: 'read',
     description: '[SANDBOX] Проверка кода подтверждения посылки.',
     method: 'POST',
@@ -162,6 +198,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_set_order_properties',
+    title: 'Доставка: свойства посылки [sandbox]',
     risk: 'write',
     description: '[SANDBOX] Изменение параметров доставки (свойств) посылки.',
     method: 'POST',
@@ -176,6 +213,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_set_order_real_address',
+    title: 'Доставка: фактический адрес [sandbox]',
     risk: 'write',
     description: '[SANDBOX] Установка фактического адреса приёма/возврата посылки.',
     method: 'POST',
@@ -190,6 +228,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_tracking',
+    title: 'Доставка: событие трекинга [sandbox]',
     risk: 'read',
     description: '[SANDBOX] Отправка события трекинга в систему Avito.',
     method: 'POST',
@@ -213,6 +252,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_prohibit_order_acceptance',
+    title: 'Доставка: запрет приёма [sandbox]',
     risk: 'write',
     description: '[SANDBOX] Запрет приёма посылки от отправителя.',
     method: 'POST',
@@ -226,6 +266,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_get_sorting_center',
+    title: 'Доставка: список СЦ [sandbox]',
     risk: 'read',
     description: '[SANDBOX] Список сортировочных центров.',
     method: 'GET',
@@ -236,6 +277,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_sorting_center',
+    title: 'Доставка: загрузить СЦ [sandbox]',
     risk: 'write',
     description: '[SANDBOX] Загрузка сортировочных центров.',
     method: 'POST',
@@ -249,6 +291,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_areas_sandbox',
+    title: 'Доставка: загрузить области [sandbox]',
     risk: 'write',
     description: '[SANDBOX] Загрузка областей доставки для тарифа.',
     method: 'POST',
@@ -264,6 +307,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_tags_to_sorting_center',
+    title: 'Доставка: теги СЦ [sandbox]',
     risk: 'write',
     description: '[SANDBOX] Установка тегов сортировочным центрам (своим/чужим).',
     method: 'POST',
@@ -279,6 +323,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_terminals_sandbox',
+    title: 'Доставка: загрузить ПВЗ [sandbox]',
     risk: 'write',
     description: '[SANDBOX] Загрузка терминалов (ПВЗ) для тарифа.',
     method: 'POST',
@@ -294,6 +339,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_update_terms',
+    title: 'Доставка: зоны сроков [sandbox]',
     risk: 'write',
     description: '[SANDBOX] Обновление зон сроков по тарифу.',
     method: 'POST',
@@ -309,6 +355,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_tariff_sandbox_v2',
+    title: 'Доставка: загрузить тариф [sandbox]',
     risk: 'write',
     description: '[SANDBOX] Загрузка нового тарифа (v2).',
     method: 'POST',
@@ -332,6 +379,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_get_task',
+    title: 'Доставка: статус задачи [sandbox]',
     risk: 'read',
     description: '[SANDBOX] Информация по задаче (taskID из ответа async-операций).',
     method: 'GET',
@@ -347,6 +395,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_cancel_announcement',
+    title: 'Доставка: отмена анонса [sandbox v1]',
     risk: 'write',
     description: '[SANDBOX v1] Отправка события об отмене тестового анонса.',
     method: 'POST',
@@ -362,6 +411,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_cancel_parcel',
+    title: 'Доставка: отмена посылки [sandbox v1]',
     risk: 'write',
     description: '[SANDBOX v1] Отмена тестовой посылки.',
     method: 'POST',
@@ -376,6 +426,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_change_parcel',
+    title: 'Доставка: изменить посылку [sandbox v1]',
     risk: 'write',
     description: '[SANDBOX v1] Создание заявки на изменение данных тестовой посылки.',
     method: 'POST',
@@ -392,6 +443,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_create_announcement',
+    title: 'Доставка: создать анонс [sandbox v1]',
     risk: 'write',
     description: '[SANDBOX v1] Создание тестового анонса.',
     method: 'POST',
@@ -415,6 +467,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_get_announcement_event',
+    title: 'Доставка: событие анонса [sandbox v1]',
     risk: 'read',
     description: '[SANDBOX v1] Последнее событие тестового анонса по ID.',
     method: 'POST',
@@ -426,6 +479,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_get_change_parcel_info',
+    title: 'Доставка: инфо изменения [sandbox v1]',
     risk: 'read',
     description: '[SANDBOX v1] Информация об изменении тестовой посылки по ID заявки.',
     method: 'POST',
@@ -437,6 +491,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_get_parcel_info',
+    title: 'Доставка: инфо посылки [sandbox v1]',
     risk: 'read',
     description: '[SANDBOX v1] Информация о тестовой посылке по ID.',
     method: 'POST',
@@ -448,6 +503,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_get_registered_parcel_id',
+    title: 'Доставка: ID посылки по orderID [sandbox v1]',
     risk: 'read',
     description: '[SANDBOX v1] ID зарегистрированной тестовой посылки по orderID.',
     method: 'POST',
@@ -459,6 +515,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_create_sandbox_parcel_v2',
+    title: 'Доставка: создать посылку [sandbox]',
     risk: 'write',
     description: '[SANDBOX v2] Создание тестовой посылки.',
     method: 'POST',
@@ -478,6 +535,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_change_parcel_result',
+    title: 'Доставка: результат изменения посылки',
     risk: 'write',
     description: 'Отправка результата исполнения заявки на изменение посылки.',
     method: 'POST',
@@ -494,6 +552,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_change_parcels',
+    title: 'Доставка: массовое обновление [sandbox]',
     risk: 'write',
     description: '[SANDBOX] Массовое обновление свойств посылок.',
     method: 'POST',

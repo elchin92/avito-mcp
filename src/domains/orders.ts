@@ -28,6 +28,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_get_orders',
+    title: 'Заказы: список',
     risk: 'read',
     description:
       'Список заказов с фильтрами. ids/statuses — массивы строк. dateFrom — Unix timestamp (сек). ' +
@@ -50,6 +51,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_get_courier_delivery_range',
+    title: 'Заказы: слоты курьера',
     risk: 'read',
     description: 'Доступные временные промежутки приезда курьера для заказа.',
     method: 'GET',
@@ -64,6 +66,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_download_label',
+    title: 'Заказы: скачать этикетку',
     risk: 'read',
     description:
       'Скачать сгенерированный PDF-файл этикетки по taskID (из generateLabels/Extended). ' +
@@ -83,6 +86,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_markings',
+    title: '⚠️ Заказы: честный знак',
     risk: 'write',
     description:
       '⚠️ ПЕРЕДАЁТ "честный знак" (DataMatrix) для маркировки товара в заказе.',
@@ -103,6 +107,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_accept_return_order',
+    title: '⚠️ Заказы: принять возврат',
     risk: 'public',
     description:
       '⚠️ Выбирает отделение Почты России для получения возврата товара.',
@@ -122,6 +127,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_apply_transition',
+    title: '⚠️ Заказы: сменить статус',
     risk: 'public',
     description:
       '⚠️ ИЗМЕНЯЕТ СТАТУС заказа через transition (например "confirm", "ship", "cancel"). ' +
@@ -147,6 +153,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_check_confirmation_code',
+    title: 'Заказы: проверка кода',
     risk: 'read',
     description:
       'Проверка кода подтверждения заказа (при выдаче через ПВЗ/пункт самовывоза).',
@@ -165,6 +172,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_cnc_set_details',
+    title: '⚠️ Заказы: самовывоз (детали)',
     risk: 'write',
     description:
       '⚠️ Подготовка заказа с самовывозом (CnC = click-and-collect). ' +
@@ -187,6 +195,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_set_courier_delivery_range',
+    title: '⚠️ Заказы: выбрать слот курьера',
     risk: 'write',
     description:
       '⚠️ Выбор временного промежутка для приезда курьера. Сначала вызовите ' +
@@ -221,6 +230,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_set_tracking_number',
+    title: '⚠️ Заказы: трек-номер',
     risk: 'public',
     description: '⚠️ Передача трек-номера курьерской службы для заказа.',
     method: 'POST',
@@ -238,6 +248,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_generate_labels',
+    title: 'Заказы: создать этикетки',
     risk: 'write',
     description:
       'Создать задачу на генерацию этикеток (до 100 заказов). ' +
@@ -256,6 +267,7 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_generate_labels_extended',
+    title: 'Заказы: создать этикетки (до 1000)',
     risk: 'write',
     description:
       'Создать задачу на генерацию этикеток для большого числа заказов (до 1000). ' +
