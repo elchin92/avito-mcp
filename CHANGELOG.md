@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-05-28
+
+**Registry metadata.** Adds the `mcpName` field (`io.github.elchin92/avito-mcp`) to `package.json` so the package can be published to and verified by the [official MCP Registry](https://registry.modelcontextprotocol.io). No code change — pure metadata for discovery. The registry verifies ownership by matching this `mcpName` against the `name` in the server's `server.json`.
+
+### Added
+
+- `package.json` → `mcpName: "io.github.elchin92/avito-mcp"` — ownership-verification anchor for the official MCP Registry (npm package-type verification).
+- `server.json` (repo root) — server manifest for the official registry: name, description, repository, npm package reference (stdio transport), and the required env vars `Client_id` / `Client_secret` / `Profile_id`.
+
 ## [0.7.2] - 2026-05-28
 
 **Bugfix sweep.** Five more tools had input schemas that didn't match the real Avito request body (same class as the v0.7.1 BBIP-create bug) plus a docs-count correction. All six fixes verified against the bundled swagger snapshot. No new features, no tool added/removed/renamed; manifest stays at 145 tools and 141/141 tests pass.
