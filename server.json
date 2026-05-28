@@ -1,0 +1,43 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.elchin92/avito-mcp",
+  "description": "Avito API MCP for autonomous AI agents to operate an account hands-free - not a scraper.",
+  "repository": {
+    "url": "https://github.com/elchin92/avito-mcp",
+    "source": "github"
+  },
+  "version": "0.7.3",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "avito-mcp",
+      "version": "0.7.3",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "Avito OAuth client_id (from https://www.avito.ru/professionals/api).",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": true,
+          "name": "Client_id"
+        },
+        {
+          "description": "Avito OAuth client_secret (from https://www.avito.ru/professionals/api).",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": true,
+          "name": "Client_secret"
+        },
+        {
+          "description": "Avito profile id (numeric account id); auto-injected into {user_id}/{userId} path params.",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": false,
+          "name": "Profile_id"
+        }
+      ]
+    }
+  ]
+}
