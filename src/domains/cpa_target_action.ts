@@ -1,8 +1,8 @@
 /**
- * Домен `cpa_target` — swaggers/Настройка цены целевого действия.json (5 endpoints).
- * Управление ставками за целевое действие (CPA promotion bids).
+ * Domain `cpa_target` — swaggers/Настройка цены целевого действия.json (5 endpoints).
+ * Manages target-action bids (CPA promotion bids).
  *
- * ⚠️ Write: removePromotion / saveAutoBid / saveManualBid — меняют ставки/останавливают продвижение.
+ * ⚠️ Write: removePromotion / saveAutoBid / saveManualBid — change bids / stop promotion.
  */
 import { z } from 'zod';
 
@@ -11,25 +11,25 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'cpa_target_get_bids',
-    title: 'Целевое действие: ставки',
+    title: 'Target action: bids',
     risk: 'read',
     description:
-      'Возвращает детализированную информацию о текущих и доступных ставках за целевое действие для ОДНОГО объявления: действующая цена/бюджет, минимум/максимум/рекомендация (всё в копейках), выбранная стратегия (manual/auto) и прогноз ЦД с преимуществом перед конкурентами. Read-only — расход не меняет. Используйте перед save_manual_bid/save_auto_bid, чтобы узнать допустимые min/max/рекомендуемые суммы. Для нескольких объявлений сразу используйте cpa_target_get_promotions_by_item_ids (batch до 200). Лимит: 20 запросов/мин.',
+      'Returns detailed information about current and available target-action bids for ONE listing: the active price/budget, the minimum/maximum/recommended values (all in kopecks), the selected strategy (manual/auto), and a target-action forecast with the advantage over competitors. Read-only — does not change spending. Use it before save_manual_bid/save_auto_bid to find the allowed min/max/recommended amounts. For multiple listings at once, use cpa_target_get_promotions_by_item_ids (batch up to 200). Limit: 20 requests/min.',
     method: 'GET',
     path: '/cpxpromo/1/getBids/{itemId}',
     domain: 'cpxpromo',
     input: {
-      itemId: z.number().int().positive().describe('ID объявления Avito, для которого запрашиваются ставки и бюджеты.'),
+      itemId: z.number().int().positive().describe('Avito listing ID for which bids and budgets are requested.'),
     },
     pathParams: ['itemId'],
   });
 
   defineTool(server, ctx, {
     name: 'cpa_target_get_promotions_by_item_ids',
-    title: 'Целевое действие: цены по объявлениям',
+    title: 'Target action: prices by listing',
     risk: 'read',
     description:
-      'Возвращает текущие ставки за целевое действие и бюджеты (в копейках) по НЕСКОЛЬКИМ объявлениям сразу (batch, до 200 за запрос): для каждого объявления — actionTypeID, активная manual- либо auto-стратегия с ценой/лимитом/бюджетом. Read-only — расход не меняет. Используйте для массовой проверки текущих настроек; для одного объявления с полными min/max/рекомендациями и прогнозом — cpa_target_get_bids. Лимит: 400 запросов/мин.',
+      'Returns current target-action bids and budgets (in kopecks) for MULTIPLE listings at once (batch, up to 200 per request): for each listing — actionTypeID and the active manual or auto strategy with its price/limit/budget. Read-only — does not change spending. Use it to bulk-check current settings; for a single listing with full min/max/recommendations and a forecast, use cpa_target_get_bids. Limit: 400 requests/min.',
     method: 'POST',
     path: '/cpxpromo/1/getPromotionsByItemIds',
     domain: 'cpxpromo',
@@ -37,50 +37,50 @@ export const register: DomainRegister = (server, ctx) => {
       itemIDs: z
         .array(z.number().int().positive())
         .min(1)
-        .describe('Список ID объявлений Avito (от 1 до 200 шт.), по которым нужны текущие ставки и бюджеты.'),
+        .describe('List of Avito listing IDs (1 to 200 items) for which current bids and budgets are requested.'),
     },
     body: { contentType: 'application/json', fields: ['itemIDs'] },
   });
 
   defineTool(server, ctx, {
     name: 'cpa_target_remove_promotion',
-    title: '⚠️ Целевое действие: остановить',
+    title: '⚠️ Target action: stop',
     risk: 'write',
     description:
-      '⚠️ ОСТАНАВЛИВАЕТ продвижение объявления за целевое действие и переключает его на базовую цену из прайс-листа. ВНИМАНИЕ: снимает действующую manual- или auto-ставку — настройки сбрасываются и для возврата продвижения их придётся задать заново (save_manual_bid/save_auto_bid). Не уменьшает расход до нуля: объявление продолжит тарифицироваться по базовой цене ЦД. Возвращает текстовое сообщение о переключении. Лимит: 300 запросов/мин.',
+      '⚠️ STOPS target-action promotion for a listing and switches it to the base price from the price list. WARNING: removes the active manual or auto bid — the settings are reset, and to resume promotion you will have to set them again (save_manual_bid/save_auto_bid). Does not reduce spending to zero: the listing keeps being charged at the base target-action price. Returns a text message about the switch. Limit: 300 requests/min.',
     destructiveHint: true,
     method: 'POST',
     path: '/cpxpromo/1/remove',
     domain: 'cpxpromo',
     input: {
-      itemID: z.number().int().positive().describe('ID объявления Avito, у которого нужно остановить продвижение за целевое действие.'),
+      itemID: z.number().int().positive().describe('Avito listing ID for which target-action promotion should be stopped.'),
     },
     body: { contentType: 'application/json', fields: ['itemID'] },
   });
 
   defineTool(server, ctx, {
     name: 'cpa_target_save_auto_bid',
-    title: '⚠️ Целевое действие: авто-ставка',
+    title: '⚠️ Target action: auto bid',
     risk: 'money',
     description:
-      '⚠️ Включает АВТОМАТИЧЕСКУЮ стратегию ставок за целевое действие: система сама подбирает цену в рамках заданного бюджета. ВНИМАНИЕ: влияет на расход бюджета (money) — задаёт трату budgetPenny за период budgetType. Взаимоисключающе с ручной ставкой: вызов перезапишет ранее заданную manual-стратегию для этого объявления. Используйте, когда хотите делегировать управление ценой Avito (а не фиксировать сумму вручную — для этого save_manual_bid). budgetPenny должен укладываться в min/maxBudgetPenny из cpa_target_get_bids. Недоступно в категории «Транспорт». Лимит: 10 запросов/мин.',
+      '⚠️ Enables the AUTOMATIC target-action bidding strategy: the system picks the price itself within the specified budget. WARNING: affects budget spending (money) — sets a spend of budgetPenny per budgetType period. Mutually exclusive with the manual bid: this call overwrites any previously set manual strategy for this listing. Use it when you want to delegate price management to Avito (rather than fixing the amount manually — use save_manual_bid for that). budgetPenny must fall within min/maxBudgetPenny from cpa_target_get_bids. Not available in the "Transport" category. Limit: 10 requests/min.',
     method: 'POST',
     path: '/cpxpromo/1/setAuto',
     domain: 'cpxpromo',
     input: {
-      itemID: z.number().int().positive().describe('ID объявления Avito, для которого включается авто-стратегия.'),
+      itemID: z.number().int().positive().describe('Avito listing ID for which the auto strategy is enabled.'),
       actionTypeID: z
         .number()
         .int()
-        .describe('Тип целевого действия: 1 — звонок, 5 — пакет кликов, 7 — мессенджер (передача контакта в чате).'),
+        .describe('Target-action type: 1 — call, 5 — click package, 7 — messenger (sharing a contact in chat).'),
       budgetType: z
         .string()
-        .describe('Период бюджета: "1d" — дневной, "7d" — недельный, "30d" — месячный.'),
+        .describe('Budget period: "1d" — daily, "7d" — weekly, "30d" — monthly.'),
       budgetPenny: z
         .number()
         .int()
         .positive()
-        .describe('Бюджет в КОПЕЙКАХ на период budgetType (напр. 1400 = 14 руб.). Должен быть в пределах min/maxBudgetPenny из cpa_target_get_bids.'),
+        .describe('Budget in KOPECKS for the budgetType period (e.g. 1400 = 14 rubles). Must be within min/maxBudgetPenny from cpa_target_get_bids.'),
     },
     body: {
       contentType: 'application/json',
@@ -90,30 +90,30 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'cpa_target_save_manual_bid',
-    title: '⚠️ Целевое действие: ручная ставка',
+    title: '⚠️ Target action: manual bid',
     risk: 'money',
     description:
-      '⚠️ Устанавливает РУЧНУЮ (фиксированную) ставку за целевое действие для объявления (manual bid). ВНИМАНИЕ: влияет на расход бюджета (money) — каждое целевое действие тарифицируется по bidPenny, дневная трата ограничена limitPenny. Взаимоисключающе с авто-ставкой: вызов перезапишет ранее заданную auto-стратегию для этого объявления. Используйте, когда хотите сами контролировать цену за действие (делегировать подбор Avito — save_auto_bid). bidPenny должен быть не ниже minBidPenny из cpa_target_get_bids. Лимит: 20 запросов/мин.',
+      '⚠️ Sets a MANUAL (fixed) target-action bid for a listing (manual bid). WARNING: affects budget spending (money) — each target action is charged at bidPenny, and daily spending is capped by limitPenny. Mutually exclusive with the auto bid: this call overwrites any previously set auto strategy for this listing. Use it when you want to control the per-action price yourself (to delegate the choice to Avito, use save_auto_bid). bidPenny must be no lower than minBidPenny from cpa_target_get_bids. Limit: 20 requests/min.',
     method: 'POST',
     path: '/cpxpromo/1/setManual',
     domain: 'cpxpromo',
     input: {
-      itemID: z.number().int().positive().describe('ID объявления Avito, для которого задаётся ручная ставка.'),
+      itemID: z.number().int().positive().describe('Avito listing ID for which the manual bid is set.'),
       actionTypeID: z
         .number()
         .int()
-        .describe('Тип целевого действия: 1 — звонок, 5 — пакет кликов, 7 — мессенджер (передача контакта в чате).'),
+        .describe('Target-action type: 1 — call, 5 — click package, 7 — messenger (sharing a contact in chat).'),
       bidPenny: z
         .number()
         .int()
         .positive()
-        .describe('Цена за одно целевое действие в КОПЕЙКАХ (напр. 1400 = 14 руб.). Должна быть не ниже minBidPenny из cpa_target_get_bids.'),
+        .describe('Price per single target action in KOPECKS (e.g. 1400 = 14 rubles). Must be no lower than minBidPenny from cpa_target_get_bids.'),
       limitPenny: z
         .number()
         .int()
         .positive()
         .optional()
-        .describe('Необязательный дневной лимит трат в КОПЕЙКАХ. Если не задан — лимит не применяется. Допустимый диапазон min/maxLimitPenny см. в cpa_target_get_bids.'),
+        .describe('Optional daily spending limit in KOPECKS. If omitted, no limit is applied. For the allowed min/maxLimitPenny range, see cpa_target_get_bids.'),
     },
     body: {
       contentType: 'application/json',

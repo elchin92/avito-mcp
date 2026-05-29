@@ -1,19 +1,19 @@
 /**
- * Домен `messenger` — соответствует swaggers/Мессенджер.json
+ * `messenger` domain — corresponds to swaggers/Мессенджер.json
  *
- * 13 endpoints: чтение/отправка сообщений, чаты, blacklist, webhooks, голосовые, изображения.
+ * 13 endpoints: reading/sending messages, chats, blacklist, webhooks, voice, images.
  *
  * Quirks:
- *   - sendMessage требует nested body `{ message: { text }, type: "text" }` — используем
- *     body.transform чтобы превратить плоский input {text} в нужную структуру.
- *   - uploadImages — multipart/form-data; LLM передаёт массив локальных путей,
- *     handler читает файлы и формирует FormData.
- *   - Webhook'и требуют ПУБЛИЧНЫЙ URL для приёма уведомлений (локально не работают).
+ *   - sendMessage requires a nested body `{ message: { text }, type: "text" }` — we use
+ *     body.transform to convert the flat input {text} into the required structure.
+ *   - uploadImages — multipart/form-data; the LLM passes an array of local paths,
+ *     the handler reads the files and builds the FormData.
+ *   - Webhooks require a PUBLIC URL to receive notifications (they don't work locally).
  *
- * ⚠️ Write-методы реально влияют на боевой аккаунт:
- *   - postSendMessage / postSendImageMessage — настоящее сообщение клиенту
- *   - postBlacklistV2 — блокирует пользователя
- *   - deleteMessage — удаляет сообщение
+ * ⚠️ Write methods actually affect the live account:
+ *   - postSendMessage / postSendImageMessage — a real message to the customer
+ *   - postBlacklistV2 — blocks a user
+ *   - deleteMessage — deletes a message
  */
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
@@ -29,13 +29,13 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_chats_v2',
-    title: 'Список чатов',
+    title: 'List chats',
     risk: 'read',
     description:
-      'Возвращает СПИСОК чатов аккаунта (диалогов с покупателями) с превью последнего сообщения и счётчиком непрочитанных. ' +
-      'Только чтение, ничего не отправляет и не помечает прочитанным. Используйте для поиска нужного chat_id перед messenger_get_messages_v3, ' +
-      'messenger_post_send_message или messenger_chat_read. Для деталей одного известного чата используйте messenger_get_chat_by_id_v2. ' +
-      'Поддерживает фильтры (объявления, типы, непрочитанные) и постраничную пагинацию через limit/offset.',
+      'Returns a LIST of the account\'s chats (conversations with buyers) with a preview of the last message and an unread counter. ' +
+      'Read-only — sends nothing and does not mark anything as read. Use it to find the needed chat_id before messenger_get_messages_v3, ' +
+      'messenger_post_send_message or messenger_chat_read. To get the details of a single known chat, use messenger_get_chat_by_id_v2. ' +
+      'Supports filters (items, types, unread) and offset-based pagination via limit/offset.',
     method: 'GET',
     path: '/messenger/v2/accounts/{user_id}/chats',
     domain: 'messenger',
@@ -43,15 +43,15 @@ export const register: DomainRegister = (server, ctx) => {
       item_ids: z
         .string()
         .optional()
-        .describe('Фильтр: CSV-список ID объявлений, чаты только по этим объявлениям (например "12345,6789"). По умолчанию — все чаты.'),
-      limit: z.number().int().min(1).max(100).optional().describe('Сколько чатов вернуть на странице (1–100, по умолчанию 100).'),
-      offset: z.number().int().min(0).optional().describe('Смещение для пагинации: пропустить N чатов (по умолчанию 0).'),
-      unread_only: z.boolean().optional().describe('true — вернуть только чаты с непрочитанными сообщениями; false/не указано — все чаты.'),
+        .describe('Filter: CSV list of item IDs, returns chats for these items only (e.g. "12345,6789"). Defaults to all chats.'),
+      limit: z.number().int().min(1).max(100).optional().describe('How many chats to return per page (1–100, default 100).'),
+      offset: z.number().int().min(0).optional().describe('Pagination offset: skip N chats (default 0).'),
+      unread_only: z.boolean().optional().describe('true — return only chats with unread messages; false/omitted — all chats.'),
       chat_types: z
         .string()
         .optional()
-        .describe('Фильтр по типам чатов, CSV: u2i (диалог по объявлению), u2u (диалог между пользователями). По умолчанию — все типы.'),
-      user_id: z.number().int().positive().optional().describe('ID аккаунта Avito, чьи чаты запрашиваем. По умолчанию — Profile_id из .env.'),
+        .describe('Filter by chat type, CSV: u2i (conversation about an item), u2u (conversation between users). Defaults to all types.'),
+      user_id: z.number().int().positive().optional().describe('Avito account ID whose chats are requested. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id'],
     queryParams: ['item_ids', 'limit', 'offset', 'unread_only', 'chat_types'],
@@ -60,18 +60,18 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_chat_by_id_v2',
-    title: 'Чат по ID',
+    title: 'Chat by ID',
     risk: 'read',
     description:
-      'Возвращает детали ОДНОГО чата по известному chat_id: участники, привязанное объявление, контекст и последнее сообщение. ' +
-      'Только чтение. Используйте, когда chat_id уже известен; чтобы найти chat_id или получить список диалогов — используйте messenger_get_chats_v2. ' +
-      'Сами сообщения переписки возвращает messenger_get_messages_v3.',
+      'Returns the details of a SINGLE chat by a known chat_id: participants, linked item, context, and the last message. ' +
+      'Read-only. Use it when the chat_id is already known; to find a chat_id or get a list of conversations, use messenger_get_chats_v2. ' +
+      'The conversation messages themselves are returned by messenger_get_messages_v3.',
     method: 'GET',
     path: '/messenger/v2/accounts/{user_id}/chats/{chat_id}',
     domain: 'messenger',
     input: {
-      chat_id: z.string().describe('Идентификатор чата (строка), полученный из messenger_get_chats_v2.'),
-      user_id: z.number().int().positive().optional().describe('ID аккаунта Avito — владельца чата. По умолчанию — Profile_id из .env.'),
+      chat_id: z.string().describe('Chat identifier (string) obtained from messenger_get_chats_v2.'),
+      user_id: z.number().int().positive().optional().describe('Avito account ID that owns the chat. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id', 'chat_id'],
     injectProfileId: 'user_id',
@@ -79,26 +79,26 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_messages_v3',
-    title: 'Сообщения чата',
+    title: 'Chat messages',
     risk: 'read',
     description:
-      'Возвращает СООБЩЕНИЯ конкретного чата (версия V3), отсортированные от новых к старым: текст, изображения, голос, ссылки, дата и автор. ' +
-      'Только чтение, не помечает чат прочитанным (для этого — messenger_chat_read). Требует chat_id (из messenger_get_chats_v2). ' +
-      'Длинную переписку листайте постранично через limit/offset. Для URL голосовых файлов из сообщений используйте messenger_get_voice_files.',
+      'Returns the MESSAGES of a specific chat (V3), sorted newest to oldest: text, images, voice, links, date, and author. ' +
+      'Read-only — does not mark the chat as read (use messenger_chat_read for that). Requires chat_id (from messenger_get_chats_v2). ' +
+      'Page through a long conversation via limit/offset. For download URLs of voice files in messages, use messenger_get_voice_files.',
     method: 'GET',
     path: '/messenger/v3/accounts/{user_id}/chats/{chat_id}/messages/',
     domain: 'messenger',
     input: {
-      chat_id: z.string().describe('Идентификатор чата (строка) из messenger_get_chats_v2.'),
+      chat_id: z.string().describe('Chat identifier (string) from messenger_get_chats_v2.'),
       limit: z
         .number()
         .int()
         .min(1)
         .max(100)
         .optional()
-        .describe('Сколько сообщений вернуть на странице (1–100, по умолчанию 100).'),
-      offset: z.number().int().min(0).optional().describe('Смещение для пагинации: пропустить N сообщений (по умолчанию 0).'),
-      user_id: z.number().int().positive().optional().describe('ID аккаунта Avito — участника чата. По умолчанию — Profile_id из .env.'),
+        .describe('How many messages to return per page (1–100, default 100).'),
+      offset: z.number().int().min(0).optional().describe('Pagination offset: skip N messages (default 0).'),
+      user_id: z.number().int().positive().optional().describe('Avito account ID that participates in the chat. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id', 'chat_id'],
     queryParams: ['limit', 'offset'],
@@ -107,18 +107,18 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_voice_files',
-    title: 'Голосовые сообщения',
+    title: 'Voice messages',
     risk: 'read',
     description:
-      'Возвращает временные URL для скачивания голосовых сообщений по их voice_id. Только чтение. ' +
-      'voice_id берутся из голосовых сообщений, полученных через messenger_get_messages_v3 (поле voice/voice_id). ' +
-      'Ссылки временные — скачивайте сразу.',
+      'Returns temporary download URLs for voice messages by their voice_id. Read-only. ' +
+      'voice_id values come from voice messages obtained via messenger_get_messages_v3 (the voice/voice_id field). ' +
+      'The links are temporary — download immediately.',
     method: 'GET',
     path: '/messenger/v1/accounts/{user_id}/getVoiceFiles',
     domain: 'messenger',
     input: {
-      voice_ids: z.string().describe('CSV-список идентификаторов голосовых сообщений (voice_id) из messenger_get_messages_v3, например "id1,id2".'),
-      user_id: z.number().int().positive().optional().describe('ID аккаунта Avito — участника чатов. По умолчанию — Profile_id из .env.'),
+      voice_ids: z.string().describe('CSV list of voice message identifiers (voice_id) from messenger_get_messages_v3, e.g. "id1,id2".'),
+      user_id: z.number().int().positive().optional().describe('Avito account ID that participates in the chats. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id'],
     queryParams: ['voice_ids'],
@@ -127,12 +127,12 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_get_subscriptions',
-    title: 'Webhook-подписки',
+    title: 'Webhook subscriptions',
     risk: 'read',
     description:
-      'Возвращает СПИСОК активных webhook-подписок аккаунта: URL приёма уведомлений и их версии/статус. ' +
-      'Только чтение (несмотря на метод POST — тело не требуется), ничего не создаёт и не удаляет. ' +
-      'Используйте, чтобы проверить, какие URL подписаны, перед messenger_post_webhook_v3 (подписать) или messenger_post_webhook_unsubscribe (отписать).',
+      'Returns a LIST of the account\'s active webhook subscriptions: notification URLs and their versions/status. ' +
+      'Read-only (despite the POST method — no body is required); creates and deletes nothing. ' +
+      'Use it to check which URLs are subscribed before messenger_post_webhook_v3 (subscribe) or messenger_post_webhook_unsubscribe (unsubscribe).',
     method: 'POST',
     path: '/messenger/v1/subscriptions',
     domain: 'messenger',
@@ -143,26 +143,26 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_send_message',
-    title: '⚠️ Отправить сообщение',
+    title: '⚠️ Send message',
     risk: 'public',
     description:
-      'Отправляет ТЕКСТОВОЕ сообщение в чат от имени аккаунта. ВНИМАНИЕ: сообщение немедленно и ПУБЛИЧНО видно собеседнику (покупателю) ' +
-      'и не удаляется автоматически (удалить можно через messenger_delete_message). Подтверждайте текст у пользователя перед вызовом. ' +
-      'Требует chat_id (из messenger_get_chats_v2) и text до 1000 символов. Для отправки картинки используйте messenger_post_send_image_message.',
+      'Sends a TEXT message to a chat on behalf of the account. WARNING: the message is immediately and PUBLICLY visible to the other party (the buyer) ' +
+      'and is not removed automatically (you can delete it via messenger_delete_message). Confirm the text with the user before calling. ' +
+      'Requires chat_id (from messenger_get_chats_v2) and text up to 1000 characters. To send an image, use messenger_post_send_image_message.',
     method: 'POST',
     path: '/messenger/v1/accounts/{user_id}/chats/{chat_id}/messages',
     domain: 'messenger',
     input: {
-      chat_id: z.string().describe('Идентификатор чата-получателя (строка) из messenger_get_chats_v2.'),
-      text: z.string().min(1).max(1000).describe('Текст сообщения, 1–1000 символов. Будет публично виден собеседнику.'),
-      user_id: z.number().int().positive().optional().describe('ID аккаунта Avito — отправителя. По умолчанию — Profile_id из .env.'),
+      chat_id: z.string().describe('Recipient chat identifier (string) from messenger_get_chats_v2.'),
+      text: z.string().min(1).max(1000).describe('Message text, 1–1000 characters. Will be publicly visible to the other party.'),
+      user_id: z.number().int().positive().optional().describe('Avito account ID of the sender. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id', 'chat_id'],
     injectProfileId: 'user_id',
     body: {
       contentType: 'application/json',
       fields: ['text'],
-      // Avito требует nested структуру { message: { text }, type: 'text' }
+      // Avito requires the nested structure { message: { text }, type: 'text' }
       transform: (body) => ({
         message: { text: body.text },
         type: 'text',
@@ -172,19 +172,19 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_send_image_message',
-    title: '⚠️ Отправить изображение',
+    title: '⚠️ Send image',
     risk: 'public',
     description:
-      'Отправляет ИЗОБРАЖЕНИЕ (по уже загруженному image_id) в чат от имени аккаунта. ВНИМАНИЕ: картинка немедленно и ПУБЛИЧНО видна собеседнику. ' +
-      'Двухшаговый процесс: сначала загрузите файл через messenger_upload_images и получите image_id, затем вызовите этот tool. ' +
-      'Для текста используйте messenger_post_send_message. Подтверждайте отправку у пользователя.',
+      'Sends an IMAGE (by an already-uploaded image_id) to a chat on behalf of the account. WARNING: the image is immediately and PUBLICLY visible to the other party. ' +
+      'Two-step process: first upload the file via messenger_upload_images and obtain an image_id, then call this tool. ' +
+      'For text, use messenger_post_send_message. Confirm sending with the user.',
     method: 'POST',
     path: '/messenger/v1/accounts/{user_id}/chats/{chat_id}/messages/image',
     domain: 'messenger',
     input: {
-      chat_id: z.string().describe('Идентификатор чата-получателя (строка) из messenger_get_chats_v2.'),
-      image_id: z.string().describe('ID ранее загруженного изображения, возвращённый messenger_upload_images.'),
-      user_id: z.number().int().positive().optional().describe('ID аккаунта Avito — отправителя. По умолчанию — Profile_id из .env.'),
+      chat_id: z.string().describe('Recipient chat identifier (string) from messenger_get_chats_v2.'),
+      image_id: z.string().describe('ID of a previously uploaded image, returned by messenger_upload_images.'),
+      user_id: z.number().int().positive().optional().describe('Avito account ID of the sender. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id', 'chat_id'],
     injectProfileId: 'user_id',
@@ -196,20 +196,20 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_delete_message',
-    title: '⚠️ Удалить сообщение',
+    title: '⚠️ Delete message',
     risk: 'public',
     destructiveHint: true,
     description:
-      'Удаляет ОДНО сообщение из чата по message_id. ВНИМАНИЕ: НЕОБРАТИМО — восстановить сообщение нельзя; ' +
-      'удаление видно собеседнику (на месте сообщения остаётся пометка об удалении). Удалять можно обычно только свои сообщения. ' +
-      'Требует chat_id и message_id (из messenger_get_messages_v3). Обязательно подтверждайте у пользователя перед вызовом.',
+      'Deletes a SINGLE message from a chat by message_id. WARNING: IRREVERSIBLE — the message cannot be restored; ' +
+      'the deletion is visible to the other party (a "deleted" marker remains in place of the message). You can usually delete only your own messages. ' +
+      'Requires chat_id and message_id (from messenger_get_messages_v3). Always confirm with the user before calling.',
     method: 'POST',
     path: '/messenger/v1/accounts/{user_id}/chats/{chat_id}/messages/{message_id}',
     domain: 'messenger',
     input: {
-      chat_id: z.string().describe('Идентификатор чата (строка) из messenger_get_chats_v2.'),
-      message_id: z.string().describe('Идентификатор удаляемого сообщения (строка) из messenger_get_messages_v3.'),
-      user_id: z.number().int().positive().optional().describe('ID аккаунта Avito — владельца сообщения. По умолчанию — Profile_id из .env.'),
+      chat_id: z.string().describe('Chat identifier (string) from messenger_get_chats_v2.'),
+      message_id: z.string().describe('Identifier (string) of the message to delete, from messenger_get_messages_v3.'),
+      user_id: z.number().int().positive().optional().describe('Avito account ID that owns the message. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id', 'chat_id', 'message_id'],
     injectProfileId: 'user_id',
@@ -217,18 +217,18 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_chat_read',
-    title: 'Отметить чат прочитанным',
+    title: 'Mark chat as read',
     risk: 'write',
     description:
-      'Помечает ВСЕ непрочитанные сообщения указанного чата как прочитанные и обнуляет счётчик непрочитанных. ' +
-      'Меняет состояние на стороне Avito, но НЕ отправляет ничего собеседнику и не виден ему. Необратимо вернуть статус «непрочитано» нельзя. ' +
-      'Идемпотентно: повторный вызов на уже прочитанном чате безопасен. Требует chat_id (из messenger_get_chats_v2).',
+      'Marks ALL unread messages of the specified chat as read and resets the unread counter. ' +
+      'Changes state on the Avito side, but sends NOTHING to the other party and is not visible to them. The "unread" status cannot be restored. ' +
+      'Idempotent: calling it again on an already-read chat is safe. Requires chat_id (from messenger_get_chats_v2).',
     method: 'POST',
     path: '/messenger/v1/accounts/{user_id}/chats/{chat_id}/read',
     domain: 'messenger',
     input: {
-      chat_id: z.string().describe('Идентификатор чата (строка) из messenger_get_chats_v2.'),
-      user_id: z.number().int().positive().optional().describe('ID аккаунта Avito — владельца чата. По умолчанию — Profile_id из .env.'),
+      chat_id: z.string().describe('Chat identifier (string) from messenger_get_chats_v2.'),
+      user_id: z.number().int().positive().optional().describe('Avito account ID that owns the chat. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id', 'chat_id'],
     injectProfileId: 'user_id',
@@ -236,13 +236,13 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_blacklist_v2',
-    title: '⚠️ Заблокировать пользователей',
+    title: '⚠️ Block users',
     risk: 'write',
     destructiveHint: true,
     description:
-      'Добавляет одного или нескольких пользователей в ЧЁРНЫЙ СПИСОК аккаунта. ВНИМАНИЕ: заблокированный пользователь больше не сможет писать вам в мессенджере; ' +
-      'это меняет боевой аккаунт — подтверждайте у пользователя. Принимает массив users с user_id и опциональным context (item_id и причина). ' +
-      'reason_id: 1=спам, 2=мошенничество, 3=оскорбления и хамство, 4=другая причина.',
+      'Adds one or more users to the account\'s BLACKLIST. WARNING: a blocked user will no longer be able to message you in the messenger; ' +
+      'this changes the live account — confirm with the user. Accepts an array of users with a user_id and an optional context (item_id and reason). ' +
+      'reason_id: 1=spam, 2=fraud, 3=insults and rudeness, 4=other reason.',
     method: 'POST',
     path: '/messenger/v2/accounts/{user_id}/blacklist',
     domain: 'messenger',
@@ -250,25 +250,25 @@ export const register: DomainRegister = (server, ctx) => {
       users: z
         .array(
           z.object({
-            user_id: z.number().int().positive().describe('ID пользователя Avito, которого блокируем.'),
+            user_id: z.number().int().positive().describe('ID of the Avito user being blocked.'),
             context: z
               .object({
-                item_id: z.number().int().optional().describe('ID объявления, в контексте которого произошёл инцидент (опционально).'),
+                item_id: z.number().int().optional().describe('ID of the item in whose context the incident occurred (optional).'),
                 reason_id: z
                   .number()
                   .int()
                   .min(1)
                   .max(4)
                   .optional()
-                  .describe('Причина блокировки: 1=спам, 2=мошенничество, 3=оскорбления и хамство, 4=другая причина (опционально).'),
+                  .describe('Block reason: 1=spam, 2=fraud, 3=insults and rudeness, 4=other reason (optional).'),
               })
               .optional()
-              .describe('Контекст блокировки: объявление и причина (опционально).'),
+              .describe('Block context: item and reason (optional).'),
           }),
         )
         .min(1)
-        .describe('Список блокируемых пользователей (минимум один), каждый — { user_id, context? }.'),
-      user_id: z.number().int().positive().optional().describe('ID аккаунта Avito, ведущего чёрный список. По умолчанию — Profile_id из .env.'),
+        .describe('List of users to block (at least one), each as { user_id, context? }.'),
+      user_id: z.number().int().positive().optional().describe('Avito account ID that maintains the blacklist. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id'],
     injectProfileId: 'user_id',
@@ -280,17 +280,17 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_webhook_v3',
-    title: '⚠️ Включить webhook',
+    title: '⚠️ Enable webhook',
     risk: 'write',
     description:
-      'ПОДПИСЫВАЕТ указанный URL на webhook-уведомления (версия V3) о новых событиях мессенджера — новых сообщениях в чатах. ' +
-      'Меняет настройки аккаунта: Avito начнёт слать POST-запросы на этот URL. Требует ПУБЛИЧНЫЙ HTTPS-адрес, доступный из интернета — localhost не работает. ' +
-      'Проверить текущие подписки можно через messenger_get_subscriptions, отключить — через messenger_post_webhook_unsubscribe.',
+      'SUBSCRIBES the specified URL to webhook notifications (V3) about new messenger events — new messages in chats. ' +
+      'Changes account settings: Avito will start sending POST requests to this URL. Requires a PUBLIC HTTPS address reachable from the internet — localhost does not work. ' +
+      'You can check current subscriptions via messenger_get_subscriptions and disable them via messenger_post_webhook_unsubscribe.',
     method: 'POST',
     path: '/messenger/v3/webhook',
     domain: 'messenger',
     input: {
-      url: z.string().url().describe('Публичный HTTPS URL, на который Avito будет слать уведомления о событиях мессенджера.'),
+      url: z.string().url().describe('Public HTTPS URL to which Avito will send messenger event notifications.'),
     },
     body: {
       contentType: 'application/json',
@@ -300,18 +300,18 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'messenger_post_webhook_unsubscribe',
-    title: 'Отключить webhook',
+    title: 'Disable webhook',
     risk: 'write',
     destructiveHint: true,
     description:
-      'ОТПИСЫВАЕТ указанный URL от webhook-уведомлений мессенджера — Avito перестанет слать события на этот адрес. ' +
-      'Меняет настройки аккаунта; чтобы возобновить уведомления, придётся заново подписаться через messenger_post_webhook_v3. ' +
-      'Указывайте ровно тот URL, что был подписан (список — в messenger_get_subscriptions).',
+      'UNSUBSCRIBES the specified URL from messenger webhook notifications — Avito will stop sending events to this address. ' +
+      'Changes account settings; to resume notifications you will have to subscribe again via messenger_post_webhook_v3. ' +
+      'Specify exactly the URL that was subscribed (see the list in messenger_get_subscriptions).',
     method: 'POST',
     path: '/messenger/v1/webhook/unsubscribe',
     domain: 'messenger',
     input: {
-      url: z.string().url().describe('URL подписки, которую нужно отключить (должен совпадать с ранее подписанным; см. messenger_get_subscriptions).'),
+      url: z.string().url().describe('URL of the subscription to disable (must match the one previously subscribed; see messenger_get_subscriptions).'),
     },
     body: {
       contentType: 'application/json',
@@ -321,9 +321,9 @@ export const register: DomainRegister = (server, ctx) => {
 
   // ────────────────────────────── CUSTOM (multipart upload) ──────────────────────────────
 
-  // v0.4.0: fail-closed на регистрации, если нет разрешённых директорий.
-  // Без AVITO_MCP_ALLOWED_UPLOAD_DIRS tool вообще не появляется в tools/list —
-  // защита от arbitrary-file-read через prompt injection.
+  // v0.4.0: fail-closed at registration if there are no allowed directories.
+  // Without AVITO_MCP_ALLOWED_UPLOAD_DIRS the tool does not appear in tools/list at all —
+  // protection against arbitrary-file-read via prompt injection.
   if (ctx.config.allowedUploadDirs.length === 0) {
     logger.info(
       { tool: 'messenger_upload_images' },
@@ -344,29 +344,29 @@ export const register: DomainRegister = (server, ctx) => {
   server.registerTool(
     'messenger_upload_images',
     {
-      title: 'Загрузить изображения',
+      title: 'Upload images',
       description:
-        'ЗАГРУЖАЕТ изображения с локального диска в мессенджер Avito (multipart) и возвращает image_id. ' +
-        'Это шаг 1 из 2: полученный image_id затем передаётся в messenger_post_send_image_message для отправки картинки в чат — ' +
-        'сама загрузка собеседнику НЕ видна и ничего не публикует. ' +
-        `Принимает jpg/jpeg/png/webp до ${ctx.config.maxUploadMb} MB. Файлы должны лежать в одной из ` +
-        `AVITO_MCP_ALLOWED_UPLOAD_DIRS — иначе tool не зарегистрирован либо вернёт ошибку. ` +
-        'Проверки: realpath (защита от symlink-escape), allowlist директорий, размер, расширение, magic bytes.',
+        'UPLOADS images from the local disk to the Avito messenger (multipart) and returns an image_id. ' +
+        'This is step 1 of 2: the returned image_id is then passed to messenger_post_send_image_message to send the image to a chat — ' +
+        'the upload itself is NOT visible to the other party and publishes nothing. ' +
+        `Accepts jpg/jpeg/png/webp up to ${ctx.config.maxUploadMb} MB. Files must reside in one of ` +
+        `AVITO_MCP_ALLOWED_UPLOAD_DIRS — otherwise the tool is not registered or returns an error. ` +
+        'Checks: realpath (protection against symlink escape), directory allowlist, size, extension, magic bytes.',
       inputSchema: {
         paths: z
           .array(z.string().min(1))
           .min(1)
           .describe(
-            'Список абсолютных путей к локальным файлам изображений (jpg/jpeg/png/webp), минимум один. ' +
-              'Каждый файл проверяется на попадание в AVITO_MCP_ALLOWED_UPLOAD_DIRS, размер, ' +
-              'расширение и magic bytes. Любая ошибка хотя бы по одному файлу — отказ всей пачки (fail-fast).',
+            'List of absolute paths to local image files (jpg/jpeg/png/webp), at least one. ' +
+              'Each file is checked for membership in AVITO_MCP_ALLOWED_UPLOAD_DIRS, size, ' +
+              'extension, and magic bytes. Any error on even one file rejects the whole batch (fail-fast).',
           ),
         user_id: z
           .number()
           .int()
           .positive()
           .optional()
-          .describe('ID аккаунта Avito, от имени которого загружаются изображения. По умолчанию — Profile_id из .env.'),
+          .describe('Avito account ID on whose behalf the images are uploaded. Defaults to Profile_id from .env.'),
       },
       annotations: {
         readOnlyHint: false,
@@ -388,7 +388,7 @@ export const register: DomainRegister = (server, ctx) => {
         }
         const paths = args.paths as string[];
 
-        // Валидируем ВСЕ файлы перед началом upload — fail-fast.
+        // Validate ALL files before starting the upload — fail-fast.
         const validated = [];
         for (const p of paths) {
           try {

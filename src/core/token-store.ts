@@ -12,30 +12,30 @@ export interface TokenRecord {
 }
 
 /**
- * Hook для запроса нового токена у Avito. Возвращает access_token + expiresIn (sec).
- * Реализуется в AvitoClient (чтобы не плодить циклические зависимости).
+ * Hook for requesting a new token from Avito. Returns access_token + expiresIn (sec).
+ * Implemented in AvitoClient (to avoid introducing circular dependencies).
  */
 export type TokenFetcher = () => Promise<{ accessToken: string; expiresIn: number }>;
 
 /**
- * Хранит OAuth access_token между запусками в .avito-token.json + in-memory cache.
- * Защищает от parallel-refresh через одиночный Promise.
- * Атомарная запись: write tmp → rename.
+ * Persists the OAuth access_token across runs in .avito-token.json + in-memory cache.
+ * Guards against parallel refresh via a single shared Promise.
+ * Atomic write: write tmp → rename.
  *
- * Refresh-стратегии:
- *   - upfront: getToken() возвращает текущий если он истечёт > skewMs в будущем
- *   - reactive: invalidate() стирает кэш, следующий getToken() сделает refresh
+ * Refresh strategies:
+ *   - upfront: getToken() returns the current token if it expires > skewMs in the future
+ *   - reactive: invalidate() clears the cache, and the next getToken() triggers a refresh
  */
 export class TokenStore {
   private cache?: TokenRecord;
   private inflight?: Promise<TokenRecord>;
-  private skewMs = 60_000; // обновляем за минуту до истечения
+  private skewMs = 60_000; // refresh one minute before expiry
 
   /**
-   * v0.7.0: межпроцессный lock. Default 30s timeout — если другой процесс
-   * висит дольше, мы всё равно бросим понятную ошибку, а не зависнем навсегда.
-   * Можно переопределить через AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS — но не в TokenStore;
-   * на этом уровне просто принимаем число.
+   * v0.7.0: cross-process lock. Default 30s timeout — if another process
+   * hangs longer, we still throw a clear error instead of blocking forever.
+   * Can be overridden via AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS — but not in TokenStore;
+   * at this level we simply accept a number.
    */
   constructor(
     private readonly filePath: string,
@@ -48,7 +48,7 @@ export class TokenStore {
       return this.cache.accessToken;
     }
 
-    // 1) попробуем подгрузить из файла
+    // 1) try to load from file
     if (!this.cache) {
       const fromFile = await this.readFile();
       if (fromFile && fromFile.expiresAt - Date.now() > this.skewMs) {
@@ -61,24 +61,25 @@ export class TokenStore {
   }
 
   /**
-   * Сбрасывает кэш и удаляет файл — следующий getToken() обязательно сделает refresh.
-   * Используется при 401, чтобы не подхватить заведомо отозванный токен с диска.
-   * Async, чтобы удаление файла гарантированно завершилось до следующего getToken().
+   * Clears the cache and removes the file — the next getToken() is guaranteed to refresh.
+   * Used on a 401 to avoid picking up a known-revoked token from disk.
+   * Async so that file removal is guaranteed to complete before the next getToken().
    */
   async invalidate(): Promise<void> {
     this.cache = undefined;
     await fs.rm(this.filePath, { force: true }).catch(() => {
-      /* best-effort: ENOENT и т.п. */
+      /* best-effort: ENOENT, etc. */
     });
   }
 
   /**
-   * Принудительный refresh. Двухслойная защита от storm'а:
-   *   1) in-process: один Promise inflight на процесс
-   *   2) cross-process: file lock на {filePath}.lock с PID + stale-detection
+   * Forced refresh. Two-layer protection against a refresh storm:
+   *   1) in-process: a single inflight Promise per process
+   *   2) cross-process: a file lock on {filePath}.lock with PID + stale-detection
    *
-   * Внутри cross-process lock сразу re-read файла: вдруг другой процесс уже
-   * обновил токен пока мы ждали lock. Тогда не дёргаем /token Avito повторно.
+   * Inside the cross-process lock we immediately re-read the file: another process
+   * may have already refreshed the token while we waited for the lock. In that case
+   * we don't call Avito's /token endpoint again.
    */
   async refresh(): Promise<TokenRecord> {
     if (this.inflight) return this.inflight;
@@ -87,7 +88,7 @@ export class TokenStore {
         return await withFileLock(
           this.filePath,
           async () => {
-            // Re-read под lock'ом — может, другой процесс уже всё сделал.
+            // Re-read under the lock — another process may have already done the work.
             const fromFile = await this.readFile();
             if (fromFile && fromFile.expiresAt - Date.now() > this.skewMs) {
               logger.debug(

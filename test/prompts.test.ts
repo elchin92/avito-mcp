@@ -1,5 +1,5 @@
 /**
- * Тесты MCP-prompts (v0.6.0).
+ * MCP prompts tests (v0.6.0).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -84,7 +84,7 @@ describe('MCP prompts', () => {
       'avito_promote_item',
       'avito_safety_report',
     ]);
-    // titles присутствуют
+    // titles are present
     for (const p of prompts) {
       expect(p.title?.startsWith('Avito')).toBe(true);
     }
@@ -125,7 +125,7 @@ describe('MCP prompts', () => {
     expect(text).toContain('items_post_vas_prices');
     expect(text).toContain('promotion_get_bbip_suggests_by_items_v1');
     // explicit guard:
-    expect(text.toLowerCase()).toContain('не покуп'); // "Не покупай"
+    expect(text.toLowerCase()).toContain('не покуп'); // "Don't buy" ("Не покупай")
   });
 
   it('avito_check_unread_chats stays read-only — no send/blacklist references in the prompt', async () => {

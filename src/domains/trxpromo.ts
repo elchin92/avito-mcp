@@ -1,10 +1,10 @@
 /**
- * Домен `trxpromo` — swaggers/TrxPromo.json (3 endpoints).
- * Транзакционное продвижение (комиссия за результат).
+ * Domain `trxpromo` — swaggers/TrxPromo.json (3 endpoints).
+ * Transactional promotion (pay-per-result commission).
  *
- * Quirks: GET /trx-promo/1/commissions принимает body — нестандартно, но Avito делает так.
+ * Quirks: GET /trx-promo/1/commissions accepts a body — non-standard, but that's how Avito does it.
  *
- * ⚠️ Write: apply (запуск) / cancel (остановка) продвижения.
+ * ⚠️ Write: apply (start) / cancel (stop) promotion.
  */
 import { z } from 'zod';
 
@@ -13,13 +13,13 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'trxpromo_get_commissions',
-    title: 'TrxPromo: комиссии',
+    title: 'TrxPromo: commissions',
     risk: 'read',
     description:
-      'Проверяет доступность транзакционного промо и допустимый размер комиссий для объявлений (trxpromo_get_commissions, read-only — ничего не запускает и не списывает). ' +
-      'Для каждого объявления возвращает флаг promoAvailable и настройки settings: минимум/максимум/шаг комиссии в сотых долях процента (100 = 1%). ' +
-      'Используйте перед trxpromo_apply, чтобы узнать границы комиссии. Запуск промо — trxpromo_apply, отмена — trxpromo_cancel. ' +
-      'Это GET с телом запроса — нестандартно, но именно так задано в swagger Avito.',
+      'Checks transactional promo availability and the allowed commission range for listings (trxpromo_get_commissions, read-only — does not start anything or charge any fee). ' +
+      'For each listing it returns the promoAvailable flag and settings: minimum/maximum/step of the commission in hundredths of a percent (100 = 1%). ' +
+      'Use before trxpromo_apply to learn the commission limits. Start promo with trxpromo_apply, cancel with trxpromo_cancel. ' +
+      'This is a GET with a request body — non-standard, but that is exactly how it is defined in the Avito swagger.',
     method: 'GET',
     path: '/trx-promo/1/commissions',
     domain: 'trx-promo',
@@ -27,19 +27,19 @@ export const register: DomainRegister = (server, ctx) => {
       itemIDs: z
         .array(z.number().int().positive())
         .min(1)
-        .describe('Массив ID объявлений на Авито, для которых проверяется доступность промо и размер комиссий.'),
+        .describe('Array of Avito listing IDs to check for promo availability and commission limits.'),
     },
     body: { contentType: 'application/json', fields: ['itemIDs'] },
   });
 
   defineTool(server, ctx, {
     name: 'trxpromo_apply',
-    title: '⚠️ TrxPromo: запустить продвижение',
+    title: '⚠️ TrxPromo: start promotion',
     risk: 'money',
     description:
-      '⚠️ Применяет транзакционное промо/продвижение за комиссию к объявлениям (trxpromo_apply). Влияет на цену/расход: плата за продвижение прибавляется к базовой комиссии. ' +
-      'В ответе по каждому объявлению — флаг success, при ошибке код 1001 (валидация) или 1002 (промо недоступно) и допустимый диапазон комиссии. ' +
-      'Сначала узнайте границы через trxpromo_get_commissions; отменить запущенное промо — trxpromo_cancel.',
+      '⚠️ Applies transactional promo/promotion with a pay-per-result commission to listings (trxpromo_apply). Affects price/spend: the promotion fee is added on top of the base commission. ' +
+      'The response includes a success flag per listing, and on error a code 1001 (validation) or 1002 (promo unavailable) along with the allowed commission range. ' +
+      'First check the limits via trxpromo_get_commissions; cancel a running promo with trxpromo_cancel.',
     method: 'POST',
     path: '/trx-promo/1/apply',
     domain: 'trx-promo',
@@ -48,10 +48,10 @@ export const register: DomainRegister = (server, ctx) => {
         .array(z.record(z.string(), z.unknown()))
         .min(1)
         .describe(
-          'Массив объявлений для продвижения. Каждый элемент: itemID (число, ID объявления, обязателен), ' +
-            'commission (плата за продвижение в сотых долях процента, 1500 = 15%; обязательна), ' +
-            'dateFrom (дата начала продвижения «ГГГГ-ММ-ДД», обязательна), ' +
-            'dateTo (дата окончания «ГГГГ-ММ-ДД», опционально — иначе все свободные даты). См. swaggers/TrxPromo.json.',
+          'Array of listings to promote. Each element: itemID (number, listing ID, required), ' +
+            'commission (promotion fee in hundredths of a percent, 1500 = 15%; required), ' +
+            'dateFrom (promotion start date "YYYY-MM-DD", required), ' +
+            'dateTo (end date "YYYY-MM-DD", optional — otherwise all available dates). See swaggers/TrxPromo.json.',
         ),
     },
     body: { contentType: 'application/json', fields: ['items'] },
@@ -59,13 +59,13 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'trxpromo_cancel',
-    title: '⚠️ TrxPromo: остановить',
+    title: '⚠️ TrxPromo: stop',
     risk: 'write',
     destructiveHint: true,
     description:
-      '⚠️ Отменяет действующее и запланированное транзакционное промо для объявлений (trxpromo_cancel). Откатывает эффект trxpromo_apply — продвижение и связанная с ним комиссия перестают действовать. ' +
-      'В ответе по каждому объявлению — флаг success, при ошибке код 1001 (валидация) или 1002 (промо недоступно). ' +
-      'Применить промо заново — trxpromo_apply; узнать комиссии — trxpromo_get_commissions (read-only).',
+      '⚠️ Cancels active and scheduled transactional promo for listings (trxpromo_cancel). Reverts the effect of trxpromo_apply — the promotion and its associated commission stop applying. ' +
+      'The response includes a success flag per listing, and on error a code 1001 (validation) or 1002 (promo unavailable). ' +
+      'Apply promo again with trxpromo_apply; check commissions with trxpromo_get_commissions (read-only).',
     method: 'POST',
     path: '/trx-promo/1/cancel',
     domain: 'trx-promo',
@@ -73,7 +73,7 @@ export const register: DomainRegister = (server, ctx) => {
       itemIDs: z
         .array(z.number().int().positive())
         .min(1)
-        .describe('Массив ID объявлений на Авито, для которых отменяется действующее и запланированное промо.'),
+        .describe('Array of Avito listing IDs for which active and scheduled promo is canceled.'),
     },
     body: { contentType: 'application/json', fields: ['itemIDs'] },
   });

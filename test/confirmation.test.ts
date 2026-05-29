@@ -211,7 +211,7 @@ describe('confirmation flow', () => {
       arguments: { confirmation_id: id },
     });
     expect(again.isError).toBe(true);
-    expect(parseText(again.content)).toMatch(/не найден/);
+    expect(parseText(again.content)).toMatch(/not found/);
     await rig.client.close();
   });
 
@@ -230,7 +230,7 @@ describe('confirmation flow', () => {
       arguments: { confirmation_id: id },
     });
     expect(cancelled.isError).not.toBe(true);
-    expect(parseText(cancelled.content)).toMatch(/отменён/);
+    expect(parseText(cancelled.content)).toMatch(/cancelled/);
     expect(rig.fetchMock.mock.calls.length).toBe(fetchCallsBefore);
 
     // Re-cancel returns informational, not isError
@@ -260,7 +260,7 @@ describe('confirmation flow', () => {
       arguments: { confirmation_id: id },
     });
     expect(r.isError).toBe(true);
-    expect(parseText(r.content)).toMatch(/не найден|истёк/);
+    expect(parseText(r.content)).toMatch(/not found|expired/);
     await rig.client.close();
   });
 

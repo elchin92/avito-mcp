@@ -7,23 +7,23 @@ export type PolicyDecision =
   | { allowed: false; reason: string };
 
 /**
- * Решает, должен ли tool с заданным risk быть зарегистрирован для текущего сервера.
+ * Decides whether a tool with the given risk should be registered for the current server.
  *
- * Порядок проверки (соответствует контракту v0.4.0):
- *   1. `sensitive` — auth-tools и т.п. скрыты по default. Включаются только
- *      через AVITO_MCP_EXPOSE_AUTH_TOOLS=1. Сразу выходим если нет opt-in.
- *   2. `denyTools` — deny всегда сильнее allow.
- *   3. `allowTools` — если список не пуст и имени там нет, отказ.
+ * Evaluation order (matches the v0.4.0 contract):
+ *   1. `sensitive` — auth tools and similar are hidden by default. They are enabled
+ *      only via AVITO_MCP_EXPOSE_AUTH_TOOLS=1. Return immediately if there is no opt-in.
+ *   2. `denyTools` — deny always wins over allow.
+ *   3. `allowTools` — if the list is non-empty and the name is not in it, reject.
  *   4. `mode`:
- *      - `read_only`   → разрешает только risk='read' (sensitive уже отсеян выше)
- *      - `guarded`     → разрешает 'read' и 'write'; блокирует 'money' и 'public'
- *      - `full_access` → разрешает всё (default)
+ *      - `read_only`   → allows only risk='read' (sensitive already filtered out above)
+ *      - `guarded`     → allows 'read' and 'write'; blocks 'money' and 'public'
+ *      - `full_access` → allows everything (default)
  *
- * Скрытие выполняется на этапе регистрации tool (в `defineTool` и для
- * custom-tools через `server.registerTool`). Заблокированный tool агент не видит
- * в `tools/list` — это сильнее чем runtime-блокировка.
+ * Hiding happens at the tool registration stage (in `defineTool` and, for
+ * custom tools, via `server.registerTool`). A blocked tool is not visible to the
+ * agent in `tools/list` — this is stronger than a runtime block.
  *
- * Confirmation flow — отдельный слой поверх этой policy, в `tool-factory.ts`.
+ * The confirmation flow is a separate layer on top of this policy, in `tool-factory.ts`.
  */
 export function evaluatePolicy(
   toolName: string,
@@ -52,9 +52,9 @@ export function evaluatePolicy(
 }
 
 /**
- * Решает, требует ли tool с заданным risk подтверждения через meta_confirm_action.
- * Применяется на runtime (после policy pass). Sensitive не требует — оно уже под
- * жёстким opt-in, дополнительный confirm там не имеет смысла.
+ * Decides whether a tool with the given risk requires confirmation via meta_confirm_action.
+ * Applied at runtime (after the policy pass). Sensitive does not require it — it is already
+ * behind a strict opt-in, so an additional confirm there makes no sense.
  */
 export function requiresConfirmation(risk: ToolRisk, cfg: Config): boolean {
   if (cfg.confirmationMode === 'off') return false;
@@ -66,8 +66,8 @@ export function requiresConfirmation(risk: ToolRisk, cfg: Config): boolean {
 }
 
 /**
- * Логирует один раз при старте — пользователь видит какие tools были скрыты политикой.
- * Принимает массив скрытых имён + риски — печатает компактно по группам.
+ * Logs once at startup — the user sees which tools were hidden by the policy.
+ * Takes an array of hidden names + risks and prints them compactly, grouped.
  */
 export function logHiddenTools(hidden: Array<{ name: string; risk: ToolRisk; reason: string }>): void {
   if (hidden.length === 0) return;

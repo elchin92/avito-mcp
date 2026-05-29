@@ -14,18 +14,18 @@ export type BodyContentType =
 
 export interface RequestOptions {
   method: HttpMethod;
-  /** Шаблон пути с {placeholders}, например "/core/v1/accounts/{user_id}/balance/" */
+  /** Path template with {placeholders}, e.g. "/core/v1/accounts/{user_id}/balance/" */
   path: string;
   pathParams?: Record<string, Primitive>;
   query?: Record<string, QueryValue>;
-  /** Тело — объект (для JSON / multipart) или string (для уже сериализованного body). */
+  /** Body — an object (for JSON / multipart) or a string (for an already serialized body). */
   body?: unknown;
   bodyContentType?: BodyContentType;
-  /** Если false — Authorization header не добавляется. Для /token и autoload-public. */
+  /** If false, the Authorization header is not added. Used for /token and autoload-public. */
   auth?: boolean;
-  /** Логическое имя для rate-limiter (по умолчанию — первый сегмент пути). */
+  /** Logical name for the rate-limiter (defaults to the first path segment). */
   domain?: string;
-  /** Таймаут запроса. По умолчанию 30 сек. */
+  /** Request timeout. Defaults to 30 seconds. */
   timeoutMs?: number;
 }
 
@@ -36,21 +36,21 @@ export interface RequestResponse<T = unknown> {
 }
 
 /**
- * Тело, принимаемое нативным fetch в Node 22+ — не экспортируется @types/node как FetchBody.
- * Покрывает все используемые в проекте сериализации.
+ * Body accepted by the native fetch in Node 22+ — not exported by @types/node as FetchBody.
+ * Covers all serializations used in the project.
  */
 type FetchBody = string | URLSearchParams | FormData | Uint8Array | Blob | null;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface RetryConfig {
-  /** Базовый backoff для 429 в миллисекундах. Реальный backoff = base * 2^retry. */
+  /** Base backoff for 429 in milliseconds. Effective backoff = base * 2^retry. */
   retry429BaseMs: number;
-  /** Максимальное число retry на 429. */
+  /** Maximum number of retries on 429. */
   max429Retries: number;
-  /** Backoff для одного 5xx retry в миллисекундах. */
+  /** Backoff for a single 5xx retry in milliseconds. */
   retry5xxBackoffMs: number;
-  /** Максимальное число retry на 5xx. */
+  /** Maximum number of retries on 5xx. */
   max5xxRetries: number;
 }
 
@@ -117,7 +117,7 @@ export class AvitoClient {
 
     this.rateLimiter.observe(reqInfo.domain ?? 'default', resp.headers);
 
-    // 401: один автоматический refresh + повторный запрос
+    // 401: one automatic refresh + a single retry
     if (resp.status === 401 && allowRefresh && opts.auth !== false) {
       logger.info({ url }, '401 from avito, refreshing token and retrying once');
       await this.tokenStore.invalidate();
@@ -125,7 +125,7 @@ export class AvitoClient {
       return this.doRequest<T>(opts, url, reqInfo, false, retries429, retries5xx);
     }
 
-    // 429: экспоненциальный backoff
+    // 429: exponential backoff
     if (resp.status === 429 && retries429 < this.retry.max429Retries) {
       const retryAfterSec = parseRetryAfterSec(resp.headers.get('retry-after'));
       const backoffMs =
@@ -137,14 +137,14 @@ export class AvitoClient {
       return this.doRequest<T>(opts, url, reqInfo, allowRefresh, retries429 + 1, retries5xx);
     }
 
-    // 5xx: один retry
+    // 5xx: a single retry
     if (resp.status >= 500 && resp.status < 600 && retries5xx < this.retry.max5xxRetries) {
       logger.warn({ url, status: resp.status }, '5xx from avito, retrying once');
       await sleep(this.retry.retry5xxBackoffMs);
       return this.doRequest<T>(opts, url, reqInfo, allowRefresh, retries429, retries5xx + 1);
     }
 
-    // Парсим body — для бинарей применяется лимит из config.maxBinaryMb.
+    // Parse the body — the limit from config.maxBinaryMb applies to binaries.
     const maxBinaryBytes = (this.config.maxBinaryMb ?? 20) * 1024 * 1024;
     const data = await safeParseResponse<T>(resp, maxBinaryBytes);
 
@@ -193,7 +193,7 @@ export class AvitoClient {
       return { headers, body: params.toString() };
     }
     if (contentType === 'multipart/form-data') {
-      // browser/node fetch сам выставит boundary; Content-Type НЕ ставим вручную
+      // browser/node fetch sets the boundary itself; do NOT set Content-Type manually
       const form = opts.body instanceof FormData ? opts.body : objectToFormData(opts.body);
       return { headers, body: form };
     }
@@ -201,8 +201,8 @@ export class AvitoClient {
   }
 
   /**
-   * OAuth 2.0 client_credentials. Эта же ручка — endpoint POST /token.
-   * Делаем без auth-токена (его как раз нет), напрямую через fetch.
+   * OAuth 2.0 client_credentials. The same handler backs the POST /token endpoint.
+   * Done without an auth token (we don't have one yet), directly via fetch.
    */
   private async fetchTokenViaClientCredentials(): Promise<{
     accessToken: string;
@@ -267,9 +267,9 @@ interface TokenResponse {
 }
 
 /**
- * Структурированный binary-ответ от Avito (PDF labels, audio recordings и т.п.).
- * Превращается в строку через formatResponse — агент видит mime/size и base64,
- * может сохранить байты в файл через свой клиент.
+ * Structured binary response from Avito (PDF labels, audio recordings, etc.).
+ * Turned into a string via formatResponse — the agent sees mime/size and base64,
+ * and can save the bytes to a file through its own client.
  */
 export interface BinaryResponse {
   __binary: true;
@@ -285,7 +285,7 @@ function isBinaryContent(ct: string): boolean {
   if (lower.startsWith('text/')) return false;
   if (lower.includes('application/xml') || lower.includes('+xml')) return false;
   if (lower.includes('application/x-www-form-urlencoded')) return false;
-  // Всё остальное (application/pdf, audio/*, image/*, application/octet-stream, ...) — бинарь.
+  // Everything else (application/pdf, audio/*, image/*, application/octet-stream, ...) is binary.
   return true;
 }
 
@@ -295,12 +295,12 @@ async function safeParseResponse<T>(
 ): Promise<T | string | BinaryResponse | null> {
   const ct = resp.headers.get('content-type') ?? '';
   if (isBinaryContent(ct)) {
-    // v0.5.1: fail-closed на размере. Сначала проверяем заявленный Content-Length,
-    // если есть. Так мы избегаем чтения мегабайт в память впустую.
+    // v0.5.1: fail-closed on size. First check the declared Content-Length,
+    // if present. This avoids reading megabytes into memory for nothing.
     const cl = resp.headers.get('content-length');
     const declared = cl ? Number.parseInt(cl, 10) : NaN;
     if (Number.isFinite(declared) && declared > maxBinaryBytes) {
-      // drain body чтобы не висел socket
+      // drain the body so the socket does not hang
       try { await resp.arrayBuffer(); } catch { /* ignore */ }
       throw new Error(
         `Binary response too large: Content-Length=${declared} bytes > AVITO_MCP_MAX_BINARY_MB limit (${maxBinaryBytes} bytes). ` +

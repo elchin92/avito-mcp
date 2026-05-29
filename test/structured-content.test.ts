@@ -1,8 +1,8 @@
 /**
- * Тесты structuredContent (MCP 2025-11-25) на уровне tool-factory.
+ * structuredContent tests (MCP 2025-11-25) at the tool-factory level.
  *
- * Проверяем: tools возвращают content[].text как раньше + structuredContent с тем же
- * payload-ом для клиентов умеющих парсить. Включаем case'ы object/array/binary/error.
+ * Verify that tools still return content[].text as before, plus structuredContent with the
+ * same payload for clients capable of parsing it. Covers the object/array/binary/error cases.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -166,8 +166,8 @@ describe('structuredContent', () => {
     };
     const res = await client.callTool({ name: 'echo', arguments: {} });
     expect(res.isError).toBe(true);
-    // v0.7.0: structuredContent.error — формальный envelope.
-    // error_kind остаётся для backwards-compat с v0.6.0 consumers.
+    // v0.7.0: structuredContent.error is the formal envelope.
+    // error_kind remains for backwards-compat with v0.6.0 consumers.
     expect(res.structuredContent).toMatchObject({
       error: {
         type: 'AVITO_BAD_REQUEST',

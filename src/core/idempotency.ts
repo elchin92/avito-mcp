@@ -1,19 +1,19 @@
 /**
- * Idempotency ledger (v0.7.0). Опционально защищает destructive tools
- * (risk='write' | 'money' | 'public') от повторного выполнения после retry / crash /
- * race condition между несколькими агентами.
+ * Idempotency ledger (v0.7.0). Optionally protects destructive tools
+ * (risk='write' | 'money' | 'public') from re-execution after a retry / crash /
+ * race condition between multiple agents.
  *
- * Контракт:
- *   - Агент передаёт `idempotencyKey: string` в args
- *   - На первый вызов: tool выполняется, результат запоминается под (key, hash)
- *   - На повторный вызов с тем же key и теми же args в течение TTL:
- *     возвращается закешированный результат с пометкой `idempotent_replay: true`
- *   - На повторный вызов с тем же key но другими args: ConflictError → агент видит
- *     понятную ошибку и не получит "тот же результат для разных args"
+ * Contract:
+ *   - The agent passes `idempotencyKey: string` in args
+ *   - On the first call: the tool runs, and the result is remembered under (key, hash)
+ *   - On a repeated call with the same key and the same args within the TTL:
+ *     the cached result is returned, flagged with `idempotent_replay: true`
+ *   - On a repeated call with the same key but different args: ConflictError → the agent
+ *     sees a clear error and does not get "the same result for different args"
  *
- * Конструкция намеренно in-memory. Persistent / shared backends (file, Redis, etc.)
- * — за пределами универсального пакета: разные пользователи захотят разные. Документируем
- * как extension point.
+ * The design is intentionally in-memory. Persistent / shared backends (file, Redis, etc.)
+ * are out of scope for a general-purpose package: different users will want different ones.
+ * We document this as an extension point.
  */
 import { createHash } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -43,9 +43,9 @@ export class IdempotencyStore {
   constructor(private readonly ttlMs: number) {}
 
   /**
-   * Если запись по `key` существует и она для того же tool+args — возвращает её.
-   * Если для других args — бросает IdempotencyConflictError.
-   * Если нет — возвращает undefined (caller должен выполнить tool и записать).
+   * If an entry for `key` exists and it is for the same tool+args, returns it.
+   * If it is for different args, throws IdempotencyConflictError.
+   * If none exists, returns undefined (the caller must run the tool and record it).
    */
   lookup(key: string, toolName: string, argsHash: string): IdempotencyEntry | undefined {
     this.cleanupExpired();
@@ -58,8 +58,8 @@ export class IdempotencyStore {
   }
 
   /**
-   * Сохраняет результат под (toolName, key). Перезаписывает истекшие записи.
-   * Возвращает свежую запись.
+   * Stores the result under (toolName, key). Overwrites expired entries.
+   * Returns the fresh entry.
    */
   remember(
     key: string,
@@ -85,7 +85,7 @@ export class IdempotencyStore {
     return this.entries.size;
   }
 
-  /** Для тестов / meta_*. */
+  /** For tests / meta_*. */
   list(): Array<Omit<IdempotencyEntry, 'result'>> {
     this.cleanupExpired();
     return [...this.entries.values()].map(({ result: _result, ...rest }) => rest);
@@ -104,9 +104,9 @@ export class IdempotencyStore {
 }
 
 /**
- * Стабильный hash аргументов. JSON.stringify не гарантирует порядок ключей,
- * поэтому сортируем рекурсивно. Используется только для сравнения "те же args или нет",
- * не для криптографии — sha256 здесь — это просто короткое стабильное представление.
+ * Stable hash of the arguments. JSON.stringify does not guarantee key order,
+ * so we sort recursively. Used only to compare "same args or not",
+ * not for cryptography — sha256 here is just a short, stable representation.
  */
 export function hashArgs(args: Record<string, unknown>): string {
   return createHash('sha256').update(stableStringify(args)).digest('hex');

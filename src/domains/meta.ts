@@ -1,13 +1,13 @@
 /**
- * Мета-tools — не относятся к swagger, нужны для observability и safety самого MCP-сервера.
+ * Meta tools — not part of swagger; they provide observability and safety for the MCP server itself.
  *
  * v0.6.x: rate-limits + confirmation flow.
- * v0.7.0: добавлены health / auth_status / capabilities со строгим outputSchema —
- *         универсальные диагностические tools, полезные любому MCP-клиенту.
+ * v0.7.0: added health / auth_status / capabilities with a strict outputSchema —
+ *         universal diagnostic tools useful to any MCP client.
  *
- * Confirmation tools регистрируются только когда AVITO_MCP_CONFIRMATION_MODE != 'off'.
- * Все meta_* — local environment, без обращения к Avito API (кроме auth_status,
- * который опционально пробует ping через client_credentials refresh).
+ * Confirmation tools are registered only when AVITO_MCP_CONFIRMATION_MODE != 'off'.
+ * All meta_* tools run in the local environment, without calling the Avito API (except auth_status,
+ * which optionally attempts a ping via a client_credentials refresh).
  */
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { timingSafeEqual } from 'node:crypto';
@@ -42,11 +42,11 @@ export const register: DomainRegister = (server, ctx) => {
     server.registerTool(
       'meta_get_rate_limits',
       {
-        title: 'Состояние rate-limits',
+        title: 'Rate-limit status',
         description:
-          'Возвращает последние увиденные значения X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset, ' +
-          'сгруппированные по логическим доменам API (core, messenger, items и т.д.). ' +
-          'Полезно для диагностики "почему меня троттлят" — Avito выставляет лимит на минуту.',
+          'Returns the most recently observed X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset values, ' +
+          'grouped by logical API domain (core, messenger, items, etc.). ' +
+          'Useful for diagnosing "why am I being throttled" — Avito enforces a per-minute limit.',
         inputSchema: {},
         annotations: {
           readOnlyHint: true,
@@ -61,7 +61,7 @@ export const register: DomainRegister = (server, ctx) => {
         if (snaps.length === 0) {
           return {
             content: [
-              { type: 'text', text: 'Нет данных: ни одного запроса к Avito ещё не сделано.' },
+              { type: 'text', text: 'No data: no requests to Avito have been made yet.' },
             ],
             structuredContent: { snapshots: [], count: 0 },
           };
@@ -81,11 +81,11 @@ export const register: DomainRegister = (server, ctx) => {
     server.registerTool(
       'meta_health',
       {
-        title: 'Health: общее состояние сервера',
+        title: 'Health: overall server status',
         description:
-          'Универсальный health-check: версия пакета, активные capabilities, состояние ' +
-          'rate-limits, idempotency ledger size, pending actions count, dryRun-default. ' +
-          'Не дёргает Avito API. Безопасно вызывать сколько угодно.',
+          'Universal health-check: package version, active capabilities, rate-limit ' +
+          'status, idempotency ledger size, pending actions count, dryRun default. ' +
+          'Does not call the Avito API. Safe to call as often as you like.',
         inputSchema: {},
         annotations: {
           readOnlyHint: true,
@@ -166,18 +166,18 @@ export const register: DomainRegister = (server, ctx) => {
     server.registerTool(
       'meta_auth_status',
       {
-        title: 'Auth: состояние OAuth-токена (без секретов)',
+        title: 'Auth: OAuth token status (no secrets)',
         description:
-          'Сообщает только МЕТАДАННЫЕ токена: present/absent, expiresInSec, последняя ошибка ' +
-          'refresh. Сам токен НИКОГДА не отдаётся — для этого используйте auth_* tools под ' +
-          'AVITO_MCP_EXPOSE_AUTH_TOOLS=1 (скрыты по default). По умолчанию не вынуждает refresh — ' +
-          'если probe=true, попытается getToken() (это может вызвать refresh).',
+          'Reports only token METADATA: present/absent, expiresInSec, last refresh ' +
+          'error. The token itself is NEVER returned — for that use the auth_* tools under ' +
+          'AVITO_MCP_EXPOSE_AUTH_TOOLS=1 (hidden by default). By default it does not force a refresh — ' +
+          'if probe=true, it will attempt getToken() (which may trigger a refresh).',
         inputSchema: {
           probe: z
             .boolean()
             .optional()
             .describe(
-              'Если true — попробовать getToken(), что может вызвать refresh при истёкшем токене. Default false.',
+              'If true, attempt getToken(), which may trigger a refresh when the token has expired. Default false.',
             ),
         },
         annotations: {
@@ -198,8 +198,8 @@ export const register: DomainRegister = (server, ctx) => {
       },
       async (args): Promise<CallToolResult> => {
         const configured = !!ctx.config.clientId && !!ctx.config.clientSecret;
-        // tokenStore.cache — internal; используем тонкий путь: getToken() возвращает строку,
-        // но мы не должны её отдавать наружу. Поэтому только метаданные через приватный пробник.
+        // tokenStore.cache is internal; we take the thin path: getToken() returns a string,
+        // but we must not expose it. So we only surface metadata via a private probe.
         let probeOk: boolean | null = null;
         let lastError: string | null = null;
         let expiresInSec: number | null = null;
@@ -212,7 +212,7 @@ export const register: DomainRegister = (server, ctx) => {
             lastError = err instanceof Error ? err.message : String(err);
           }
         }
-        // Читаем файл напрямую — токен сам в выходе НЕ показываем, только expiresAt.
+        // Read the file directly — we do NOT include the token itself in the output, only expiresAt.
         try {
           const fs = await import('node:fs/promises');
           const raw = await fs.readFile(ctx.config.tokenFile, 'utf8');
@@ -221,7 +221,7 @@ export const register: DomainRegister = (server, ctx) => {
             expiresInSec = Math.max(0, Math.floor((parsed.expiresAt - Date.now()) / 1000));
           }
         } catch {
-          /* нет файла — токен ещё не получен */
+          /* no file — the token has not been obtained yet */
         }
         const payload = {
           configured,
@@ -251,11 +251,11 @@ export const register: DomainRegister = (server, ctx) => {
     server.registerTool(
       'meta_capabilities',
       {
-        title: 'Capabilities: что включено в этом запуске',
+        title: 'Capabilities: what is enabled in this run',
         description:
-          'Возвращает машинно-читаемое описание текущей конфигурации: режим, allow/deny lists, ' +
-          'confirmation, dry-run, idempotency, доступ к локальным файлам. Полезно агенту чтобы ' +
-          'понять, какие операции принципиально доступны до того как пробовать вызывать tools.',
+          'Returns a machine-readable description of the current configuration: mode, allow/deny lists, ' +
+          'confirmation, dry-run, idempotency, local file access. Useful for an agent to ' +
+          'understand which operations are fundamentally available before attempting to call tools.',
         inputSchema: {},
         annotations: {
           readOnlyHint: true,
@@ -315,9 +315,9 @@ export const register: DomainRegister = (server, ctx) => {
     );
   }
 
-  // Confirmation tools регистрируются только если confirmation flow включён.
-  // Это и проще для агента (нет посторонних tools когда они бессмысленны),
-  // и снижает surface когда confirmation выключен сознательно.
+  // Confirmation tools are registered only when the confirmation flow is enabled.
+  // This is both simpler for the agent (no extraneous tools when they are meaningless)
+  // and reduces surface area when confirmation is deliberately turned off.
   if (ctx.config.confirmationMode === 'off') {
     logger.info(
       { confirmationMode: 'off' },
@@ -326,15 +326,15 @@ export const register: DomainRegister = (server, ctx) => {
     return;
   }
 
-  // v0.5.1: каждый confirmation tool ОТДЕЛЬНО проходит через evaluatePolicy.
-  // До v0.5.0 они проскакивали мимо allow/deny — это нарушало контракт.
-  // Теперь allowlist/denylist полностью охватывает реестр.
+  // v0.5.1: each confirmation tool passes through evaluatePolicy SEPARATELY.
+  // Before v0.5.0 they slipped past allow/deny — this violated the contract.
+  // Now the allowlist/denylist fully covers the registry.
   const confirmDecision = evaluatePolicy('meta_confirm_action', 'write', ctx.config);
   const cancelDecision = evaluatePolicy('meta_cancel_action', 'write', ctx.config);
   const listDecision = evaluatePolicy('meta_list_pending_actions', 'read', ctx.config);
 
-  // DX warning: если confirmation включён, money/public tools будут возвращать pending,
-  // но если meta_confirm_action заблокирован — pending некому подтвердить.
+  // DX warning: if confirmation is enabled, money/public tools will return pending,
+  // but if meta_confirm_action is blocked, there is no one to confirm the pending action.
   if (!confirmDecision.allowed) {
     logger.warn(
       { reason: confirmDecision.reason, confirmationMode: ctx.config.confirmationMode },
@@ -350,30 +350,30 @@ export const register: DomainRegister = (server, ctx) => {
   if (confirmDecision.allowed) server.registerTool(
     'meta_confirm_action',
     {
-      title: '✓ Подтвердить отложенное действие',
+      title: '✓ Confirm a pending action',
       description:
-        '⚠️ Выполняет ранее отложенное действие по его confirmation_id. ' +
-        'Применять ТОЛЬКО после явного подтверждения человеком — flow задуман как server-side ' +
-        'two-step guard от случайного one-shot выполнения, не как криптографическая защита ' +
-        'от автономного агента. Confirmation одноразовый: после успешного вызова id удаляется. ' +
+        '⚠️ Executes a previously deferred action by its confirmation_id. ' +
+        'Use ONLY after explicit human confirmation — the flow is designed as a server-side ' +
+        'two-step guard against accidental one-shot execution, not as cryptographic protection ' +
+        'against an autonomous agent. Confirmation is single-use: the id is deleted after a successful call. ' +
         (requireSecret
-          ? 'AVITO_MCP_CONFIRMATION_SECRET задан: дополнительно нужен параметр confirmation_secret ' +
-            '(сравнивается constant-time). Без него подтверждение отклоняется. Это hard-confirmation ' +
-            '— секрет генерируется и хранится у человека, агент его получить не может.'
-          : 'AVITO_MCP_CONFIRMATION_SECRET не задан — работает soft-confirmation. ' +
-            'Установите env-переменную чтобы перейти на hard-confirmation.'),
+          ? 'AVITO_MCP_CONFIRMATION_SECRET is set: a confirmation_secret parameter is additionally required ' +
+            '(compared constant-time). Without it the confirmation is rejected. This is hard-confirmation ' +
+            '— the secret is generated and kept by a human, and the agent cannot obtain it.'
+          : 'AVITO_MCP_CONFIRMATION_SECRET is not set — soft-confirmation is in effect. ' +
+            'Set the env variable to switch to hard-confirmation.'),
       inputSchema: {
         confirmation_id: z
           .string()
           .min(16)
-          .describe('ID отложенного действия (возвращается полем confirmation_id при первом вызове tool).'),
+          .describe('ID of the pending action (returned in the confirmation_id field on the first tool call).'),
         confirmation_secret: z
           .string()
           .optional()
           .describe(
             requireSecret
-              ? 'Обязательное значение AVITO_MCP_CONFIRMATION_SECRET (вводится человеком).'
-              : 'Не используется когда AVITO_MCP_CONFIRMATION_SECRET не задан.',
+              ? 'The required AVITO_MCP_CONFIRMATION_SECRET value (entered by a human).'
+              : 'Not used when AVITO_MCP_CONFIRMATION_SECRET is not set.',
           ),
       },
       annotations: {
@@ -387,7 +387,7 @@ export const register: DomainRegister = (server, ctx) => {
     async (args): Promise<CallToolResult> => {
       const id = String(args.confirmation_id ?? '');
 
-      // Hard-confirmation: проверка секрета ДО любых других действий.
+      // Hard-confirmation: verify the secret BEFORE any other action.
       if (requireSecret) {
         const provided = typeof args.confirmation_secret === 'string' ? args.confirmation_secret : '';
         if (!provided || !secretsMatch(provided, ctx.config.confirmationSecret!)) {
@@ -417,12 +417,12 @@ export const register: DomainRegister = (server, ctx) => {
           content: [
             {
               type: 'text',
-              text: `Confirmation '${id}' не найден. Возможные причины: id невалиден, истёк TTL (${ctx.config.confirmationTtlSec}s), уже подтверждён или отменён.`,
+              text: `Confirmation '${id}' not found. Possible causes: invalid id, expired TTL (${ctx.config.confirmationTtlSec}s), or already confirmed or cancelled.`,
             },
           ],
         };
       }
-      // Re-evaluate policy — пользователь мог поменять конфиг между create и confirm.
+      // Re-evaluate policy — the user may have changed the config between create and confirm.
       const decision = evaluatePolicy(pending.toolName, pending.risk, ctx.config);
       if (!decision.allowed) {
         ctx.pendingStore.delete(id);
@@ -431,12 +431,12 @@ export const register: DomainRegister = (server, ctx) => {
           content: [
             {
               type: 'text',
-              text: `Tool '${pending.toolName}' больше не разрешён политикой: ${decision.reason}. Pending удалён.`,
+              text: `Tool '${pending.toolName}' is no longer allowed by policy: ${decision.reason}. Pending action deleted.`,
             },
           ],
         };
       }
-      // One-time use: удаляем ДО выполнения, чтобы повторный confirm даже при race не сработал.
+      // One-time use: delete BEFORE executing, so a repeated confirm cannot succeed even on a race.
       ctx.pendingStore.delete(id);
       logger.info(
         {
@@ -463,14 +463,14 @@ export const register: DomainRegister = (server, ctx) => {
   if (cancelDecision.allowed) server.registerTool(
     'meta_cancel_action',
     {
-      title: '✗ Отменить отложенное действие',
+      title: '✗ Cancel a pending action',
       description:
-        'Отменяет ранее отложенное действие. После cancel confirmation_id перестаёт быть валидным.',
+        'Cancels a previously deferred action. After cancellation the confirmation_id is no longer valid.',
       inputSchema: {
         confirmation_id: z
           .string()
           .min(16)
-          .describe('ID отложенного действия для отмены.'),
+          .describe('ID of the pending action to cancel.'),
       },
       annotations: {
         readOnlyHint: false,
@@ -488,8 +488,8 @@ export const register: DomainRegister = (server, ctx) => {
           {
             type: 'text',
             text: existed
-              ? `Pending action '${id}' отменён.`
-              : `Pending action '${id}' не найден (возможно, уже истёк, был подтверждён или отменён).`,
+              ? `Pending action '${id}' cancelled.`
+              : `Pending action '${id}' not found (it may have already expired, been confirmed, or been cancelled).`,
           },
         ],
         structuredContent: { confirmation_id: id, cancelled: existed },
@@ -509,11 +509,11 @@ export const register: DomainRegister = (server, ctx) => {
   if (listDecision.allowed) server.registerTool(
     'meta_list_pending_actions',
     {
-      title: 'Pending actions: список',
+      title: 'Pending actions: list',
       description:
-        'Список текущих pending actions, ожидающих подтверждения. Args не показываются — ' +
-        'только tool name, risk, краткое summary, времена создания и истечения. ' +
-        'Используйте для диагностики "что я только что попросил подтвердить".',
+        'Lists the current pending actions awaiting confirmation. Args are not shown — ' +
+        'only tool name, risk, a brief summary, and the creation and expiration times. ' +
+        'Use it to diagnose "what did I just ask to confirm".',
       inputSchema: {},
       annotations: {
         readOnlyHint: true,
@@ -527,7 +527,7 @@ export const register: DomainRegister = (server, ctx) => {
       const items = ctx.pendingStore.list();
       if (items.length === 0) {
         return {
-          content: [{ type: 'text', text: 'Нет pending actions.' }],
+          content: [{ type: 'text', text: 'No pending actions.' }],
           structuredContent: { pending: [], count: 0, confirmation_mode: ctx.config.confirmationMode },
         };
       }
@@ -538,12 +538,12 @@ export const register: DomainRegister = (server, ctx) => {
         summary: a.summary,
         created_at: new Date(a.createdAt).toISOString(),
         expires_at: new Date(a.expiresAt).toISOString(),
-        // Не: args, потому что они могут содержать item_id, message_id, цены и т.п. в нежелательном объёме
-        // Не: execute, потому что это closure
+        // Not: args, because they may contain item_id, message_id, prices, etc. in an undesirable amount
+        // Not: execute, because it is a closure
       }));
       const requiresHint =
         `\n\nConfirmation mode = ${ctx.config.confirmationMode}. ` +
-        `Требуют confirmation в этом режиме: ` +
+        `Require confirmation in this mode: ` +
         (requiresConfirmation('money', ctx.config) ? 'money ' : '') +
         (requiresConfirmation('public', ctx.config) ? 'public ' : '') +
         (requiresConfirmation('write', ctx.config) ? 'write ' : '');

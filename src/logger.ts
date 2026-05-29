@@ -2,22 +2,22 @@ import pino from 'pino';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 /**
- * pino logger пишет в stderr (fd=2). stdio-transport MCP занимает stdout под JSON-RPC,
- * любая запись в stdout сломает протокол. Все логи — только stderr.
+ * The pino logger writes to stderr (fd=2). The MCP stdio transport uses stdout for JSON-RPC,
+ * so any write to stdout would break the protocol. All logs go to stderr only.
  *
- * v0.6.0: после старта сервера вызывается bindMcpLogger(server), чтобы те же события
- * параллельно уходили клиенту как `notifications/message` (MCP logging). Клиент может
- * фильтровать через `logging/setLevel`. pino-output в stderr остаётся как было — для
- * локальной отладки и для случая когда клиент не поддерживает logging.
+ * v0.6.0: after the server starts, bindMcpLogger(server) is called so that the same events
+ * are also delivered to the client as `notifications/message` (MCP logging). The client can
+ * filter them via `logging/setLevel`. The pino output to stderr stays as it was — for
+ * local debugging and for cases where the client does not support logging.
  */
 /**
- * v0.7.0: pino redact paths. Defence-in-depth — текущий код намеренно не логирует
- * headers / token. Но если в будущем кто-то случайно сделает logger.info({ headers })
- * или прокинет полный Response через err.cause, мы хотим, чтобы любое поле с
- * чувствительным именем заменилось на '[redacted]' до сериализации.
+ * v0.7.0: pino redact paths. Defence-in-depth — the current code intentionally does not log
+ * headers / tokens. But if someone in the future accidentally does logger.info({ headers })
+ * or passes a full Response through err.cause, we want any field with a
+ * sensitive name to be replaced with '[redacted]' before serialization.
  *
- * Пути с '*.' матчат на любом уровне вложенности. Если pino не найдёт path —
- * молча игнорирует. Можно расширять смело.
+ * Paths starting with '*.' match at any nesting level. If pino does not find a path,
+ * it silently ignores it. Feel free to extend this list.
  */
 const REDACT_PATHS = [
   '*.Authorization',
@@ -43,14 +43,14 @@ export const logger = pino(
     redact: {
       paths: REDACT_PATHS,
       censor: '[redacted]',
-      // remove: false (default) — оставляем ключи как есть, только censor значение,
-      // чтобы по присутствию ключа в логе всё ещё можно было понять "был ли Authorization"
+      // remove: false (default) — we keep the keys as is and only censor the value,
+      // so the presence of a key in the log still tells us "was Authorization present"
     },
   },
   pino.destination(2),
 );
 
-/** MCP logging severities (RFC-5424). Pino → MCP отображение. */
+/** MCP logging severities (RFC-5424). Pino → MCP mapping. */
 const PINO_TO_MCP: Record<string, 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical'> = {
   trace: 'debug',
   debug: 'debug',
@@ -69,12 +69,12 @@ interface PinoLogEvent {
 }
 
 /**
- * Подключает зеркалирование pino → MCP. Должно быть вызвано ПОСЛЕ server.connect(),
- * иначе sendLoggingMessage сразу упадёт ("not connected").
+ * Wires up pino → MCP mirroring. Must be called AFTER server.connect(),
+ * otherwise sendLoggingMessage fails immediately ("not connected").
  *
- * Используем pino.multistream через rewriting — pino поддерживает hooks
- * (`logMethod`), но проще: ставим тонкий wrapper поверх level-методов logger-а.
- * Сохраняем lazy: если server отсутствует, не ломаемся.
+ * We use pino.multistream via rewriting — pino supports hooks
+ * (`logMethod`), but it is simpler to put a thin wrapper over the logger's level methods.
+ * We keep it lazy: if the server is absent, we do not break.
  */
 export function bindMcpLogger(server: McpServer): void {
   const pinoLevels = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] as const;
@@ -83,8 +83,8 @@ export function bindMcpLogger(server: McpServer): void {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (logger as any)[lvl] = (...args: unknown[]): void => {
       original(...(args as Parameters<typeof original>));
-      // Извлекаем данные для MCP отдельно — формат args у pino:
-      //   logger.info({obj}, 'msg', ...rest) ИЛИ logger.info('msg', ...rest)
+      // Extract data for MCP separately — pino's args format is:
+      //   logger.info({obj}, 'msg', ...rest) OR logger.info('msg', ...rest)
       let data: Record<string, unknown> | undefined;
       let msg: string | undefined;
       if (args.length === 0) return;
@@ -108,7 +108,7 @@ export function bindMcpLogger(server: McpServer): void {
           data: payload,
         })
         .catch(() => {
-          // Клиент мог не объявить logging capability — это норм, не ломаемся.
+          // The client may not have declared the logging capability — that's fine, we don't break.
         });
     };
   }

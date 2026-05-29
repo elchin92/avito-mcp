@@ -1,45 +1,45 @@
 /**
- * Домен `promotion` — swaggers/Продвижение.json (7 endpoints).
- * BBIP = "большой бюджет интегрированного продвижения" — комплексные услуги Avito.
+ * Domain `promotion` — swaggers/Продвижение.json (7 endpoints).
+ * BBIP = "big budget integrated promotion" — Avito's bundled promotion services.
  *
- * ⚠️ Write: create_bbip_order — РЕАЛЬНАЯ ПОКУПКА продвижения, тратит деньги с баланса.
+ * ⚠️ Write: create_bbip_order — a REAL PURCHASE of promotion that spends money from the balance.
  */
 import { z } from 'zod';
 
 import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 
-// Реальный контракт Avito BBIP: и forecasts (BbipForecastRequestByItemV1), и create
-// (BbipOrderByItemV1) требуют ОДИНАКОВЫЙ набор itemId+duration+oldPrice+price.
-// Значения берутся из promotion_get_bbip_suggests_by_items_v1: budgets[].{oldPrice,price}
-// (копейки/день) и duration.recommended (дни). Поле `budget` Avito НЕ принимает — отсюда
-// была ошибка «Не удалось найти бюджет продвижения по указанным параметрам» (v0.7.1 чинил
-// только create; v0.7.2 чинит и forecasts, который ошибочно слал {itemId, budget}).
+// Actual Avito BBIP contract: both forecasts (BbipForecastRequestByItemV1) and create
+// (BbipOrderByItemV1) require the SAME set of itemId+duration+oldPrice+price.
+// Values come from promotion_get_bbip_suggests_by_items_v1: budgets[].{oldPrice,price}
+// (kopecks/day) and duration.recommended (days). Avito does NOT accept the `budget` field —
+// that caused the error "Failed to find a promotion budget for the given parameters" (v0.7.1 fixed
+// only create; v0.7.2 also fixes forecasts, which mistakenly sent {itemId, budget}).
 const BbipOrderItem = z
   .object({
-    itemId: z.number().int().positive().describe('ID объявления Avito (int64), для которого подключается продвижение.'),
+    itemId: z.number().int().positive().describe('Avito listing ID (int64) for which promotion is being enabled.'),
     duration: z
       .number()
       .int()
       .positive()
       .describe(
-        'Срок продвижения в ДНЯХ. Возьмите suggests.duration.recommended (обычно 5–7); ' +
-          'допустимый диапазон — suggests.duration.from..to.',
+        'Promotion duration in DAYS. Use suggests.duration.recommended (typically 5–7); ' +
+          'the allowed range is suggests.duration.from..to.',
       ),
     oldPrice: z
       .number()
       .int()
       .positive()
       .describe(
-        'Общая ценность продвижения за ОДИН день в КОПЕЙКАХ (до скидок/акций). ' +
-          'Берётся из suggests budgets[].oldPrice. Полная цена за период = price × duration.',
+        'Total value of one DAY of promotion in KOPECKS (before discounts/offers). ' +
+          'Taken from suggests budgets[].oldPrice. Full price for the period = price × duration.',
       ),
     price: z
       .number()
       .int()
       .positive()
       .describe(
-        'Стоимость продвижения за ОДИН день в КОПЕЙКАХ (к списанию). ' +
-          'Берётся из suggests budgets[].price. Полный бюджет = price × duration.',
+        'Cost of one DAY of promotion in KOPECKS (to be charged). ' +
+          'Taken from suggests budgets[].price. Full budget = price × duration.',
       ),
   })
   .passthrough();
@@ -47,15 +47,15 @@ const BbipOrderItem = z
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'promotion_get_bbip_forecasts_by_items_v1',
-    title: 'BBIP: прогноз эффекта',
+    title: 'BBIP: forecast effect',
     risk: 'read',
     description:
-      'Возвращает прогноз эффекта продвижения BBIP (ставка/бюджет продвижения объявлений): ожидаемый прирост ' +
-      'просмотров (min/max) и общую стоимость за период. READ-ONLY: денег НЕ тратит, используйте ДО ' +
-      'promotion_create_bbip_order_for_items_v1, чтобы оценить отдачу. Для каждого объявления передайте ' +
-      '{itemId, duration, oldPrice, price} — те же значения, что и для create; берите их из ' +
-      'promotion_get_bbip_suggests_by_items_v1 (budgets[].{oldPrice,price} — копейки/день, duration.recommended — дни). ' +
-      'Возвращает items[].{min,max,totalPrice} (копейки) и общий totalPrice.',
+      'Returns the forecast effect of BBIP promotion (listing promotion bid/budget): expected increase in ' +
+      'views (min/max) and total cost for the period. READ-ONLY: spends NO money; use BEFORE ' +
+      'promotion_create_bbip_order_for_items_v1 to estimate the return. For each listing pass ' +
+      '{itemId, duration, oldPrice, price} — the same values as for create; take them from ' +
+      'promotion_get_bbip_suggests_by_items_v1 (budgets[].{oldPrice,price} — kopecks/day, duration.recommended — days). ' +
+      'Returns items[].{min,max,totalPrice} (kopecks) and an overall totalPrice.',
     method: 'POST',
     path: '/promotion/v1/items/services/bbip/forecasts/get',
     domain: 'promotion',
@@ -65,8 +65,8 @@ export const register: DomainRegister = (server, ctx) => {
         .min(1)
         .max(100)
         .describe(
-          'От 1 до 100 объявлений для прогноза. Каждый элемент — {itemId, duration, oldPrice, price}, ' +
-            'значения брать из promotion_get_bbip_suggests_by_items_v1.',
+          '1 to 100 listings to forecast. Each element is {itemId, duration, oldPrice, price}, ' +
+            'with values taken from promotion_get_bbip_suggests_by_items_v1.',
         ),
     },
     body: { contentType: 'application/json', fields: ['items'] },
@@ -74,13 +74,13 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'promotion_get_bbip_suggests_by_items_v1',
-    title: 'BBIP: рекомендации бюджета',
+    title: 'BBIP: budget suggestions',
     risk: 'read',
     description:
-      'Возвращает рекомендованные варианты ставки/бюджета продвижения BBIP по объявлениям. READ-ONLY: денег НЕ тратит. ' +
-      'Это первый шаг сценария BBIP: из ответа берите items[].budgets[].{oldPrice,price} (копейки/день, ' +
-      'isRecommended помечает рекомендованный) и items[].duration.{from,to,recommended} (дни), затем передавайте ' +
-      'их в promotion_get_bbip_forecasts_by_items_v1 (прогноз) и promotion_create_bbip_order_for_items_v1 (платная покупка).',
+      'Returns recommended BBIP promotion bid/budget options for the listings. READ-ONLY: spends NO money. ' +
+      'This is the first step of the BBIP flow: from the response take items[].budgets[].{oldPrice,price} (kopecks/day, ' +
+      'isRecommended flags the recommended one) and items[].duration.{from,to,recommended} (days), then pass ' +
+      'them to promotion_get_bbip_forecasts_by_items_v1 (forecast) and promotion_create_bbip_order_for_items_v1 (paid purchase).',
     method: 'POST',
     path: '/promotion/v1/items/services/bbip/suggests/get',
     domain: 'promotion',
@@ -88,22 +88,22 @@ export const register: DomainRegister = (server, ctx) => {
       itemIds: z
         .array(z.number().int().positive())
         .optional()
-        .describe('ID объявлений Avito (int64), для которых нужны варианты бюджета. До 100 шт.'),
+        .describe('Avito listing IDs (int64) for which budget options are needed. Up to 100.'),
     },
     body: { contentType: 'application/json', fields: ['itemIds'] },
   });
 
   defineTool(server, ctx, {
     name: 'promotion_create_bbip_order_for_items_v1',
-    title: '⚠️ BBIP: купить продвижение',
+    title: '⚠️ BBIP: buy promotion',
     risk: 'money',
     description:
-      '⚠️ ПЛАТНОЕ ДЕЙСТВИЕ (money): создаёт заявку BBIP на подключение продвижения объявлений и СПИСЫВАЕТ бюджет ' +
-      'с баланса аккаунта. Заявка создаётся только если по всем объявлениям нет ошибок; при недостатке средств — 402. ' +
-      'СНАЧАЛА оцените стоимость и отдачу бесплатно: promotion_get_bbip_suggests_by_items_v1 (варианты бюджета) → ' +
-      'promotion_get_bbip_forecasts_by_items_v1 (прогноз). Затем для каждого объявления передайте сюда вариант из ' +
-      'suggests как {itemId, duration, oldPrice, price} (oldPrice/price — копейки/день, duration — дни; полный бюджет = ' +
-      'price × duration). Возвращает orderId (UUID) — проверяйте статус через promotion_get_order_status_v1.',
+      '⚠️ PAID ACTION (money): creates a BBIP order to enable promotion for listings and CHARGES the budget ' +
+      'from the account balance. The order is created only if there are no errors across all listings; if funds are insufficient — 402. ' +
+      'FIRST estimate the cost and return for free: promotion_get_bbip_suggests_by_items_v1 (budget options) → ' +
+      'promotion_get_bbip_forecasts_by_items_v1 (forecast). Then for each listing pass an option from ' +
+      'suggests as {itemId, duration, oldPrice, price} (oldPrice/price — kopecks/day, duration — days; full budget = ' +
+      'price × duration). Returns orderId (UUID) — check its status via promotion_get_order_status_v1.',
     method: 'PUT',
     path: '/promotion/v1/items/services/bbip/orders/create',
     domain: 'promotion',
@@ -113,8 +113,8 @@ export const register: DomainRegister = (server, ctx) => {
         .min(1)
         .max(100)
         .describe(
-          'От 1 до 100 объявлений для платного продвижения. Каждый элемент — {itemId, duration, oldPrice, price} ' +
-            'из promotion_get_bbip_suggests_by_items_v1. Заявка отклоняется целиком, если по любому объявлению есть ошибка.',
+          '1 to 100 listings for paid promotion. Each element is {itemId, duration, oldPrice, price} ' +
+            'from promotion_get_bbip_suggests_by_items_v1. The whole order is rejected if any listing has an error.',
         ),
     },
     body: { contentType: 'application/json', fields: ['items'] },
@@ -122,12 +122,12 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'promotion_get_dict_of_services_v1',
-    title: 'Продвижение: справочник услуг',
+    title: 'Promotion: service dictionary',
     risk: 'read',
     description:
-      'Возвращает справочник всех типов услуг продвижения Avito: для каждой услуги — slug (идентификатор типа), ' +
-      'name (название) и isDeprecated (устарела ли). READ-ONLY: денег НЕ тратит, параметров не требует. ' +
-      'Используйте как справочник для расшифровки slug в ответах других promotion-методов.',
+      'Returns a dictionary of all Avito promotion service types: for each service — slug (type identifier), ' +
+      'name and isDeprecated (whether it is deprecated). READ-ONLY: spends NO money and requires no parameters. ' +
+      'Use it as a reference to resolve slugs in the responses of other promotion methods.',
     method: 'POST',
     path: '/promotion/v1/items/services/dict',
     domain: 'promotion',
@@ -136,12 +136,12 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'promotion_get_services_by_items_v1',
-    title: 'Продвижение: услуги по объявлениям',
+    title: 'Promotion: services by listings',
     risk: 'read',
     description:
-      'Возвращает активные услуги продвижения по указанным объявлениям: для каждого objявления список услуг с ' +
-      'slug, name и датами startDate/endDate. READ-ONLY: денег НЕ тратит. Используйте, чтобы узнать, какое ' +
-      'продвижение уже подключено и до какого числа действует (не путать с suggests, которые предлагают новые варианты бюджета).',
+      'Returns active promotion services for the specified listings: for each listing, a list of services with ' +
+      'slug, name and startDate/endDate dates. READ-ONLY: spends NO money. Use it to find out which ' +
+      'promotion is already enabled and until what date it is active (not to be confused with suggests, which propose new budget options).',
     method: 'POST',
     path: '/promotion/v1/items/services/get',
     domain: 'promotion',
@@ -149,56 +149,56 @@ export const register: DomainRegister = (server, ctx) => {
       itemIds: z
         .array(z.number().int().positive())
         .optional()
-        .describe('ID объявлений Avito (int64), по которым нужны активные услуги продвижения. До 100 шт.'),
+        .describe('Avito listing IDs (int64) for which active promotion services are needed. Up to 100.'),
     },
     body: { contentType: 'application/json', fields: ['itemIds'] },
   });
 
   defineTool(server, ctx, {
     name: 'promotion_list_orders_by_user_v1',
-    title: 'Продвижение: список заявок',
+    title: 'Promotion: list orders',
     risk: 'read',
     description:
-      'Возвращает список заявок (orders) на продвижение текущего пользователя с пагинацией: id (UUID), createdAt и ' +
-      'status каждой заявки. READ-ONLY: денег НЕ тратит. Используйте для истории/обзора заявок; детальный статус ' +
-      'конкретной заявки — через promotion_get_order_status_v1 по её orderId.',
+      'Returns a paginated list of the current user\'s promotion orders: id (UUID), createdAt and ' +
+      'status of each order. READ-ONLY: spends NO money. Use it for order history/overview; the detailed status ' +
+      'of a specific order is available via promotion_get_order_status_v1 by its orderId.',
     method: 'POST',
     path: '/promotion/v1/items/services/orders/get',
     domain: 'promotion',
     input: {
       pagination: z
         .object({
-          page: z.number().int().min(1).optional().describe('Номер страницы, начиная с 1 (по умолчанию 1).'),
+          page: z.number().int().min(1).optional().describe('Page number, starting from 1 (default 1).'),
           perPage: z
             .number()
             .int()
             .min(1)
             .max(100)
             .optional()
-            .describe('Кол-во записей на странице, 1–100 (по умолчанию 20). Имя поля строго camelCase.'),
+            .describe('Number of records per page, 1–100 (default 20). The field name is strictly camelCase.'),
         })
         .passthrough()
         .optional()
-        .describe('Параметры постраничного чтения {page, perPage}. Можно опустить — вернётся первая страница.'),
+        .describe('Pagination parameters {page, perPage}. Can be omitted — the first page is returned.'),
     },
     body: { contentType: 'application/json', fields: ['pagination'] },
   });
 
   defineTool(server, ctx, {
     name: 'promotion_get_order_status_v1',
-    title: 'Продвижение: статус заявки',
+    title: 'Promotion: order status',
     risk: 'read',
     description:
-      'Возвращает статус заявки BBIP по её orderId: общий status заявки (initialized/waiting/in_process/processed), ' +
-      'totalPrice (копейки) и постатейный статус по каждому объявлению (slug, price, errorReason). READ-ONLY: денег НЕ тратит. ' +
-      'Вызывайте ПОСЛЕ promotion_create_bbip_order_for_items_v1, чтобы отследить выполнение заявки.',
+      'Returns the status of a BBIP order by its orderId: the order\'s overall status (initialized/waiting/in_process/processed), ' +
+      'totalPrice (kopecks) and a per-item status for each listing (slug, price, errorReason). READ-ONLY: spends NO money. ' +
+      'Call it AFTER promotion_create_bbip_order_for_items_v1 to track the order\'s execution.',
     method: 'POST',
     path: '/promotion/v1/items/services/orders/status',
     domain: 'promotion',
     input: {
       orderId: z
         .string()
-        .describe('Идентификатор заявки на продвижение в формате UUID, полученный из promotion_create_bbip_order_for_items_v1.'),
+        .describe('Promotion order identifier in UUID format, obtained from promotion_create_bbip_order_for_items_v1.'),
     },
     body: { contentType: 'application/json', fields: ['orderId'] },
   });

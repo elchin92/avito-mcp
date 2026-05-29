@@ -1,29 +1,29 @@
 /**
- * Простой межпроцессный advisory file-lock для defence-in-depth поверх in-process
- * single-flight в TokenStore. Используется в OAuth refresh, чтобы несколько процессов
- * avito-mcp (например, MCP-клиент + cron-агент + ручной CLI) не делали одновременный
- * refresh и не упирались в rate-limit /token endpoint Avito.
+ * A simple cross-process advisory file lock for defence-in-depth on top of the
+ * in-process single-flight in TokenStore. Used during OAuth refresh so that
+ * multiple avito-mcp processes (e.g. an MCP client + a cron agent + a manual CLI)
+ * do not refresh concurrently and hit the rate limit of Avito's /token endpoint.
  *
- * Implementation: exclusive-create lock file (`{target}.lock`) с записанным PID.
- * Stale-detection: если PID не живёт, lock считается осиротевшим и удаляется.
- * Backoff: 50–150ms jitter, чтобы избежать lockstep при многократных contenders.
+ * Implementation: an exclusive-create lock file (`{target}.lock`) with the PID written to it.
+ * Stale detection: if the owning PID is not alive, the lock is treated as orphaned and removed.
+ * Backoff: 50–150ms jitter to avoid lockstep when there are multiple contenders.
  *
- * Это advisory-механизм. Любой код, не использующий withFileLock(), его не увидит —
- * поэтому он работает только когда все процессы honor одной и той же конвенции.
+ * This is an advisory mechanism. Any code that does not use withFileLock() will not see it,
+ * so it only works when all processes honor the same convention.
  *
- * Зависимостей не добавляем. proper-lockfile, который чаще всего используют для
- * таких задач, втащил бы graceful-fs и retry — здесь это излишне.
+ * No dependencies are added. proper-lockfile, which is most commonly used for such tasks,
+ * would pull in graceful-fs and retry — overkill here.
  */
 import { promises as fs } from 'node:fs';
 
 export interface FileLockOptions {
-  /** Максимальное время ожидания свободного lock'а. Default 30s. */
+  /** Maximum time to wait for the lock to become free. Default 30s. */
   timeoutMs?: number;
-  /** Минимальный интервал между попытками. Default 50ms. */
+  /** Minimum interval between attempts. Default 50ms. */
   retryMinMs?: number;
-  /** Максимальный интервал между попытками. Default 150ms. */
+  /** Maximum interval between attempts. Default 150ms. */
   retryMaxMs?: number;
-  /** Максимальный возраст stale lock'а, после которого его можно снять. Default 60s. */
+  /** Maximum age of a stale lock after which it can be removed. Default 60s. */
   staleMs?: number;
 }
 
@@ -36,8 +36,8 @@ const DEFAULTS: Required<FileLockOptions> = {
 
 /**
  * Acquires `${target}.lock`, runs fn(), then releases.
- * fn выполняется только когда lock реально получен.
- * Если за timeoutMs lock получить не удалось — бросаем FileLockTimeoutError.
+ * fn runs only once the lock has actually been acquired.
+ * If the lock could not be acquired within timeoutMs, FileLockTimeoutError is thrown.
  */
 export async function withFileLock<T>(
   target: string,
@@ -52,8 +52,8 @@ export async function withFileLock<T>(
   try {
     return await fn();
   } finally {
-    // Releasing — best-effort. Если файл уже не наш (украли через stale-cleanup),
-    // не страшно: следующий acquireLock получит свежий lock.
+    // Releasing is best-effort. If the file is no longer ours (stolen via stale-cleanup),
+    // that's fine: the next acquireLock will obtain a fresh lock.
     await fs.rm(lockPath, { force: true }).catch(() => {});
   }
 }
@@ -66,7 +66,7 @@ async function acquireLock(
   const pidLine = `${process.pid}\n${Date.now()}\n`;
   while (true) {
     try {
-      // wx = O_CREAT | O_EXCL — атомарно создаёт файл; если есть — бросает EEXIST.
+      // wx = O_CREAT | O_EXCL — atomically creates the file; if it exists, throws EEXIST.
       const fd = await fs.open(lockPath, 'wx', 0o600);
       try {
         await fd.writeFile(pidLine);
@@ -77,12 +77,12 @@ async function acquireLock(
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'EEXIST') throw err;
-      // Lock занят. Если он stale, пробуем снять.
+      // Lock is held. If it is stale, try to remove it.
       const stale = await isStale(lockPath, opts.staleMs);
       if (stale) {
         await fs.rm(lockPath, { force: true }).catch(() => {});
-        // На следующей итерации попробуем создать заново. Если кто-то другой
-        // нас опередил — снова получим EEXIST и проверим stale.
+        // On the next iteration we will try to create it again. If someone else
+        // beats us to it, we get EEXIST again and re-check for staleness.
         continue;
       }
       if (Date.now() >= deadline) {
@@ -96,9 +96,9 @@ async function acquireLock(
 }
 
 /**
- * Считает lock stale если: (a) файл нечитаем (битый), или (b) PID-владелец не живёт,
- * или (c) timestamp в lock-файле старше opts.staleMs. Это спасает от ситуации,
- * когда один процесс упал с lock'ом, и никто его не снял.
+ * Considers a lock stale if: (a) the file is unreadable (corrupted), or (b) the owning PID
+ * is not alive, or (c) the timestamp in the lock file is older than opts.staleMs. This guards
+ * against the case where a process crashed while holding the lock and nobody released it.
  */
 async function isStale(lockPath: string, staleMs: number): Promise<boolean> {
   let raw: string;
@@ -112,8 +112,8 @@ async function isStale(lockPath: string, staleMs: number): Promise<boolean> {
   const ts = Number.parseInt(tsLine ?? '', 10);
   if (Number.isFinite(ts) && Date.now() - ts > staleMs) return true;
   if (!Number.isFinite(pid) || pid <= 0) return true;
-  // signal 0 = только проверка существования. ESRCH = процесса нет; EPERM = есть,
-  // но мы не имеем прав на сигнал — значит существует, lock жив.
+  // signal 0 = existence check only. ESRCH = the process is gone; EPERM = it exists,
+  // but we lack permission to signal it — meaning it exists, so the lock is alive.
   try {
     process.kill(pid, 0);
     return false;

@@ -21,10 +21,10 @@ import { register as msgDiscounts } from '../domains/messenger_discounts.js';
 import { register as meta } from '../domains/meta.js';
 
 /**
- * Реестр доменов. Каждый swagger → один файл в src/domains/, экспортирующий register-функцию.
- * Добавление нового swagger требует одной строки здесь + одного файла там.
+ * Domain registry. Each swagger → one file in src/domains/ exporting a register function.
+ * Adding a new swagger requires one line here + one file there.
  *
- * Порядок не критичен (имена tools уникальны), но соблюдаем приоритет по плану.
+ * Order is not critical (tool names are unique), but we follow the planned priority.
  */
 export const domains: readonly DomainRegister[] = [
   meta,

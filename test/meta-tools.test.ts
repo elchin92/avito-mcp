@@ -1,5 +1,5 @@
 /**
- * Тесты meta-tools (v0.7.0): meta_health, meta_auth_status, meta_capabilities.
+ * Tests for meta-tools (v0.7.0): meta_health, meta_auth_status, meta_capabilities.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';

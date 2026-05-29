@@ -52,12 +52,12 @@ function printHelp(): void {
 }
 
 /**
- * v0.7.0: применяет CLI-флаги к process.env ДО загрузки config.ts.
- * Это позволяет существующему config-loader-у не знать про CLI вообще —
- * для него флаги выглядят как переменные окружения, выставленные пользователем.
+ * v0.7.0: applies CLI flags to process.env BEFORE config.ts is loaded.
+ * This lets the existing config loader stay completely unaware of the CLI —
+ * to it, the flags just look like environment variables set by the user.
  *
- * Флаги НЕ перетирают значения, которые пользователь уже поставил в env —
- * env wins. Это соответствует общему UNIX-принципу: явное env override CLI sugar.
+ * Flags do NOT override values the user has already set in env — env wins.
+ * This follows the general UNIX principle: explicit env overrides CLI sugar.
  */
 function applyCliFlagsToEnv(argv: string[]): void {
   const setIfMissing = (key: string, value: string): void => {
@@ -72,9 +72,9 @@ function applyCliFlagsToEnv(argv: string[]): void {
 }
 
 /**
- * v0.7.0: --health печатает JSON-снимок состояния и выходит. Не подключает
- * stdio transport, не дёргает Avito API. Полезно для probes / docker healthcheck /
- * быстрой диагностики "почему не работает".
+ * v0.7.0: --health prints a JSON snapshot of the state and exits. It does not
+ * attach the stdio transport and does not hit the Avito API. Useful for probes /
+ * docker healthcheck / quick "why is it not working" diagnostics.
  */
 async function printHealthAndExit(): Promise<void> {
   const { config } = await import('./config.js');
@@ -128,9 +128,9 @@ async function startServer(): Promise<void> {
       title: 'Avito MCP',
       version: VERSION,
       description:
-        '142 инструментов для работы с Avito API: объявления, мессенджер, заказы, доставка, ' +
-        'продвижение, автозагрузка, аналитика. С политикой безопасности (read_only / guarded / ' +
-        'full_access), confirmation-flow для money/public операций и hard-confirmation через ' +
+        '145 tools for the Avito API: listings, messenger, orders, delivery, ' +
+        'promotion, autoload, analytics. With a safety policy (read_only / guarded / ' +
+        'full_access), a confirmation flow for money/public operations, and hard-confirmation via ' +
         'AVITO_MCP_CONFIRMATION_SECRET.',
       websiteUrl: 'https://github.com/elchin92/avito-mcp',
     },
@@ -144,12 +144,12 @@ async function startServer(): Promise<void> {
         tools: { listChanged: false },
       },
       instructions:
-        'Avito MCP — сервер для работы с боевым Avito API. Перед write/money/public операциями ' +
-        'обязательно подтверждайте действия с человеком; в режиме confirmation_mode=money_public ' +
-        '(default) сервер сам вернёт confirmation_id и потребует вызвать meta_confirm_action. ' +
-        'Полная справка по safety-режимам — в ресурсе avito://docs/safety. Список tools с ' +
-        'классификацией риска — в avito://manifest. Pending-actions — в avito://state/pending-actions ' +
-        '(можно подписаться через resources/subscribe).',
+        'Avito MCP — a server for the live (production) Avito API. Before any write/money/public ' +
+        'operation, always confirm the action with a human; in confirmation_mode=money_public ' +
+        '(default) the server returns a confirmation_id and requires a meta_confirm_action call. ' +
+        'Full reference on the safety modes is in the avito://docs/safety resource. The list of tools ' +
+        'with their risk classification is in avito://manifest. Pending actions are in ' +
+        'avito://state/pending-actions (you can subscribe via resources/subscribe).',
     },
   );
 

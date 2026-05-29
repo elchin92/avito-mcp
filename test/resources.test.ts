@@ -1,6 +1,6 @@
 /**
- * Тесты MCP-resources (v0.6.0). Поднимаем in-memory client+server, регистрируем
- * domains + resources, прогоняем listResources / readResource / subscribe.
+ * MCP resources tests (v0.6.0). Spin up an in-memory client+server, register
+ * domains + resources, and exercise listResources / readResource / subscribe.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -90,7 +90,7 @@ describe('MCP resources — listing & static reads', () => {
     expect(uris).toContain(PENDING_ACTIONS_URI);
     // Should include swagger entries (template list callback).
     const swaggers = uris.filter((u) => u.startsWith('avito://swaggers/'));
-    expect(swaggers.length).toBeGreaterThan(10); // 18 swagger files в репо
+    expect(swaggers.length).toBeGreaterThan(10); // 18 swagger files in the repo
   });
 
   it('reads avito://state/config without leaking secrets', async () => {
@@ -137,7 +137,7 @@ describe('MCP resources — listing & static reads', () => {
     expect(body2.count).toBe(1);
     expect(body2.pending[0].tool).toBe('items_update_price');
     expect(body2.pending[0].risk).toBe('public');
-    // args / execute не утекли:
+    // args / execute did not leak:
     expect(body2.pending[0].args).toBeUndefined();
   });
 
@@ -162,7 +162,7 @@ describe('MCP resources — listing & static reads', () => {
       execute: async () => ({ content: [] }),
     });
 
-    // Notifications асинхронные — дадим серверу шанс отправить.
+    // Notifications are asynchronous — give the server a chance to send.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(onUpdated).toHaveBeenCalledWith(PENDING_ACTIONS_URI);
   });
@@ -182,7 +182,7 @@ describe('MCP resources — listing & static reads', () => {
     expect(res.contents[0]).toMatchObject({ mimeType: 'application/json' });
     expect((res.contents[0] as { text: string }).text.length).toBeGreaterThan(100);
 
-    // Path-traversal попытка:
+    // Path-traversal attempt:
     await expect(
       client.readResource({ uri: 'avito://swaggers/..%2F..%2Fetc%2Fpasswd' }),
     ).rejects.toThrow();

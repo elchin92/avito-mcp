@@ -1,18 +1,18 @@
 /**
- * Домен `items` — соответствует swaggers/Объявления.json
+ * `items` domain — corresponds to swaggers/Объявления.json
  *
- * 11 endpoints. Основной ценный домен для AI-агента: чтение объявлений, цена, VAS, статистика.
+ * 11 endpoints. The core valuable domain for an AI agent: reading listings, price, VAS, statistics.
  *
  * Quirks:
- *   - Часть путей использует {userId} (camelCase), часть — {user_id}.
- *     ToolSpec.injectProfileId поддерживает оба варианта; в input всегда `user_id`/`userId` явно.
- *   - GET /core/v1/items в swagger без описанных query — на практике принимает per_page/page/category/status.
- *     Добавляем их как опциональные, описываем в description.
- *   - PUT /core/v2/items/{itemId}/vas/ — единственный путь с {itemId} (camelCase).
+ *   - Some paths use {userId} (camelCase), others use {user_id}.
+ *     ToolSpec.injectProfileId supports both variants; in input it is always passed explicitly as `user_id`/`userId`.
+ *   - GET /core/v1/items has no documented query params in swagger — in practice it accepts per_page/page/category/status.
+ *     We add them as optional and document them in the description.
+ *   - PUT /core/v2/items/{itemId}/vas/ — the only path with {itemId} (camelCase).
  *
- * ⚠️ Write-методы реально влияют на боевой аккаунт:
- *   - updatePrice — меняет цену объявления
- *   - putItemVas, putItemVasPackageV2, applyVas — покупают платные услуги (тратит деньги)
+ * ⚠️ Write methods actually affect the production account:
+ *   - updatePrice — changes the listing price
+ *   - putItemVas, putItemVasPackageV2, applyVas — purchase paid services (spends money)
  */
 import { z } from 'zod';
 
@@ -23,13 +23,13 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_get_items_info',
-    title: 'Список объявлений',
+    title: 'List listings',
     risk: 'read',
     description:
-      'Возвращает СПИСОК объявлений авторизованного пользователя (get_items_info) — id, статус, категория, ссылка на сайте. ' +
-      'Read-only, ничего не меняет. Используйте для поиска id объявлений и обзора; для деталей по одному объявлению — items_get_item_info. ' +
-      'Поддерживает пагинацию (page + per_page) и фильтры (status, category, updatedAtFrom). ' +
-      'Лимит 25 запросов/мин. Не работает с объявлениями сотрудников — для них (под главным аккаунтом или авторизованным сотрудником) вернётся пустой список.',
+      'Returns a LIST of the authenticated user\'s listings (get_items_info) — id, status, category, link on the site. ' +
+      'Read-only, changes nothing. Use it to find listing ids and get an overview; for details on a single listing, use items_get_item_info. ' +
+      'Supports pagination (page + per_page) and filters (status, category, updatedAtFrom). ' +
+      'Limit: 25 requests/min. Does not work with employees\' listings — for those (under the main account or as an authenticated employee) it returns an empty list.',
     method: 'GET',
     path: '/core/v1/items',
     domain: 'core',
@@ -40,40 +40,40 @@ export const register: DomainRegister = (server, ctx) => {
         .min(1)
         .max(100)
         .optional()
-        .describe('Размер страницы: сколько объявлений вернуть за запрос (1–100). Если не задан, сервер выбирает значение по умолчанию.'),
-      page: z.number().int().min(1).optional().describe('Номер страницы пагинации, начиная с 1.'),
+        .describe('Page size: how many listings to return per request (1–100). If omitted, the server picks a default value.'),
+      page: z.number().int().min(1).optional().describe('Pagination page number, starting from 1.'),
       status: z
         .enum(['active', 'old', 'blocked', 'removed'])
         .optional()
-        .describe('Фильтр по статусу объявления: active (опубликовано), old (в архиве), blocked (заблокировано), removed (удалено). Без фильтра — все статусы.'),
-      category: z.number().int().optional().describe('Числовой ID категории Авито для фильтра по категории объявлений.'),
+        .describe('Filter by listing status: active (published), old (archived), blocked, removed (deleted). Without the filter — all statuses.'),
+      category: z.number().int().optional().describe('Numeric Avito category ID to filter listings by category.'),
       updatedAtFrom: z
         .string()
         .optional()
-        .describe('Фильтр: вернуть только объявления, обновлённые не раньше этой даты (ISO 8601, например "2026-05-01").'),
+        .describe('Filter: return only listings updated no earlier than this date (ISO 8601, e.g. "2026-05-01").'),
     },
     queryParams: ['per_page', 'page', 'status', 'category', 'updatedAtFrom'],
   });
 
   defineTool(server, ctx, {
     name: 'items_get_item_info',
-    title: 'Информация об объявлении',
+    title: 'Listing details',
     risk: 'read',
     description:
-      'Возвращает детальную информацию по ОДНОМУ объявлению (get_item_info) — статус, цена, адрес, список применённых услуг VAS и др. ' +
-      'Read-only. Используйте, когда уже известен item_id; для списка объявлений — items_get_items_info, для статистики просмотров/контактов — items_post_item_stats_shallow (этот метод статистику не возвращает). ' +
-      'Лимит 500 запросов/мин.',
+      'Returns detailed information about a SINGLE listing (get_item_info) — status, price, address, list of applied VAS services, etc. ' +
+      'Read-only. Use it when the item_id is already known; for a list of listings, use items_get_items_info, and for view/contact statistics, use items_post_item_stats_shallow (this method does not return statistics). ' +
+      'Limit: 500 requests/min.',
     method: 'GET',
     path: '/core/v1/accounts/{user_id}/items/{item_id}/',
     domain: 'core',
     input: {
-      item_id: z.number().int().positive().describe('ID объявления на Avito, по которому нужны детали.'),
+      item_id: z.number().int().positive().describe('ID of the Avito listing to get details for.'),
       user_id: z
         .number()
         .int()
         .positive()
         .optional()
-        .describe('ID пользователя-владельца объявления. По умолчанию — Profile_id из .env.'),
+        .describe('ID of the user who owns the listing. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id', 'item_id'],
     injectProfileId: 'user_id',
@@ -81,23 +81,23 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_calls_stats',
-    title: 'Статистика звонков',
+    title: 'Call statistics',
     risk: 'read',
     description:
-      'Возвращает агрегированную статистику ЗВОНКОВ по объявлениям за период (post_calls_stats) — всего/новые/отвеченные/новые отвеченные, в разрезе дней. ' +
-      'Read-only аналитика, ничего не меняет и не тратит. Период задаётся датами dateFrom..dateTo (YYYY-MM-DD). ' +
-      'Без itemIds — по всем объявлениям пользователя. Для просмотров/контактов используйте items_post_item_stats_shallow.',
+      'Returns aggregated CALL statistics for listings over a period (post_calls_stats) — total/new/answered/new answered, broken down by day. ' +
+      'Read-only analytics, changes nothing and spends nothing. The period is set by dateFrom..dateTo (YYYY-MM-DD). ' +
+      'Without itemIds — across all of the user\'s listings. For views/contacts, use items_post_item_stats_shallow.',
     method: 'POST',
     path: '/core/v1/accounts/{user_id}/calls/stats/',
     domain: 'core',
     input: {
-      dateFrom: z.string().describe('Начало периода включительно (YYYY-MM-DD).'),
-      dateTo: z.string().describe('Конец периода включительно (YYYY-MM-DD).'),
+      dateFrom: z.string().describe('Start of the period, inclusive (YYYY-MM-DD).'),
+      dateTo: z.string().describe('End of the period, inclusive (YYYY-MM-DD).'),
       itemIds: z
         .array(z.number().int().positive())
         .optional()
-        .describe('Список ID объявлений для фильтра. Без него — статистика по всем объявлениям пользователя.'),
-      user_id: z.number().int().positive().optional().describe('ID пользователя-владельца. По умолчанию — Profile_id из .env.'),
+        .describe('List of listing IDs to filter by. Without it — statistics across all of the user\'s listings.'),
+      user_id: z.number().int().positive().optional().describe('ID of the owner user. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id'],
     injectProfileId: 'user_id',
@@ -109,12 +109,12 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_vas_prices',
-    title: 'Цены услуг VAS',
+    title: 'VAS service prices',
     risk: 'read',
     description:
-      'Возвращает стоимость услуг продвижения (VAS), доступные пакеты и значки для заданных объявлений (post_vas_prices). ' +
-      'Read-only — НЕ покупает и НЕ тратит деньги, только справка по ценам. ' +
-      'Обязательно вызывайте ПЕРЕД покупкой через items_apply_vas / items_put_item_vas, чтобы узнать актуальные slug-и услуг и их цену.',
+      'Returns the cost of promotion services (VAS), available packages and stickers for the given listings (post_vas_prices). ' +
+      'Read-only — does NOT purchase and does NOT spend money, only a price reference. ' +
+      'Always call it BEFORE purchasing via items_apply_vas / items_put_item_vas to learn the current service slugs and their prices.',
     method: 'POST',
     path: '/core/v1/accounts/{userId}/vas/prices',
     domain: 'core',
@@ -122,8 +122,8 @@ export const register: DomainRegister = (server, ctx) => {
       itemIds: z
         .array(z.number().int().positive())
         .min(1)
-        .describe('Список ID объявлений, для которых нужны цены и доступные услуги/значки VAS (минимум 1).'),
-      userId: z.number().int().positive().optional().describe('ID пользователя-владельца. По умолчанию — Profile_id из .env.'),
+        .describe('List of listing IDs to get VAS prices and available services/stickers for (at least 1).'),
+      userId: z.number().int().positive().optional().describe('ID of the owner user. Defaults to Profile_id from .env.'),
     },
     pathParams: ['userId'],
     injectProfileId: 'userId',
@@ -135,12 +135,12 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_item_stats_shallow',
-    title: 'Статистика объявлений',
+    title: 'Listing statistics',
     risk: 'read',
     description:
-      'Возвращает счётчики (поверхностную статистику) по списку объявлений за период (post_item_stats_shallow / itemStatsShallow): уникальные просмотры, контакты, добавления в избранное. ' +
-      'Read-only аналитика. Используйте для метрик по конкретным item_id с группировкой по дням/неделям/месяцам; для расширенной аналитики профиля с фильтрами и сортировкой — items_post_item_analytics, для звонков — items_post_calls_stats. ' +
-      'Лимиты: не более 200 объявлений за запрос, глубина не более 270 дней назад.',
+      'Returns counters (shallow statistics) for a list of listings over a period (post_item_stats_shallow / itemStatsShallow): unique views, contacts, favorites added. ' +
+      'Read-only analytics. Use it for metrics on specific item_ids grouped by day/week/month; for extended profile analytics with filters and sorting, use items_post_item_analytics, and for calls, use items_post_calls_stats. ' +
+      'Limits: no more than 200 listings per request, depth no more than 270 days back.',
     method: 'POST',
     path: '/stats/v1/accounts/{user_id}/items',
     domain: 'stats',
@@ -149,17 +149,17 @@ export const register: DomainRegister = (server, ctx) => {
         .array(z.number().int().positive())
         .min(1)
         .max(200)
-        .describe('Список ID объявлений, по которым нужны счётчики (от 1 до 200 за запрос).'),
-      dateFrom: z.string().describe('Начало периода включительно (YYYY-MM-DD); не далее 270 дней назад.'),
-      dateTo: z.string().describe('Конец периода включительно (YYYY-MM-DD).'),
-      periodGrouping: z.enum(['day', 'week', 'month']).optional().describe('Группировка счётчиков по периоду: day (дни), week (по первому дню недели), month (по первому дню месяца).'),
+        .describe('List of listing IDs to get counters for (from 1 to 200 per request).'),
+      dateFrom: z.string().describe('Start of the period, inclusive (YYYY-MM-DD); no more than 270 days back.'),
+      dateTo: z.string().describe('End of the period, inclusive (YYYY-MM-DD).'),
+      periodGrouping: z.enum(['day', 'week', 'month']).optional().describe('Group counters by period: day, week (by the first day of the week), month (by the first day of the month).'),
       fields: z
         .array(z.string())
         .optional()
         .describe(
-          'Какие метрики (счётчики) вернуть: uniqViews (уник. просмотры), uniqContacts (уник. контакты), uniqFavorites (уник. добавления в избранное), calls. Без указания возвращаются все доступные.',
+          'Which metrics (counters) to return: uniqViews (unique views), uniqContacts (unique contacts), uniqFavorites (unique favorites added), calls. If unspecified, all available ones are returned.',
         ),
-      user_id: z.number().int().positive().optional().describe('ID пользователя-владельца. По умолчанию — Profile_id из .env.'),
+      user_id: z.number().int().positive().optional().describe('ID of the owner user. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id'],
     injectProfileId: 'user_id',
@@ -171,30 +171,30 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_item_analytics',
-    title: 'Аналитика объявлений',
+    title: 'Listing analytics',
     risk: 'read',
     description:
-      'Возвращает РАСШИРЕННЫЕ статистические показатели по профилю/объявлениям за период (post_item_analytics, stats v2): views, contacts, presenceSpending и др. с гибкой группировкой, фильтрами и сортировкой. ' +
-      'Read-only аналитика. Выбирайте вместо items_post_item_stats_shallow, когда нужны фильтры по категориям/сотрудникам, сортировка по метрике или показатели расхода присутствия. limit ≤ 1000.',
+      'Returns EXTENDED statistical metrics for the profile/listings over a period (post_item_analytics, stats v2): views, contacts, presenceSpending, etc. with flexible grouping, filters and sorting. ' +
+      'Read-only analytics. Choose it over items_post_item_stats_shallow when you need filters by category/employee, sorting by a metric, or presence-spending metrics. limit ≤ 1000.',
     method: 'POST',
     path: '/stats/v2/accounts/{user_id}/items',
     domain: 'stats',
     input: {
-      dateFrom: z.string().describe('Начало периода включительно (YYYY-MM-DD).'),
-      dateTo: z.string().describe('Конец периода включительно (YYYY-MM-DD).'),
+      dateFrom: z.string().describe('Start of the period, inclusive (YYYY-MM-DD).'),
+      dateTo: z.string().describe('End of the period, inclusive (YYYY-MM-DD).'),
       metrics: z
         .array(z.string())
         .min(1)
-        .describe('Список запрашиваемых метрик (минимум 1): views, contacts, presenceSpending и др.'),
+        .describe('List of requested metrics (at least 1): views, contacts, presenceSpending, etc.'),
       grouping: z
         .object({
           period: z.enum(['day', 'week', 'month']).optional(),
           itemId: z.boolean().optional(),
         })
         .passthrough()
-        .describe('Способ группировки показателей: period (day|week|month), itemId (по объявлению) и/или по категории. Пустой объект — общие итоги (totals).'),
-      limit: z.number().int().min(0).max(1000).describe('Максимум строк в ответе (0..1000) для пагинации.'),
-      offset: z.number().int().min(0).describe('Смещение от начала выборки для пагинации (>= 0).'),
+        .describe('How to group the metrics: period (day|week|month), itemId (by listing) and/or by category. An empty object — overall totals.'),
+      limit: z.number().int().min(0).max(1000).describe('Maximum number of rows in the response (0..1000) for pagination.'),
+      offset: z.number().int().min(0).describe('Offset from the start of the selection for pagination (>= 0).'),
       filter: z
         .object({
           categoryIDs: z.array(z.number().int()).optional(),
@@ -202,15 +202,15 @@ export const register: DomainRegister = (server, ctx) => {
         })
         .passthrough()
         .optional()
-        .describe('Фильтры выборки: categoryIDs — массив ID категорий, employeeIDs — массив ID сотрудников. Без фильтра — весь профиль.'),
+        .describe('Selection filters: categoryIDs — an array of category IDs, employeeIDs — an array of employee IDs. Without the filter — the entire profile.'),
       sort: z
         .object({
           key: z.string(),
           order: z.enum(['asc', 'desc']),
         })
         .optional()
-        .describe('Сортировка результатов: key — имя метрики, order — asc (по возрастанию) или desc (по убыванию).'),
-      user_id: z.number().int().positive().optional().describe('ID пользователя-владельца. По умолчанию — Profile_id из .env.'),
+        .describe('Sorting of results: key — the metric name, order — asc (ascending) or desc (descending).'),
+      user_id: z.number().int().positive().optional().describe('ID of the owner user. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id'],
     injectProfileId: 'user_id',
@@ -222,35 +222,35 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_post_account_spendings',
-    title: 'Расходы профиля',
+    title: 'Profile spendings',
     risk: 'read',
     description:
-      'Возвращает ОТЧЁТ о расходах профиля за период по типам услуг (post_account_spendings) — сколько потрачено на vas/cpa/tariff и т.п. ' +
-      'Read-only, денег не тратит (только показывает уже понесённые траты). Период dateFrom..dateTo (YYYY-MM-DD). ' +
-      'Внимание: grouping здесь — СТРОКА "day"|"week"|"month" (НЕ объект, в отличие от items_post_item_analytics). Глубина данных не более 270 дней, не более 1 запроса в минуту. Обязательны: dateFrom, dateTo, spendingTypes, grouping.',
+      'Returns a REPORT of the profile\'s spendings over a period by service type (post_account_spendings) — how much was spent on vas/cpa/tariff, etc. ' +
+      'Read-only, spends no money (only shows already incurred spending). Period dateFrom..dateTo (YYYY-MM-DD). ' +
+      'Note: grouping here is a STRING "day"|"week"|"month" (NOT an object, unlike items_post_item_analytics). Data depth no more than 270 days, no more than 1 request per minute. Required: dateFrom, dateTo, spendingTypes, grouping.',
     method: 'POST',
     path: '/stats/v2/accounts/{user_id}/spendings',
     domain: 'stats',
     input: {
-      dateFrom: z.string().describe('Начало периода включительно (YYYY-MM-DD); не далее 270 дней назад.'),
-      dateTo: z.string().describe('Конец периода включительно (YYYY-MM-DD).'),
+      dateFrom: z.string().describe('Start of the period, inclusive (YYYY-MM-DD); no more than 270 days back.'),
+      dateTo: z.string().describe('End of the period, inclusive (YYYY-MM-DD).'),
       spendingTypes: z
         .array(z.string())
         .min(1)
-        .describe('Типы расходов для отчёта (минимум 1): vas, perf_vas, lf, cv, tariff, subscription, cpa, bundle.'),
+        .describe('Spending types for the report (at least 1): vas, perf_vas, lf, cv, tariff, subscription, cpa, bundle.'),
       grouping: z
         .enum(['day', 'week', 'month'])
-        .describe('Группировка расходов по периоду — строка (обязательно): day (по дням), week (по неделям), month (по месяцам).'),
+        .describe('Group spendings by period — a string (required): day (by day), week (by week), month (by month).'),
       filter: z
         .object({
-          categoryIDs: z.array(z.number().int()).optional().describe('Фильтр по ID категорий.'),
-          itemIDs: z.array(z.number().int()).optional().describe('Фильтр по ID объявлений.'),
-          locationIDs: z.array(z.number().int()).optional().describe('Фильтр по ID локаций.'),
+          categoryIDs: z.array(z.number().int()).optional().describe('Filter by category IDs.'),
+          itemIDs: z.array(z.number().int()).optional().describe('Filter by listing IDs.'),
+          locationIDs: z.array(z.number().int()).optional().describe('Filter by location IDs.'),
         })
         .passthrough()
         .optional()
-        .describe('Необязательные фильтры выборки: categoryIDs — ID категорий, itemIDs — ID объявлений, locationIDs — ID локаций. employeeIDs здесь НЕ поддерживается. Без фильтра — расходы всего профиля.'),
-      user_id: z.number().int().positive().optional().describe('ID пользователя-владельца. По умолчанию — Profile_id из .env.'),
+        .describe('Optional selection filters: categoryIDs — category IDs, itemIDs — listing IDs, locationIDs — location IDs. employeeIDs is NOT supported here. Without the filter — spendings of the entire profile.'),
+      user_id: z.number().int().positive().optional().describe('ID of the owner user. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id'],
     injectProfileId: 'user_id',
@@ -260,22 +260,22 @@ export const register: DomainRegister = (server, ctx) => {
     },
   });
 
-  // ────────────────────────────── WRITE (тратят деньги/меняют данные!) ──────────────────────────────
+  // ────────────────────────────── WRITE (spends money / changes data!) ──────────────────────────────
 
   defineTool(server, ctx, {
     name: 'items_update_price',
-    title: '⚠️ Изменить цену',
+    title: '⚠️ Change price',
     risk: 'public',
     description:
-      'Меняет цену объявления (update_price). ⚠️ PUBLIC: новая цена сразу видна покупателям на сайте. Требует item_id и price (целое, в рублях). ' +
-      'Доступно только для категорий Товары, Запчасти, Авто и Недвижимость (кроме краткосрочной аренды); в других категориях вернёт ошибку. ' +
-      'Денег не тратит, но это боевое изменение публичного объявления — подтверждайте у пользователя. Лимит 150 запросов/мин.',
+      'Changes a listing\'s price (update_price). ⚠️ PUBLIC: the new price is immediately visible to buyers on the site. Requires item_id and price (integer, in rubles). ' +
+      'Available only for the Goods, Spare Parts, Auto and Real Estate categories (except short-term rentals); other categories return an error. ' +
+      'Spends no money, but this is a live change to a public listing — confirm with the user. Limit: 150 requests/min.',
     method: 'POST',
     path: '/core/v1/items/{item_id}/update_price',
     domain: 'core',
     input: {
-      item_id: z.number().int().positive().describe('ID объявления, цену которого нужно изменить.'),
-      price: z.number().int().min(0).describe('Новая цена в рублях, целое число (>= 0). Сразу станет видна покупателям.'),
+      item_id: z.number().int().positive().describe('ID of the listing whose price needs to be changed.'),
+      price: z.number().int().min(0).describe('New price in rubles, an integer (>= 0). Becomes visible to buyers immediately.'),
     },
     pathParams: ['item_id'],
     body: {
@@ -286,19 +286,19 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_put_item_vas',
-    title: '⚠️ Применить VAS',
+    title: '⚠️ Apply VAS',
     risk: 'money',
     description:
-      'Применяет ОДНУ дополнительную услугу продвижения (VAS) к объявлению (put_item_vas). ⚠️ MONEY: списывает деньги с баланса; необратимо. В ответе — данные об услуге и сумма списания. ' +
-      'УСТАРЕЛО (deprecated): для одной или нескольких услуг предпочтительнее items_apply_vas (v2); для пакета услуг — items_put_item_vas_package_v2. ' +
-      'Сначала вызовите items_post_vas_prices для актуального slug и цены. Подтверждайте у пользователя. Внимание: ошибка не гарантирует, что услуга не куплена — проверяйте через несколько минут.',
+      'Applies ONE additional promotion service (VAS) to a listing (put_item_vas). ⚠️ MONEY: charges money from the balance; irreversible. The response contains service data and the charged amount. ' +
+      'DEPRECATED: for one or more services, prefer items_apply_vas (v2); for a package of services, use items_put_item_vas_package_v2. ' +
+      'First call items_post_vas_prices for the current slug and price. Confirm with the user. Note: an error does not guarantee the service was not purchased — check again in a few minutes.',
     method: 'PUT',
     path: '/core/v1/accounts/{user_id}/items/{item_id}/vas',
     domain: 'core',
     input: {
-      item_id: z.number().int().positive().describe('ID объявления, к которому применяется услуга.'),
-      vas_id: z.string().describe('Slug одной услуги VAS, например "highlight", "xl", "premium", "vip" (узнать доступные — items_post_vas_prices).'),
-      user_id: z.number().int().positive().optional().describe('ID пользователя-владельца. По умолчанию — Profile_id из .env.'),
+      item_id: z.number().int().positive().describe('ID of the listing the service is applied to.'),
+      vas_id: z.string().describe('Slug of a single VAS service, e.g. "highlight", "xl", "premium", "vip" (find available ones via items_post_vas_prices).'),
+      user_id: z.number().int().positive().optional().describe('ID of the owner user. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id', 'item_id'],
     injectProfileId: 'user_id',
@@ -310,19 +310,19 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_put_item_vas_package_v2',
-    title: '⚠️ Применить пакет VAS',
+    title: '⚠️ Apply VAS package',
     risk: 'money',
     description:
-      'Применяет ПАКЕТ услуг продвижения (VAS) к объявлению (put_item_vas_package_v2). ⚠️ MONEY: списывает деньги с баланса; необратимо. В ответе — сумма списания. ' +
-      'В отличие от items_put_item_vas (одна услуга по slug) и items_apply_vas (произвольный набор услуг/значков), этот метод покупает заранее собранный пакет по его package_id. ' +
-      'УСТАРЕЛО (deprecated), рекомендуемая замена — items_apply_vas (v2). Сначала уточните цену через items_post_vas_prices, подтверждайте у пользователя. Ошибка не гарантирует, что пакет не куплен — проверяйте через несколько минут.',
+      'Applies a PACKAGE of promotion services (VAS) to a listing (put_item_vas_package_v2). ⚠️ MONEY: charges money from the balance; irreversible. The response contains the charged amount. ' +
+      'Unlike items_put_item_vas (a single service by slug) and items_apply_vas (an arbitrary set of services/stickers), this method purchases a pre-assembled package by its package_id. ' +
+      'DEPRECATED, the recommended replacement is items_apply_vas (v2). First check the price via items_post_vas_prices and confirm with the user. An error does not guarantee the package was not purchased — check again in a few minutes.',
     method: 'PUT',
     path: '/core/v2/accounts/{user_id}/items/{item_id}/vas_packages',
     domain: 'core',
     input: {
-      item_id: z.number().int().positive().describe('ID объявления, к которому применяется пакет услуг.'),
-      package_id: z.string().describe('Идентификатор пакета услуг VAS (доступные пакеты — в ответе items_post_vas_prices).'),
-      user_id: z.number().int().positive().optional().describe('ID пользователя-владельца. По умолчанию — Profile_id из .env.'),
+      item_id: z.number().int().positive().describe('ID of the listing the service package is applied to.'),
+      package_id: z.string().describe('Identifier of the VAS service package (available packages are in the items_post_vas_prices response).'),
+      user_id: z.number().int().positive().optional().describe('ID of the owner user. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id', 'item_id'],
     injectProfileId: 'user_id',
@@ -334,22 +334,22 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'items_apply_vas',
-    title: '⚠️ Применить услуги VAS',
+    title: '⚠️ Apply VAS services',
     risk: 'money',
     description:
-      'Применяет ОДНУ ИЛИ НЕСКОЛЬКО услуг продвижения (slugs) и/или значки (stickers) к опубликованному объявлению (apply_vas, v2 — актуальный метод). ⚠️ MONEY: списывает деньги; необратимо. В ответе — id операций покупки для отслеживания статуса. ' +
-      'Предпочтительная замена устаревших items_put_item_vas (одна услуга) и items_put_item_vas_package_v2 (пакет). В одном запросе каждая услуга применяется только один раз; значки доступны лишь с услугой «XL-объявление», не более трёх. ' +
-      'Сначала уточните доступные slug/значки и цену через items_post_vas_prices, подтверждайте у пользователя.',
+      'Applies ONE OR MORE promotion services (slugs) and/or stickers to a published listing (apply_vas, v2 — the current method). ⚠️ MONEY: charges money; irreversible. The response contains the IDs of the purchase operations for status tracking. ' +
+      'The preferred replacement for the deprecated items_put_item_vas (a single service) and items_put_item_vas_package_v2 (a package). Within one request each service is applied only once; stickers are available only with the "XL listing" service, no more than three. ' +
+      'First check the available slugs/stickers and price via items_post_vas_prices, and confirm with the user.',
     method: 'PUT',
     path: '/core/v2/items/{itemId}/vas/',
     domain: 'core',
     input: {
-      itemId: z.number().int().positive().describe('ID опубликованного объявления, к которому применяются услуги.'),
+      itemId: z.number().int().positive().describe('ID of the published listing the services are applied to.'),
       slugs: z
         .array(z.string())
         .min(1)
-        .describe('Slug-и применяемых услуг продвижения, например ["highlight","xl"] (минимум 1; доступные — из items_post_vas_prices).'),
-      stickers: z.array(z.string()).optional().describe('Slug-и значков, например «Без ДТП», «Срочно» (не более 3, доступны только вместе с услугой «XL-объявление»).'),
+        .describe('Slugs of the promotion services to apply, e.g. ["highlight","xl"] (at least 1; available ones from items_post_vas_prices).'),
+      stickers: z.array(z.string()).optional().describe('Sticker slugs, e.g. "No accidents", "Urgent" (no more than 3, available only together with the "XL listing" service).'),
     },
     pathParams: ['itemId'],
     body: {

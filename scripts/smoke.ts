@@ -1,8 +1,8 @@
 /**
- * Smoke-проверка без MCP: получает токен и зовёт только READ-ONLY методы.
- * Запуск: `npm run smoke` или `npx tsx scripts/smoke.ts`.
+ * Smoke check without MCP: obtains a token and calls READ-ONLY methods only.
+ * Run with: `npm run smoke` or `npx tsx scripts/smoke.ts`.
  *
- * НЕ ЗАПУСКАТЬ С WRITE-МЕТОДАМИ — это боевой аккаунт.
+ * DO NOT RUN WITH WRITE METHODS — this is a live (production) account.
  */
 import { AvitoClient } from '../src/core/client.js';
 import { config } from '../src/config.js';

@@ -1,29 +1,29 @@
 /**
- * Домен `auth` — соответствует swaggers/Авторизация.json
+ * Domain `auth` — corresponds to swaggers/Авторизация.json
  *
- * Все три tool'а работают БЕЗ Bearer-токена (это и есть auth) и шлют x-www-form-urlencoded.
- * Учитываем quirk: в swagger три пути выглядят как "/token", "/token‎", "/token‎‎"
- * (zero-width chars для уникальности JSON-ключей). Фактический URL у всех — /token.
+ * All three tools work WITHOUT a Bearer token (this is auth itself) and send x-www-form-urlencoded.
+ * Note the quirk: in swagger the three paths look like "/token", "/token‎", "/token‎‎"
+ * (zero-width chars to keep JSON keys unique). The actual URL for all of them is /token.
  *
- * Этот домен в основном опционален для AI-агента: AvitoClient сам управляет токеном через
- * client_credentials внутри TokenStore. Tools полезны если агент явно хочет получить токен
- * (например, для authorization_code flow или для отладки).
+ * This domain is mostly optional for an AI agent: AvitoClient manages the token itself via
+ * client_credentials inside TokenStore. The tools are useful when an agent explicitly wants to obtain a token
+ * (for example, for the authorization_code flow or for debugging).
  */
 import { z } from 'zod';
 
 import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 
 export const register: DomainRegister = (server, ctx) => {
-  // 1. client_credentials — получение app-токена (то же, что делает TokenStore автоматически).
+  // 1. client_credentials — obtaining an app token (the same thing TokenStore does automatically).
   defineTool(server, ctx, {
     name: 'auth_get_access_token',
-    title: 'OAuth: токен приложения',
+    title: 'OAuth: application token',
     risk: 'sensitive',
     description:
-      'OAuth 2.0 client_credentials: получить access_token приложения. ' +
-      'Возвращает {access_token, expires_in (сек), token_type}. ' +
-      'Внутренне MCP-сервер уже делает это автоматически — используйте только для отладки. ' +
-      'client_id/client_secret подставляются из .env, передавать не нужно.',
+      'OAuth 2.0 client_credentials: obtain an application access_token. ' +
+      'Returns {access_token, expires_in (sec), token_type}. ' +
+      'Internally the MCP server already does this automatically — use only for debugging. ' +
+      'client_id/client_secret are filled in from .env, no need to pass them.',
     method: 'POST',
     path: '/token',
     auth: false,
@@ -39,16 +39,16 @@ export const register: DomainRegister = (server, ctx) => {
     },
   });
 
-  // 2. authorization_code — обмен кода авторизации на токен пользователя.
+  // 2. authorization_code — exchanging an authorization code for a user token.
   defineTool(server, ctx, {
     name: 'auth_get_access_token_authorization_code',
-    title: 'OAuth: обмен кода авторизации',
+    title: 'OAuth: exchange authorization code',
     risk: 'sensitive',
     description:
-      'OAuth 2.0 authorization_code: обмен кода авторизации (полученного после редиректа ' +
-      'с https://avito.ru/oauth) на access_token + refresh_token для работы от лица пользователя. ' +
-      'Возвращает {access_token, refresh_token, expires_in, scope, token_type}. ' +
-      'client_id/client_secret подставляются из .env, передавайте только code.',
+      'OAuth 2.0 authorization_code: exchange an authorization code (obtained after the redirect ' +
+      'from https://avito.ru/oauth) for an access_token + refresh_token to act on behalf of the user. ' +
+      'Returns {access_token, refresh_token, expires_in, scope, token_type}. ' +
+      'client_id/client_secret are filled in from .env, pass only code.',
     method: 'POST',
     path: '/token',
     auth: false,
@@ -57,7 +57,7 @@ export const register: DomainRegister = (server, ctx) => {
       code: z
         .string()
         .min(1)
-        .describe('Код, полученный из redirect URI после подтверждения прав пользователем'),
+        .describe('The code obtained from the redirect URI after the user grants permissions'),
     },
     body: {
       contentType: 'application/x-www-form-urlencoded',
@@ -70,15 +70,15 @@ export const register: DomainRegister = (server, ctx) => {
     },
   });
 
-  // 3. refresh_token — обновление токена пользователя.
+  // 3. refresh_token — refreshing a user token.
   defineTool(server, ctx, {
     name: 'auth_refresh_access_token_authorization_code',
-    title: 'OAuth: обновить токен пользователя',
+    title: 'OAuth: refresh user token',
     risk: 'sensitive',
     description:
-      'OAuth 2.0 refresh_token: обновление истёкшего access_token пользователя через refresh_token. ' +
-      'Возвращает новые {access_token, refresh_token, expires_in, scope, token_type}. ' +
-      'client_id/client_secret подставляются из .env, передавайте только refresh_token.',
+      'OAuth 2.0 refresh_token: refresh an expired user access_token via refresh_token. ' +
+      'Returns a new {access_token, refresh_token, expires_in, scope, token_type}. ' +
+      'client_id/client_secret are filled in from .env, pass only refresh_token.',
     method: 'POST',
     path: '/token',
     auth: false,
@@ -87,7 +87,7 @@ export const register: DomainRegister = (server, ctx) => {
       refresh_token: z
         .string()
         .min(1)
-        .describe('Refresh-токен, полученный при первичной authorization_code авторизации'),
+        .describe('The refresh token obtained during the initial authorization_code authorization'),
     },
     body: {
       contentType: 'application/x-www-form-urlencoded',
