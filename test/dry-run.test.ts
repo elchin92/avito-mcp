@@ -1,11 +1,11 @@
 /**
- * Тесты dry-run middleware (v0.7.0). Проверяем что:
- *   - destructive tools принимают параметр dryRun (присутствует в schema)
- *   - dryRun=true возвращает preview без HTTP-вызова
- *   - dryRun=false выполняет реальный HTTP-вызов
- *   - AVITO_MCP_DRY_RUN_DEFAULT=true делает то же, что dryRun=true
- *   - read tools НЕ имеют dryRun в schema (там бессмысленно)
- *   - dryRun обходит confirmation flow
+ * Tests for the dry-run middleware (v0.7.0). We verify that:
+ *   - destructive tools accept a dryRun parameter (present in the schema)
+ *   - dryRun=true returns a preview without an HTTP call
+ *   - dryRun=false performs a real HTTP call
+ *   - AVITO_MCP_DRY_RUN_DEFAULT=true behaves the same as dryRun=true
+ *   - read tools do NOT have dryRun in their schema (it would be meaningless there)
+ *   - dryRun bypasses the confirmation flow
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';

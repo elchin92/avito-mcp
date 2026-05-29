@@ -1,7 +1,7 @@
 /**
- * Debug-скрипт: запускает MCP-сервер в той же программе через InMemoryTransport
- * и печатает список зарегистрированных tools (имя + описание + JSON-схему inputSchema).
- * Запуск: `npm run list-tools` или `npx tsx scripts/list-tools.ts`.
+ * Debug script: starts the MCP server in the same process via InMemoryTransport
+ * and prints the list of registered tools (name + description + inputSchema JSON schema).
+ * Run with: `npm run list-tools` or `npx tsx scripts/list-tools.ts`.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -36,7 +36,7 @@ async function main() {
     process.stdout.write(`  inputSchema: ${JSON.stringify(tool.inputSchema)}\n\n`);
   }
 
-  // E2E sanity: реальный вызов одного read-only tool через MCP протокол → боевой Avito.
+  // E2E sanity: a real call of one read-only tool through the MCP protocol -> production Avito.
   if (process.env.CALL_USER_INFO === '1') {
     process.stdout.write('\n== Calling user_get_user_info_self via MCP ==\n');
     const result = await client.callTool({ name: 'user_get_user_info_self', arguments: {} });

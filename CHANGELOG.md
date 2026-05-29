@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-05-29
+
+**Internationalization (i18n) pass.** All tool definitions, code comments and runtime-facing strings are now in English for a global audience of developers and AI agents; MCP prompts are bilingual (English + Russian). No tools added/removed/renamed, no schema or behaviour change — pure surface-language metadata. `tsc`, `eslint` and 144/144 tests pass.
+
+### Changed
+
+- **All 145 tool `title` / `description` / parameter docs → English.** The Russian display titles added in v0.7.1 are translated; the `⚠️` destructive prefix is preserved. Tool name slugs, API field names, paths and enum values are unchanged.
+- **MCP prompts are now bilingual** (`src/prompts.ts`) — English first, then Russian, so both audiences can use them. Tool names and JSON snippets inside the prompts are untouched.
+- **Code comments across `src/`, `scripts/` and tests translated to English.**
+- **Runtime-facing strings → English** — the MCP server `instructions` / `description`, the `dryRun` / `idempotencyKey` parameter docs on destructive tools, the confirmation-flow response messages (`meta_*_action`), and every `avito://` resource title/description. The server `description` tool count was also corrected from a stale "142" to 145.
+- **`registry.test.ts` convention flipped** — tool descriptions are now asserted to be English (no Cyrillic), guarding against regressions in CI.
+
+### Notes
+
+- Swagger filenames in `swaggers/` (e.g. `Доставка.json`) keep their Russian names — they are the real on-disk Avito spec files.
+- Avito API response strings matched in tests (e.g. error-message regexes) are unchanged — they reflect what Avito itself returns.
+
 ## [0.7.5] - 2026-05-29
 
 **Tool-definition quality pass.** Every one of the 137 API tools had its description and parameter docs rewritten for agent legibility, following Glama's Tool Definition Quality rubric (purpose → usage → behaviour/side-effects → parameter semantics → disambiguation). Pure metadata: no tool added/removed/renamed, no schema/behaviour change. `tsc`, `eslint` and 144/144 tests all pass.

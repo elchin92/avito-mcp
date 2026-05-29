@@ -1,9 +1,9 @@
 /**
- * Домен `stock` — swaggers/Управление остатками.json (2 endpoints).
+ * Domain `stock` — swaggers/Stock management.json (2 endpoints).
  *
- * Quirks: в swagger операции БЕЗ operationId — имена tools назначены семантически.
+ * Quirks: the swagger operations have NO operationId — tool names were assigned semantically.
  *
- * ⚠️ Write: update_stocks меняет количество товара в объявлениях.
+ * ⚠️ Write: update_stocks changes the item quantity in listings.
  */
 import { z } from 'zod';
 
@@ -12,10 +12,10 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'stock_get_stocks_info',
-    title: 'Остатки: получить',
+    title: 'Stock: get',
     risk: 'read',
     description:
-      'Читает текущие остатки (доступное количество) по списку объявлений на складе (get_stocks_info). Только чтение, ничего не меняет. Возвращает по каждому item_id: quantity (доступно = подано/отредактировано минус бронь), is_unlimited, is_multiple, is_out_of_stock. Изменение остатков — stock_update_stocks.',
+      'Reads current stock (available quantity) for a list of listings in the warehouse (get_stocks_info). Read-only, changes nothing. Returns for each item_id: quantity (available = submitted/edited minus reserved), is_unlimited, is_multiple, is_out_of_stock. To change stock, use stock_update_stocks.',
     method: 'POST',
     path: '/stock-management/1/info',
     domain: 'stock-management',
@@ -24,21 +24,21 @@ export const register: DomainRegister = (server, ctx) => {
         .array(z.number().int().positive())
         .min(1)
         .max(200)
-        .describe('Идентификаторы объявлений на сайте Avito (item_id), для которых нужны остатки; от 1 до 200 за один запрос.'),
+        .describe('IDs of the listings on the Avito website (item_id) to get stock for; from 1 to 200 per request.'),
       strong_consistency: z
         .boolean()
         .optional()
-        .describe('Если true — пропустить кеш и отдать данные из базы (строгая консистентность): свежее, но медленнее. По умолчанию данные могут браться из кеша. Опционально.'),
+        .describe('If true, skip the cache and return data from the database (strong consistency): fresher but slower. By default data may be served from the cache. Optional.'),
     },
     body: { contentType: 'application/json', fields: ['item_ids', 'strong_consistency'] },
   });
 
   defineTool(server, ctx, {
     name: 'stock_update_stocks',
-    title: '⚠️ Остатки: изменить',
+    title: '⚠️ Stock: update',
     risk: 'public',
     description:
-      '⚠️ Обновляет остатки (количество) товаров по объявлениям на складе (update_stocks). Влияет на доступность объявлений к заказу: quantity=0 переводит объявление в «нет в наличии». Принимает массив {item_id, quantity, external_id?}; quantity — целое 0..999999. Возвращает по каждому объявлению success и errors. Текущие остатки — stock_get_stocks_info.',
+      '⚠️ Updates the stock (quantity) of items across listings in the warehouse (update_stocks). Affects whether listings are available to order: quantity=0 marks a listing as "out of stock". Accepts an array of {item_id, quantity, external_id?}; quantity is an integer 0..999999. Returns success and errors for each listing. For current stock, use stock_get_stocks_info.',
     method: 'PUT',
     path: '/stock-management/1/stocks',
     domain: 'stock-management',
@@ -46,17 +46,17 @@ export const register: DomainRegister = (server, ctx) => {
       stocks: z
         .array(
           z.object({
-            item_id: z.number().int().positive().describe('Идентификатор объявления на сайте Avito, для которого задаётся остаток. Обязателен.'),
-            quantity: z.number().int().min(0).describe('Новое количество товара в наличии; целое от 0 до 999999. 0 означает отсутствие товара. Обязателен.'),
+            item_id: z.number().int().positive().describe('ID of the listing on the Avito website for which stock is being set. Required.'),
+            quantity: z.number().int().min(0).describe('New available quantity of the item; an integer from 0 to 999999. 0 means out of stock. Required.'),
             external_id: z
               .string()
               .optional()
-              .describe('Идентификатор объявления во внешней системе (например, в учётной системе продавца); возвращается в ответе. Опционально.'),
+              .describe('ID of the listing in an external system (for example, the seller\'s inventory system); returned in the response. Optional.'),
           }),
         )
         .min(1)
         .max(200)
-        .describe('Массив остатков по объявлениям; от 1 до 200 элементов за один запрос.'),
+        .describe('Array of stock entries per listing; from 1 to 200 elements per request.'),
     },
     body: { contentType: 'application/json', fields: ['stocks'] },
   });

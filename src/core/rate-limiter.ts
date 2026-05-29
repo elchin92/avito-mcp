@@ -10,8 +10,8 @@ export interface RateSnapshot {
 }
 
 /**
- * Хранит последний снимок X-RateLimit-* для каждого "домена" (логической группы tools).
- * Используется (а) для observability через meta_get_rate_limits, (б) мягкого троттлинга.
+ * Stores the latest X-RateLimit-* snapshot for each "domain" (a logical group of tools).
+ * Used (a) for observability via meta_get_rate_limits, and (b) for soft throttling.
  */
 export class RateLimiter {
   private snapshots = new Map<string, RateSnapshot>();
@@ -35,7 +35,7 @@ export class RateLimiter {
     return snap;
   }
 
-  /** Если remaining <= 1 — мягко спим 1 сек, чтобы дать reset развернуться. */
+  /** If remaining <= 1, sleep softly for 1 second to let the reset window unfold. */
   async waitIfNeeded(domain: string): Promise<void> {
     const snap = this.snapshots.get(domain);
     if (!snap || snap.remaining === undefined) return;

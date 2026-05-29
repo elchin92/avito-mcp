@@ -1,50 +1,50 @@
 /**
- * Домен `delivery` — swaggers/Доставка.json (31 endpoints, самый большой).
+ * Domain `delivery` — swaggers/Доставка.json (31 endpoints, the largest one).
  *
- * Это B2B-партнёрский API логистики (только для партнёров СД — служб доставки).
- * Большинство методов вы не вызовете на обычном аккаунте.
+ * This is a B2B partner logistics API (only for delivery-service partners).
+ * You won't be able to call most of these methods from a regular account.
  *
  * Quirks:
- *   - operationId `checkConfirmationCode` коллидирует с одноимённым в orders.json.
- *     Уникальность через префикс домена.
- *   - Сложные nested body описаны минимально через z.record(z.unknown()) — полные схемы
- *     см. в swaggers/Доставка.json (201 schemas компонент).
- *   - Большая часть путей под /delivery-sandbox/ — это намеренно эндпоинты тестовой среды
- *     для партнёров СД; на боевом аккаунте они возвращают 403/404 для обычных пользователей.
+ *   - The `checkConfirmationCode` operationId collides with the same-named one in orders.json.
+ *     Uniqueness is ensured via the domain prefix.
+ *   - Complex nested bodies are described minimally via z.record(z.unknown()) — for full schemas
+ *     see swaggers/Доставка.json (201 schema components).
+ *   - Most of the paths under /delivery-sandbox/ are intentionally test-environment endpoints
+ *     for delivery-service partners; on a production account they return 403/404 for regular users.
  */
 import { z } from 'zod';
 
 import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 
-/** Универсальный helper — passthrough-объект со ссылкой на swagger для нестрого типизированного body. */
+/** Generic helper — a passthrough object with a swagger reference for a loosely typed body. */
 const opaque = (refToSwagger: string) =>
-  z.record(z.string(), z.unknown()).describe(`См. ${refToSwagger} в swaggers/Доставка.json`);
+  z.record(z.string(), z.unknown()).describe(`See ${refToSwagger} in swaggers/Доставка.json`);
 
 export const register: DomainRegister = (server, ctx) => {
   // ────────────────────────────── Announcements ──────────────────────────────
 
   defineTool(server, ctx, {
     name: 'delivery_create_announcement_3pl',
-    title: 'Доставка: создать анонс [3PL]',
+    title: 'Delivery: create announcement [3PL]',
     risk: 'write',
     description:
-      '[3PL] Создаёт анонс о планируемой отгрузке из одной службы доставки (sender) в другую (receiver). ' +
-      'Метод реализуется на стороне СД — на обычном аккаунте продавца вернёт 403/404. Используйте, когда нужно ' +
-      'предупредить принимающую сторону о готовящейся передаче посылки; в отличие от delivery_create_parcel ' +
-      'это анонс отгрузки, а не создание самой посылки.',
+      '[3PL] Creates an announcement of a planned shipment from one delivery service (sender) to another (receiver). ' +
+      'The method is implemented on the delivery-service side — on a regular seller account it returns 403/404. Use it when you need ' +
+      'to notify the receiving party about an upcoming parcel handover; unlike delivery_create_parcel ' +
+      'this is a shipment announcement, not the creation of the parcel itself.',
     method: 'POST',
     path: '/createAnnouncement',
     domain: 'delivery',
     input: {
-      announcementID: opaque('AnnouncementID').describe('Идентификатор анонса (обязателен).'),
-      announcementType: z.string().describe('Тип анонса. Enum: DELIVERY (доставка) | PICKUP (забор).'),
+      announcementID: opaque('AnnouncementID').describe('Announcement identifier (required).'),
+      announcementType: z.string().describe('Announcement type. Enum: DELIVERY (delivery) | PICKUP (pickup).'),
       barcode: z
         .string()
-        .describe('Уникальный ШК анонса, печатается на акте приёма-передачи. Пример: 000987654321.'),
-      date: opaque('Date').describe('Дата и время создания анонса в формате RFC 3339, UTC.'),
-      packages: z.array(opaque('Package')).describe('Список грузомест (минимум одно).'),
-      receiver: opaque('Receiver').describe('Принимающая сторона: тип (3PL), название, телефоны, email, узел доставки/СЦ.'),
-      sender: opaque('Sender').describe('Отправляющая сторона: тип (3PL), название, телефоны, email, узел доставки/СЦ.'),
+        .describe('Unique announcement barcode, printed on the acceptance/handover act. Example: 000987654321.'),
+      date: opaque('Date').describe('Announcement creation date and time in RFC 3339 format, UTC.'),
+      packages: z.array(opaque('Package')).describe('List of cargo units (at least one).'),
+      receiver: opaque('Receiver').describe('Receiving party: type (3PL), name, phones, email, delivery node/sorting center.'),
+      sender: opaque('Sender').describe('Sending party: type (3PL), name, phones, email, delivery node/sorting center.'),
     },
     body: {
       contentType: 'application/json',
@@ -54,45 +54,45 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_cancel_announcement_3pl',
-    title: 'Доставка: отмена анонса [3PL]',
+    title: 'Delivery: cancel announcement [3PL]',
     risk: 'write',
     destructiveHint: true,
     description:
-      '[3PL] Отменяет ранее созданный анонс отгрузки в СД. Необратимо отменяет анонс, созданный через ' +
-      'delivery_create_announcement_3pl. Метод реализуется на стороне СД — на обычном аккаунте продавца вернёт 403/404.',
+      '[3PL] Cancels a previously created shipment announcement in the delivery service. Irreversibly cancels an announcement created via ' +
+      'delivery_create_announcement_3pl. The method is implemented on the delivery-service side — on a regular seller account it returns 403/404.',
     method: 'POST',
     path: '/cancelAnnouncement',
     domain: 'delivery',
     input: {
-      announcementID: opaque('AnnouncementID').describe('Идентификатор отменяемого анонса (обязателен).'),
-      reason: z.string().optional().describe('Причина отмены (опционально).'),
+      announcementID: opaque('AnnouncementID').describe('Identifier of the announcement to cancel (required).'),
+      reason: z.string().optional().describe('Cancellation reason (optional).'),
     },
     body: { contentType: 'application/json', fields: ['announcementID', 'reason'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_create_parcel',
-    title: '⚠️ Доставка: создать посылку [3PL]',
+    title: '⚠️ Delivery: create parcel [3PL]',
     risk: 'write',
     description:
-      '[3PL] Боевое создание посылки на стороне службы доставки (CreateParcelRequest). Метод реализуется ' +
-      'партнёром СД — на обычном аккаунте продавца вернёт 403/404. Обязательны orderID, parcelID, items, ' +
-      'sender, receiver, payment. В отличие от delivery_create_sandbox_parcel_v2 ([SANDBOX v2]) это продакшен, ' +
-      'создание реальной посылки.',
+      '[3PL] Production creation of a parcel on the delivery-service side (CreateParcelRequest). The method is implemented ' +
+      'by the delivery-service partner — on a regular seller account it returns 403/404. orderID, parcelID, items, ' +
+      'sender, receiver, payment are required. Unlike delivery_create_sandbox_parcel_v2 ([SANDBOX v2]), this is production, ' +
+      'the creation of a real parcel.',
     method: 'POST',
     path: '/createParcel',
     domain: 'delivery',
     input: {
-      orderID: z.string().describe('Идентификатор заказа Avito.'),
-      parcelID: z.string().describe('Идентификатор посылки на стороне СД.'),
-      items: z.array(opaque('CreateParcelItem')).min(1).describe('Состав посылки (товары); минимум один элемент.'),
-      sender: opaque('CreateParcelClient').describe('Отправитель: ФИО/название, телефон, адрес/узел отправки.'),
-      receiver: opaque('CreateParcelClient').describe('Получатель: ФИО, телефон, адрес или код ПВЗ.'),
-      payment: opaque('CreateParcelPayment').describe('Параметры оплаты: способ, сумма, объявленная ценность.'),
-      barcodes: z.array(z.string()).optional().describe('Штрихкоды посылки (опционально).'),
-      directOrderID: z.string().optional().describe('Прямой идентификатор заказа у СД (опционально).'),
-      options: opaque('CreateParcelOptions').optional().describe('Доп. опции посылки (опционально).'),
-      package: opaque('CreateParcelPackage').optional().describe('Параметры упаковки: габариты, вес (опционально).'),
+      orderID: z.string().describe('Avito order identifier.'),
+      parcelID: z.string().describe('Parcel identifier on the delivery-service side.'),
+      items: z.array(opaque('CreateParcelItem')).min(1).describe('Parcel contents (items); at least one element.'),
+      sender: opaque('CreateParcelClient').describe('Sender: full name/company name, phone, address/sending node.'),
+      receiver: opaque('CreateParcelClient').describe('Receiver: full name, phone, address or pickup-point code.'),
+      payment: opaque('CreateParcelPayment').describe('Payment parameters: method, amount, declared value.'),
+      barcodes: z.array(z.string()).optional().describe('Parcel barcodes (optional).'),
+      directOrderID: z.string().optional().describe('Direct order identifier at the delivery service (optional).'),
+      options: opaque('CreateParcelOptions').optional().describe('Additional parcel options (optional).'),
+      package: opaque('CreateParcelPackage').optional().describe('Packaging parameters: dimensions, weight (optional).'),
     },
     body: {
       contentType: 'application/json',
@@ -115,23 +115,23 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_sandbox_create_announcement',
-    title: 'Доставка: создать анонс [sandbox]',
+    title: 'Delivery: create announcement [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Создаёт анонс о планируемой отгрузке в Avito в тестовой среде; после создания анонс ' +
-      'направляется в СД, указанную в receiver. Только для партнёров СД. В отличие от ' +
-      'delivery_create_announcement_3pl (боевой /createAnnouncement) это песочница, без последствий.',
+      '[SANDBOX] Creates an announcement of a planned shipment to Avito in the test environment; after creation the announcement ' +
+      'is routed to the delivery service specified in receiver. For delivery-service partners only. Unlike ' +
+      'delivery_create_announcement_3pl (production /createAnnouncement), this is a sandbox, with no consequences.',
     method: 'POST',
     path: '/delivery-sandbox/announcements/create',
     domain: 'delivery',
     input: {
-      announcementID: opaque('AnnouncementID').describe('Идентификатор анонса (обязателен).'),
-      announcementType: z.string().describe('Тип анонса. Enum: DELIVERY | PICKUP.'),
-      barcode: z.string().describe('Уникальный ШК анонса (печатается на акте приёма-передачи).'),
-      date: opaque('Date').describe('Дата и время создания анонса в формате RFC 3339, UTC.'),
-      packages: z.array(opaque('Package')).describe('Список грузомест.'),
-      receiver: opaque('Receiver').describe('Принимающая СД: тип, название, телефоны, email, узел доставки/СЦ.'),
-      sender: opaque('Sender').describe('Отправляющая сторона: тип, название, телефоны, email, узел отправки.'),
+      announcementID: opaque('AnnouncementID').describe('Announcement identifier (required).'),
+      announcementType: z.string().describe('Announcement type. Enum: DELIVERY | PICKUP.'),
+      barcode: z.string().describe('Unique announcement barcode (printed on the acceptance/handover act).'),
+      date: opaque('Date').describe('Announcement creation date and time in RFC 3339 format, UTC.'),
+      packages: z.array(opaque('Package')).describe('List of cargo units.'),
+      receiver: opaque('Receiver').describe('Receiving delivery service: type, name, phones, email, delivery node/sorting center.'),
+      sender: opaque('Sender').describe('Sending party: type, name, phones, email, sending node.'),
     },
     body: {
       contentType: 'application/json',
@@ -141,20 +141,20 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_sandbox_track_announcement',
-    title: 'Доставка: трекинг анонса [sandbox]',
+    title: 'Delivery: track announcement [sandbox]',
     risk: 'read',
     description:
-      '[SANDBOX] Принимает трек (событие) по анонсу от службы доставки в тестовой среде. Используйте для ' +
-      'имитации продвижения анонса (приёмка, доставка, отмена). Только для партнёров СД.',
+      '[SANDBOX] Accepts a tracking event for an announcement from the delivery service in the test environment. Use it to ' +
+      'simulate the progress of an announcement (acceptance, delivery, cancellation). For delivery-service partners only.',
     method: 'POST',
     path: '/delivery-sandbox/announcements/track',
     domain: 'delivery',
     input: {
-      announcementID: opaque('AnnouncementID').describe('Идентификатор отслеживаемого анонса (обязателен).'),
-      date: opaque('Date').describe('Дата события в формате RFC 3339, UTC.'),
+      announcementID: opaque('AnnouncementID').describe('Identifier of the tracked announcement (required).'),
+      date: opaque('Date').describe('Event date in RFC 3339 format, UTC.'),
       event: z
         .string()
-        .describe('Тип события. Enum: ACCEPTANCE_DONE | CANCELLED | DELIVERED | RECEIVED.'),
+        .describe('Event type. Enum: ACCEPTANCE_DONE | CANCELLED | DELIVERED | RECEIVED.'),
     },
     body: { contentType: 'application/json', fields: ['announcementID', 'date', 'event'] },
   });
@@ -163,22 +163,22 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_custom_area_schedule',
-    title: 'Доставка: график зоны [sandbox]',
+    title: 'Delivery: zone schedule [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Задаёт график работы зоны доставки на конкретный день, отличный от регулярного расписания ' +
-      '(например, праздничные/выходные дни). Перезаливка перезаписывает прежнее расписание на эти даты. ' +
-      'Только для партнёров СД. Тело — массив расписаний напрямую (без обёртки).',
+      '[SANDBOX] Sets the working schedule of a delivery zone for a specific day that differs from the regular schedule ' +
+      '(for example, holidays/weekends). Re-uploading overwrites the previous schedule for those dates. ' +
+      'For delivery-service partners only. The body is an array of schedules directly (no wrapper).',
     method: 'POST',
     path: '/delivery-sandbox/areas/custom-schedule',
     domain: 'delivery',
     input: {
       schedules: z
         .array(opaque('CustomAreaSchedule'))
-        .describe('Список уникальных кастомных расписаний по датам (тег зоны, дата, интервалы работы).'),
+        .describe('List of unique custom schedules by date (zone tag, date, working intervals).'),
     },
-    // customAreaScheduleRequest = top-level JSON array. Шлём массив напрямую,
-    // как соседние array-tools (sorting-center / areas / tags / terminals / zones).
+    // customAreaScheduleRequest = top-level JSON array. We send the array directly,
+    // like the neighboring array tools (sorting-center / areas / tags / terminals / zones).
     body: { contentType: 'application/json', transform: (b) => (b.schedules as unknown[]) ?? [] },
   });
 
@@ -186,103 +186,103 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_sandbox_cancel_parcel',
-    title: 'Доставка: отмена посылки [sandbox]',
+    title: 'Delivery: cancel parcel [sandbox]',
     risk: 'write',
     destructiveHint: true,
     description:
-      '[SANDBOX] Отменяет тестовую посылку от лица получателя. Метод реализуется на стороне СД — только для ' +
-      'партнёров СД. В отличие от delivery_v1_cancel_parcel ([SANDBOX v1] с полем options) это базовый контракт ' +
-      'с полем actor.',
+      '[SANDBOX] Cancels a test parcel on behalf of the receiver. The method is implemented on the delivery-service side — for ' +
+      'delivery-service partners only. Unlike delivery_v1_cancel_parcel ([SANDBOX v1] with an options field), this is the base contract ' +
+      'with an actor field.',
     method: 'POST',
     path: '/delivery-sandbox/cancelParcel',
     domain: 'delivery',
     input: {
-      parcelID: opaque('ParcelID').describe('Идентификатор отменяемой посылки (обязателен).'),
-      actor: z.string().describe('Кто инициирует отмену. Enum: receiver (получатель).'),
+      parcelID: opaque('ParcelID').describe('Identifier of the parcel to cancel (required).'),
+      actor: z.string().describe('Who initiates the cancellation. Enum: receiver (the recipient).'),
     },
     body: { contentType: 'application/json', fields: ['parcelID', 'actor'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_check_confirmation_code',
-    title: 'Доставка: проверка кода [sandbox]',
+    title: 'Delivery: check code [sandbox]',
     risk: 'read',
     description:
-      '[SANDBOX] Проверяет код подтверждения, который покупатель показывает на ПВЗ при выдаче. Возвращает ' +
-      'статус проверки (success / иные). Только для партнёров СД; одноимённый эндпоинт есть в домене orders — ' +
-      'этот относится к посылкам доставки.',
+      '[SANDBOX] Verifies the confirmation code that the buyer shows at the pickup point upon handover. Returns ' +
+      'the verification status (success / other). For delivery-service partners only; a same-named endpoint exists in the orders domain — ' +
+      'this one applies to delivery parcels.',
     method: 'POST',
     path: '/delivery-sandbox/order/checkConfirmationCode',
     domain: 'delivery',
     input: {
-      parcelID: z.string().describe('Идентификатор посылки.'),
-      confirmCode: z.string().describe('Код подтверждения, предъявленный покупателем на ПВЗ.'),
+      parcelID: z.string().describe('Parcel identifier.'),
+      confirmCode: z.string().describe('Confirmation code presented by the buyer at the pickup point.'),
     },
     body: { contentType: 'application/json', fields: ['parcelID', 'confirmCode'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_set_order_properties',
-    title: 'Доставка: свойства посылки [sandbox]',
+    title: 'Delivery: parcel properties [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Отправляет в Avito параметры доставки посылки (например, итоговую стоимость доставки). При ' +
-      'повторной передаче данные перезаписываются — важно слать актуальные значения. Только для партнёров СД.',
+      '[SANDBOX] Sends parcel delivery parameters to Avito (for example, the final delivery cost). On ' +
+      'a repeated submission the data is overwritten — it is important to send current values. For delivery-service partners only.',
     method: 'POST',
     path: '/delivery-sandbox/order/properties',
     domain: 'delivery',
     input: {
-      orderId: opaque('OrderID').describe('Идентификатор заказа.'),
-      properties: opaque('Properties').describe('Параметры доставки посылки (например, итоговая стоимость доставки).'),
+      orderId: opaque('OrderID').describe('Order identifier.'),
+      properties: opaque('Properties').describe('Parcel delivery parameters (for example, the final delivery cost).'),
     },
     body: { contentType: 'application/json', fields: ['orderId', 'properties'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_set_order_real_address',
-    title: 'Доставка: фактический адрес [sandbox]',
+    title: 'Delivery: actual address [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Передаёт в Avito фактический ПВЗ приёма/возврата посылки — нужен для агентских и клиентских ' +
-      'возвратов. Только для партнёров СД.',
+      '[SANDBOX] Sends Avito the actual pickup point for parcel acceptance/return — needed for agent and customer ' +
+      'returns. For delivery-service partners only.',
     method: 'POST',
     path: '/delivery-sandbox/order/realAddress',
     domain: 'delivery',
     input: {
-      orderId: opaque('OrderID').describe('Идентификатор заказа.'),
-      address: opaque('Address').describe('Фактический ПВЗ/адрес приёма или возврата посылки.'),
+      orderId: opaque('OrderID').describe('Order identifier.'),
+      address: opaque('Address').describe('Actual pickup point/address for parcel acceptance or return.'),
     },
     body: { contentType: 'application/json', fields: ['orderId', 'address'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_tracking',
-    title: 'Доставка: событие трекинга [sandbox]',
+    title: 'Delivery: tracking event [sandbox]',
     risk: 'read',
     description:
-      '[SANDBOX] Передаёт в Avito информацию по трекингу посылки (смена статуса доставки) от лица СД. ' +
-      'Требует соблюдения политики повторных отправок. Только для партнёров СД. Несмотря на title «событие», ' +
-      'метод записывает событие — это запись, а не чтение статуса.',
+      '[SANDBOX] Sends Avito parcel tracking information (a delivery status change) on behalf of the delivery service. ' +
+      'Requires compliance with the retry policy. For delivery-service partners only. Despite the "event" wording in the title, ' +
+      'the method records an event — it is a write, not a status read.',
     method: 'POST',
     path: '/delivery-sandbox/order/tracking',
     domain: 'delivery',
     input: {
-      orderId: opaque('OrderID').describe('Идентификатор заказа.'),
+      orderId: opaque('OrderID').describe('Order identifier.'),
       avitoEventType: z
         .string()
-        .describe('Код события на стороне Avito. Пример: RECEIVED_AT_TRANSIT_TERMINAL.'),
+        .describe('Event code on the Avito side. Example: RECEIVED_AT_TRANSIT_TERMINAL.'),
       avitoStatus: opaque('AvitoStatus').describe(
-        'Статус посылки. Enum: CONFIRMED | IN_TRANSIT | ON_DELIVERY | DELIVERED | IN_TRANSIT_RETURN | ' +
+        'Parcel status. Enum: CONFIRMED | IN_TRANSIT | ON_DELIVERY | DELIVERED | IN_TRANSIT_RETURN | ' +
           'ON_DELIVERY_RETURN | RETURNED | LOST | DESTROYED.',
       ),
-      date: opaque('Date').describe('Дата и время события в формате RFC 3339, UTC.'),
-      location: z.string().describe('Населённый пункт события в именительном падеже. Пример: Казань.'),
-      providerEventCode: z.string().describe('Код события по версии службы доставки.'),
-      comment: z.string().optional().describe('Комментарий к статусу (опционально).'),
+      date: opaque('Date').describe('Event date and time in RFC 3339 format, UTC.'),
+      location: z.string().describe('Event locality in the nominative case. Example: Kazan.'),
+      providerEventCode: z.string().describe('Event code as defined by the delivery service.'),
+      comment: z.string().optional().describe('Comment on the status (optional).'),
       options: z
         .record(z.string(), z.unknown())
         .optional()
-        .describe('Доп. опции к статусу: штрихкод посылки, возвратные номера (опционально).'),
+        .describe('Additional status options: parcel barcode, return numbers (optional).'),
     },
     body: {
       contentType: 'application/json',
@@ -292,16 +292,16 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_prohibit_order_acceptance',
-    title: 'Доставка: запрет приёма [sandbox]',
+    title: 'Delivery: prohibit acceptance [sandbox]',
     risk: 'write',
     destructiveHint: true,
     description:
-      '[SANDBOX] Запрещает приём посылки от отправителя на стороне СД — посылка не будет принята в работу. ' +
-      'Метод реализуется на стороне СД, только для партнёров СД. Используется в сценарии отмены посылки.',
+      '[SANDBOX] Prohibits accepting a parcel from the sender on the delivery-service side — the parcel will not be taken into processing. ' +
+      'The method is implemented on the delivery-service side, for delivery-service partners only. Used in the parcel cancellation flow.',
     method: 'POST',
     path: '/delivery-sandbox/prohibitOrderAcceptance',
     domain: 'delivery',
-    input: { orderId: opaque('OrderID').describe('Идентификатор заказа, приём которого запрещается.') },
+    input: { orderId: opaque('OrderID').describe('Identifier of the order whose acceptance is prohibited.') },
     body: { contentType: 'application/json', fields: ['orderId'] },
   });
 
@@ -309,11 +309,11 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_get_sorting_center',
-    title: 'Доставка: список СЦ [sandbox]',
+    title: 'Delivery: list sorting centers [sandbox]',
     risk: 'read',
     description:
-      '[SANDBOX] Возвращает сортировочные центры (ХАБы) для переданных служб доставки. Только для партнёров СД. ' +
-      'Коды СД: pochta (Почта России), exmail, bb (Boxberry), pp (PickPoint), dpd и др.',
+      '[SANDBOX] Returns the sorting centers (hubs) for the specified delivery services. For delivery-service partners only. ' +
+      'Delivery-service codes: pochta (Russian Post), exmail, bb (Boxberry), pp (PickPoint), dpd, and others.',
     method: 'GET',
     path: '/delivery-sandbox/sorting-center',
     domain: 'delivery',
@@ -322,12 +322,12 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_sorting_center',
-    title: 'Доставка: загрузить СЦ [sandbox]',
+    title: 'Delivery: upload sorting centers [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Создаёт задачу на загрузку своих сортировочных центров (ХАБов) с первичной валидацией; ' +
-      'возвращает taskID — статус проверяйте через delivery_get_task. После загрузки СЦ нужно проставить теги ' +
-      'отдельным запросом (delivery_add_tags_to_sorting_center). Только для партнёров СД. Тело — массив СЦ напрямую.',
+      '[SANDBOX] Creates a task to upload your own sorting centers (hubs) with initial validation; ' +
+      'returns a taskID — check the status via delivery_get_task. After uploading sorting centers you must assign tags ' +
+      'with a separate request (delivery_add_tags_to_sorting_center). For delivery-service partners only. The body is an array of sorting centers directly.',
     method: 'POST',
     path: '/delivery-sandbox/tariffs/sorting-center',
     domain: 'delivery',
@@ -335,28 +335,28 @@ export const register: DomainRegister = (server, ctx) => {
       centers: z
         .array(opaque('SortingCenterPost'))
         .min(1)
-        .describe('Массив СЦ: deliveryProviderId, name, address, phones, itinerary, photos, directionTag, schedule, restriction.'),
+        .describe('Array of sorting centers: deliveryProviderId, name, address, phones, itinerary, photos, directionTag, schedule, restriction.'),
     },
     body: { contentType: 'application/json', transform: (b) => (b.centers as unknown[]) ?? [] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_add_areas_sandbox',
-    title: 'Доставка: загрузить области [sandbox]',
+    title: 'Delivery: upload areas [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Загружает области, где доступны курьерская доставка/забор, для указанного тарифа. ' +
-      'Классификатор адресов — индексы Почты России (1 индекс = все относящиеся к нему адреса). Только для ' +
-      'партнёров СД. Тело — массив областей напрямую.',
+      '[SANDBOX] Uploads the areas where courier delivery/pickup is available for the specified tariff. ' +
+      'The address classifier is Russian Post postal codes (1 postal code = all addresses belonging to it). For ' +
+      'delivery-service partners only. The body is an array of areas directly.',
     method: 'POST',
     path: '/delivery-sandbox/tariffs/{tariff_id}/areas',
     domain: 'delivery',
     input: {
-      tariff_id: z.string().describe('Идентификатор тарифа (в пути).'),
+      tariff_id: z.string().describe('Tariff identifier (in path).'),
       areas: z
         .array(opaque('Area'))
         .min(1)
-        .describe('Массив областей: directionTag, providerAreaNumber, services (intake/delivery), utcTimezone, zipCodes, restrictions.'),
+        .describe('Array of areas: directionTag, providerAreaNumber, services (intake/delivery), utcTimezone, zipCodes, restrictions.'),
     },
     pathParams: ['tariff_id'],
     body: { contentType: 'application/json', transform: (b) => (b.areas as unknown[]) ?? [] },
@@ -364,21 +364,21 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_tags_to_sorting_center',
-    title: 'Доставка: теги СЦ [sandbox]',
+    title: 'Delivery: sorting center tags [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Создаёт задачу на установку тегов направлений своим и/или чужим сортировочным центрам в рамках ' +
-      'тарифа; возвращает taskID — статус через delivery_get_task. В рамках одного тарифа одному СЦ соответствует ' +
-      'ровно один тег, перепривязка невозможна. Только для партнёров СД. Тело — массив напрямую.',
+      '[SANDBOX] Creates a task to assign direction tags to your own and/or third-party sorting centers within ' +
+      'a tariff; returns a taskID — status via delivery_get_task. Within a single tariff each sorting center maps to ' +
+      'exactly one tag, and re-binding is not possible. For delivery-service partners only. The body is an array directly.',
     method: 'POST',
     path: '/delivery-sandbox/tariffs/{tariff_id}/tagged-sorting-centers',
     domain: 'delivery',
     input: {
-      tariff_id: z.string().describe('Идентификатор тарифа (в пути).'),
+      tariff_id: z.string().describe('Tariff identifier (in path).'),
       tagged: z
         .array(opaque('TaggedSortingCenter'))
         .min(1)
-        .describe('Массив привязок: deliveryProviderId (ID СЦ у провайдера) + directionTag (тег направления).'),
+        .describe('Array of bindings: deliveryProviderId (sorting-center ID at the provider) + directionTag (direction tag).'),
     },
     pathParams: ['tariff_id'],
     body: { contentType: 'application/json', transform: (b) => (b.tagged as unknown[]) ?? [] },
@@ -386,21 +386,21 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_terminals_sandbox',
-    title: 'Доставка: загрузить ПВЗ [sandbox]',
+    title: 'Delivery: upload pickup points [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Загружает терминалы (ПВЗ/постаматы) для тарифа. Система автоматически апрувит изменения: при ' +
-      'большом проценте критичных изменений загрузка отправляется на ручную проверку. Только для партнёров СД. ' +
-      'Тело — массив терминалов напрямую.',
+      '[SANDBOX] Uploads terminals (pickup points/parcel lockers) for a tariff. The system auto-approves changes: with ' +
+      'a high percentage of critical changes the upload is sent for manual review. For delivery-service partners only. ' +
+      'The body is an array of terminals directly.',
     method: 'POST',
     path: '/delivery-sandbox/tariffs/{tariff_id}/terminals',
     domain: 'delivery',
     input: {
-      tariff_id: z.string().describe('Идентификатор тарифа (в пути).'),
+      tariff_id: z.string().describe('Tariff identifier (in path).'),
       terminals: z
         .array(opaque('Terminal'))
         .min(1)
-        .describe('Массив ПВЗ: deliveryProviderId, name, address, phones, services (intake/delivery), schedule, type (PVZ|POSTAMAT, по умолчанию PVZ).'),
+        .describe('Array of pickup points: deliveryProviderId, name, address, phones, services (intake/delivery), schedule, type (PVZ|POSTAMAT, default PVZ).'),
     },
     pathParams: ['tariff_id'],
     body: { contentType: 'application/json', transform: (b) => (b.terminals as unknown[]) ?? [] },
@@ -408,21 +408,21 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_update_terms',
-    title: 'Доставка: зоны сроков [sandbox]',
+    title: 'Delivery: delivery-term zones [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Создаёт задачу на обновление зон сроков доставки в тарифе; возвращает taskID — статус через ' +
-      'delivery_get_task. Важно: список новых сроков должен полностью соответствовать deliveryProviderZoneId ' +
-      'тарифа. Только для партнёров СД. Тело — массив зон напрямую.',
+      '[SANDBOX] Creates a task to update the delivery-term zones in a tariff; returns a taskID — status via ' +
+      'delivery_get_task. Important: the list of new terms must fully match the tariff\'s deliveryProviderZoneId ' +
+      'values. For delivery-service partners only. The body is an array of zones directly.',
     method: 'POST',
     path: '/delivery-sandbox/tariffs/{tariff_id}/terms',
     domain: 'delivery',
     input: {
-      tariff_id: z.string().describe('Идентификатор тарифа (в пути).'),
+      tariff_id: z.string().describe('Tariff identifier (in path).'),
       zones: z
         .array(opaque('TermsZone'))
         .min(1)
-        .describe('Массив зон сроков: deliveryProviderZoneId, name, minTerm/maxTerm (рабочие дни).'),
+        .describe('Array of delivery-term zones: deliveryProviderZoneId, name, minTerm/maxTerm (business days).'),
     },
     pathParams: ['tariff_id'],
     body: { contentType: 'application/json', transform: (b) => (b.zones as unknown[]) ?? [] },
@@ -430,27 +430,27 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_add_tariff_sandbox_v2',
-    title: 'Доставка: загрузить тариф [sandbox]',
+    title: 'Delivery: upload tariff [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX v2] Загружает новый тариф: позволяет СД управлять доступностью направлений, стоимостью и сроками ' +
-      'доставки. Лимиты: тело до 400MB, до 1 млн направлений. Только для партнёров СД.',
+      '[SANDBOX v2] Uploads a new tariff: lets the delivery service control direction availability, delivery cost, and delivery ' +
+      'terms. Limits: body up to 400MB, up to 1 million directions. For delivery-service partners only.',
     method: 'POST',
     path: '/delivery-sandbox/tariffsV2',
     domain: 'delivery',
     input: {
-      name: z.string().describe('Человекопонятное название тарифа (для интерфейса).'),
-      deliveryProviderTariffId: z.string().describe('Идентификатор тарифа на стороне службы доставки.'),
+      name: z.string().describe('Human-readable tariff name (for the UI).'),
+      deliveryProviderTariffId: z.string().describe('Tariff identifier on the delivery-service side.'),
       directions: z
         .array(opaque('Direction'))
-        .describe('Направления: связь directionTagFrom→directionTagTo, тарифная зона, minTerm/maxTerm (рабочие дни).'),
+        .describe('Directions: directionTagFrom→directionTagTo link, tariff zone, minTerm/maxTerm (business days).'),
       tariffZones: z
         .array(opaque('TariffZone'))
-        .describe('Тарифные зоны: name, deliveryProviderTariffZoneId, items (модели расчёта цены по услугам).'),
+        .describe('Tariff zones: name, deliveryProviderTariffZoneId, items (per-service price calculation models).'),
       termsZones: z
         .array(opaque('TermsZone'))
-        .describe('Зоны сроков: deliveryProviderZoneId, name, minTerm/maxTerm (рабочие дни).'),
-      tariffType: z.string().optional().describe('Тип тарифа (опционально).'),
+        .describe('Delivery-term zones: deliveryProviderZoneId, name, minTerm/maxTerm (business days).'),
+      tariffType: z.string().optional().describe('Tariff type (optional).'),
     },
     body: {
       contentType: 'application/json',
@@ -462,17 +462,17 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_get_task',
-    title: 'Доставка: статус задачи [sandbox]',
+    title: 'Delivery: task status [sandbox]',
     risk: 'read',
     description:
-      '[SANDBOX] Возвращает статус асинхронной задачи по taskID, полученному от загрузочных операций ' +
-      '(СЦ, теги, области, сроки, тариф). Статусы: processing | success | <ошибка>. Выполнение обычно занимает ' +
-      '5–20 минут. Только для партнёров СД.',
+      '[SANDBOX] Returns the status of an asynchronous task by the taskID obtained from upload operations ' +
+      '(sorting centers, tags, areas, terms, tariff). Statuses: processing | success | <error>. Processing usually takes ' +
+      '5–20 minutes. For delivery-service partners only.',
     method: 'GET',
     path: '/delivery-sandbox/tasks/{task_id}',
     domain: 'delivery',
     input: {
-      task_id: z.string().describe('Идентификатор задачи (taskID из ответа async-операции, в пути).'),
+      task_id: z.string().describe('Task identifier (the taskID from an async operation response, in path).'),
     },
     pathParams: ['task_id'],
   });
@@ -481,85 +481,85 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_cancel_announcement',
-    title: 'Доставка: отмена анонса [sandbox v1]',
+    title: 'Delivery: cancel announcement [sandbox v1]',
     risk: 'write',
     destructiveHint: true,
     description:
-      '[SANDBOX v1] Запускает процесс отмены тестового анонса; при успехе ответ со статусом success. Доступен ' +
-      'только в Песочнице, для партнёров СД. В отличие от delivery_cancel_announcement_3pl (боевой /cancelAnnouncement) ' +
-      'это тестовый v1-контракт с обязательным полем options.',
+      '[SANDBOX v1] Starts the process of cancelling a test announcement; on success the response has a success status. Available ' +
+      'only in the Sandbox, for delivery-service partners. Unlike delivery_cancel_announcement_3pl (production /cancelAnnouncement), ' +
+      'this is the test v1 contract with a required options field.',
     method: 'POST',
     path: '/delivery-sandbox/v1/cancelAnnouncement',
     domain: 'delivery',
     input: {
-      announcementID: z.string().describe('Идентификатор отменяемого тестового анонса.'),
-      date: z.string().describe('Дата и время события в формате ISO 8601 (RFC 3339).'),
-      options: opaque('Options').describe('Дополнительные опции отмены анонса.'),
+      announcementID: z.string().describe('Identifier of the test announcement to cancel.'),
+      date: z.string().describe('Event date and time in ISO 8601 (RFC 3339) format.'),
+      options: opaque('Options').describe('Additional announcement-cancellation options.'),
     },
     body: { contentType: 'application/json', fields: ['announcementID', 'date', 'options'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_v1_cancel_parcel',
-    title: 'Доставка: отмена посылки [sandbox v1]',
+    title: 'Delivery: cancel parcel [sandbox v1]',
     risk: 'write',
     destructiveHint: true,
     description:
-      '[SANDBOX v1] Отменяет тестовую посылку: инициирует запрет приёма в СД и, если он состоялся, отменяет посылку. ' +
-      'Отменить можно только посылки, созданные через delivery_create_sandbox_parcel_v2. Доступен только в Песочнице. ' +
-      'В отличие от delivery_sandbox_cancel_parcel (поле actor) это v1-контракт с полем options.',
+      '[SANDBOX v1] Cancels a test parcel: initiates an acceptance prohibition at the delivery service and, if it took effect, cancels the parcel. ' +
+      'Only parcels created via delivery_create_sandbox_parcel_v2 can be cancelled. Available only in the Sandbox. ' +
+      'Unlike delivery_sandbox_cancel_parcel (actor field), this is the v1 contract with an options field.',
     method: 'POST',
     path: '/delivery-sandbox/v1/cancelParcel',
     domain: 'delivery',
     input: {
-      parcelID: z.string().describe('Идентификатор отменяемой тестовой посылки.'),
-      options: opaque('Options').optional().describe('Дополнительные опции отмены (опционально).'),
+      parcelID: z.string().describe('Identifier of the test parcel to cancel.'),
+      options: opaque('Options').optional().describe('Additional cancellation options (optional).'),
     },
     body: { contentType: 'application/json', fields: ['parcelID', 'options'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_v1_change_parcel',
-    title: 'Доставка: изменить посылку [sandbox v1]',
+    title: 'Delivery: change parcel [sandbox v1]',
     risk: 'write',
     description:
-      '[SANDBOX v1] Создаёт заявку на изменение данных одной тестовой посылки (например, ФИО/телефон получателя). ' +
-      'Доступен только в Песочнице. Статус заявки — через delivery_v1_get_change_parcel_info. В отличие от ' +
-      'delivery_change_parcels (массовая обработка) меняет одну посылку.',
+      '[SANDBOX v1] Creates a request to change the data of a single test parcel (for example, the receiver\'s full name/phone). ' +
+      'Available only in the Sandbox. Request status — via delivery_v1_get_change_parcel_info. Unlike ' +
+      'delivery_change_parcels (bulk processing), it changes a single parcel.',
     method: 'POST',
     path: '/delivery-sandbox/v1/changeParcel',
     domain: 'delivery',
     input: {
-      parcelID: z.string().describe('Идентификатор изменяемой тестовой посылки.'),
+      parcelID: z.string().describe('Identifier of the test parcel to change.'),
       type: z
         .string()
-        .describe('Тип заявки. Enum: changeReceiver | prohibitParcelReceive | extendParcelStorage | prohibitParcelAcceptance.'),
-      application: opaque('Application').optional().describe('Данные заявки на изменение (зависят от type, опционально).'),
-      options: opaque('Options').optional().describe('Дополнительные опции заявки (опционально).'),
+        .describe('Request type. Enum: changeReceiver | prohibitParcelReceive | extendParcelStorage | prohibitParcelAcceptance.'),
+      application: opaque('Application').optional().describe('Change-request data (depends on type, optional).'),
+      options: opaque('Options').optional().describe('Additional request options (optional).'),
     },
     body: { contentType: 'application/json', fields: ['parcelID', 'type', 'application', 'options'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_v1_create_announcement',
-    title: 'Доставка: создать анонс [sandbox v1]',
+    title: 'Delivery: create announcement [sandbox v1]',
     risk: 'write',
     description:
-      '[SANDBOX v1] Запускает процесс создания тестового анонса; при успехе ответ со статусом success. Доступен ' +
-      'только в Песочнице, для партнёров СД. В отличие от delivery_sandbox_create_announcement это v1-контракт ' +
-      'с обязательным полем options.',
+      '[SANDBOX v1] Starts the process of creating a test announcement; on success the response has a success status. Available ' +
+      'only in the Sandbox, for delivery-service partners. Unlike delivery_sandbox_create_announcement, this is the v1 contract ' +
+      'with a required options field.',
     method: 'POST',
     path: '/delivery-sandbox/v1/createAnnouncement',
     domain: 'delivery',
     input: {
-      announcementID: z.string().describe('Идентификатор создаваемого анонса.'),
-      announcementType: z.string().describe('Тип анонса. Enum: DELIVERY | PICKUP.'),
-      barcode: z.string().describe('Уникальный ШК анонса (печатается на акте приёма-передачи).'),
-      date: z.string().describe('Дата и время создания анонса в формате ISO 8601 (RFC 3339), UTC.'),
-      options: opaque('Options').describe('Дополнительные опции анонса.'),
-      packages: z.array(opaque('Package')).describe('Список грузомест.'),
-      receiver: opaque('Receiver').describe('Принимающая СД: тип, название, телефоны, email, узел доставки/СЦ.'),
-      sender: opaque('Sender').describe('Отправляющая сторона: тип, название, телефоны, email, узел отправки.'),
+      announcementID: z.string().describe('Identifier of the announcement to create.'),
+      announcementType: z.string().describe('Announcement type. Enum: DELIVERY | PICKUP.'),
+      barcode: z.string().describe('Unique announcement barcode (printed on the acceptance/handover act).'),
+      date: z.string().describe('Announcement creation date and time in ISO 8601 (RFC 3339) format, UTC.'),
+      options: opaque('Options').describe('Additional announcement options.'),
+      packages: z.array(opaque('Package')).describe('List of cargo units.'),
+      receiver: opaque('Receiver').describe('Receiving delivery service: type, name, phones, email, delivery node/sorting center.'),
+      sender: opaque('Sender').describe('Sending party: type, name, phones, email, sending node.'),
     },
     body: {
       contentType: 'application/json',
@@ -569,119 +569,119 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_v1_get_announcement_event',
-    title: 'Доставка: событие анонса [sandbox v1]',
+    title: 'Delivery: announcement event [sandbox v1]',
     risk: 'read',
     description:
-      '[SANDBOX v1] Возвращает последнее зарегистрированное событие по тестовому анонсу — облегчает отладку ' +
-      'интеграции трекинга анонсов. Доступен только в Песочнице, для партнёров СД.',
+      '[SANDBOX v1] Returns the last registered event for a test announcement — makes it easier to debug ' +
+      'announcement-tracking integration. Available only in the Sandbox, for delivery-service partners.',
     method: 'POST',
     path: '/delivery-sandbox/v1/getAnnouncementEvent',
     domain: 'delivery',
-    input: { announcementID: z.string().describe('Идентификатор тестового анонса.') },
+    input: { announcementID: z.string().describe('Test announcement identifier.') },
     body: { contentType: 'application/json', fields: ['announcementID'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_v1_get_change_parcel_info',
-    title: 'Доставка: инфо изменения [sandbox v1]',
+    title: 'Delivery: change request info [sandbox v1]',
     risk: 'read',
     description:
-      '[SANDBOX v1] Возвращает информацию о заявке на изменение тестовой посылки по её applicationID (заявка ' +
-      'создаётся через delivery_v1_change_parcel). Доступен только в Песочнице, для партнёров СД.',
+      '[SANDBOX v1] Returns information about a test-parcel change request by its applicationID (the request ' +
+      'is created via delivery_v1_change_parcel). Available only in the Sandbox, for delivery-service partners.',
     method: 'POST',
     path: '/delivery-sandbox/v1/getChangeParcelInfo',
     domain: 'delivery',
-    input: { applicationID: z.string().describe('Идентификатор заявки на изменение посылки.') },
+    input: { applicationID: z.string().describe('Identifier of the parcel change request.') },
     body: { contentType: 'application/json', fields: ['applicationID'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_v1_get_parcel_info',
-    title: 'Доставка: инфо посылки [sandbox v1]',
+    title: 'Delivery: parcel info [sandbox v1]',
     risk: 'read',
     description:
-      '[SANDBOX v1] Возвращает информацию о тестовой посылке по parcelID. Доступен только в Песочнице; работает ' +
-      'лишь с посылками, созданными через delivery_create_sandbox_parcel_v2.',
+      '[SANDBOX v1] Returns information about a test parcel by parcelID. Available only in the Sandbox; works ' +
+      'only with parcels created via delivery_create_sandbox_parcel_v2.',
     method: 'POST',
     path: '/delivery-sandbox/v1/getParcelInfo',
     domain: 'delivery',
-    input: { parcelID: z.string().describe('Идентификатор тестовой посылки.') },
+    input: { parcelID: z.string().describe('Test parcel identifier.') },
     body: { contentType: 'application/json', fields: ['parcelID'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_v1_get_registered_parcel_id',
-    title: 'Доставка: ID посылки по orderID [sandbox v1]',
+    title: 'Delivery: parcel ID by orderID [sandbox v1]',
     risk: 'read',
     description:
-      '[SANDBOX v1] Возвращает parcelID зарегистрированной тестовой посылки по её orderID. Работает только с ' +
-      'посылками, созданными через delivery_create_sandbox_parcel_v2. Доступен только в Песочнице.',
+      '[SANDBOX v1] Returns the parcelID of a registered test parcel by its orderID. Works only with ' +
+      'parcels created via delivery_create_sandbox_parcel_v2. Available only in the Sandbox.',
     method: 'POST',
     path: '/delivery-sandbox/v1/getRegisteredParcelID',
     domain: 'delivery',
-    input: { orderID: z.string().describe('Идентификатор заказа тестовой посылки.') },
+    input: { orderID: z.string().describe('Order identifier of the test parcel.') },
     body: { contentType: 'application/json', fields: ['orderID'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_create_sandbox_parcel_v2',
-    title: 'Доставка: создать посылку [sandbox]',
+    title: 'Delivery: create parcel [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX v2] Запускает процесс создания тестовой посылки в Песочнице. Созданную посылку затем используют ' +
-      'другие v1-методы (getParcelInfo, getRegisteredParcelID, changeParcel, cancelParcel). В отличие от ' +
-      'delivery_create_parcel ([3PL], боевое создание) это тестовая среда без последствий.',
+      '[SANDBOX v2] Starts the process of creating a test parcel in the Sandbox. The created parcel is then used by ' +
+      'other v1 methods (getParcelInfo, getRegisteredParcelID, changeParcel, cancelParcel). Unlike ' +
+      'delivery_create_parcel ([3PL], production creation), this is a test environment with no consequences.',
     method: 'POST',
     path: '/delivery-sandbox/v2/createParcel',
     domain: 'delivery',
     input: {
-      items: z.array(opaque('Item')).optional().describe('Состав посылки — товары (опционально).'),
-      options: opaque('Options').optional().describe('Доп. опции тестовой посылки (опционально).'),
-      receiver: opaque('Receiver').optional().describe('Получатель: ФИО, телефон, адрес/код ПВЗ (опционально).'),
-      sender: opaque('Sender').optional().describe('Отправитель: данные и узел отправки (опционально).'),
-      tags: z.array(z.string()).optional().describe('Теги тестовой посылки для сценариев Песочницы (опционально).'),
+      items: z.array(opaque('Item')).optional().describe('Parcel contents — items (optional).'),
+      options: opaque('Options').optional().describe('Additional test-parcel options (optional).'),
+      receiver: opaque('Receiver').optional().describe('Receiver: full name, phone, address/pickup-point code (optional).'),
+      sender: opaque('Sender').optional().describe('Sender: details and sending node (optional).'),
+      tags: z.array(z.string()).optional().describe('Test-parcel tags for Sandbox scenarios (optional).'),
     },
     body: { contentType: 'application/json', fields: ['items', 'options', 'receiver', 'sender', 'tags'] },
   });
 
-  // ────────────────────────────── Прод (не sandbox) ──────────────────────────────
+  // ────────────────────────────── Production (non-sandbox) ──────────────────────────────
 
   defineTool(server, ctx, {
     name: 'delivery_change_parcel_result',
-    title: 'Доставка: результат изменения посылки',
+    title: 'Delivery: parcel change result',
     risk: 'write',
     description:
-      '[3PL] Передаёт в Avito результат исполнения заявки на изменение посылки, ранее присланной через ' +
-      'delivery_change_parcels: служба доставки сообщает, одобрена (approved) или отклонена (declined) заявка. ' +
-      'Боевой метод на стороне СД — на обычном аккаунте продавца вернёт 403/404.',
+      '[3PL] Sends Avito the outcome of a parcel change request previously sent via ' +
+      'delivery_change_parcels: the delivery service reports whether the request was approved (approved) or rejected (declined). ' +
+      'A production method on the delivery-service side — on a regular seller account it returns 403/404.',
     method: 'POST',
     path: '/delivery/order/changeParcelResult',
     domain: 'delivery',
     input: {
-      id: z.string().describe('Идентификатор заявки на изменение посылки.'),
-      status: z.string().describe('Статус обработки заявки. Enum: approved | declined.'),
-      reason: z.string().optional().describe('Причина отклонения; заполняется при status=declined (опционально).'),
-      options: opaque('Options').optional().describe('Дополнительные опции результата (опционально).'),
+      id: z.string().describe('Identifier of the parcel change request.'),
+      status: z.string().describe('Request processing status. Enum: approved | declined.'),
+      reason: z.string().optional().describe('Rejection reason; filled in when status=declined (optional).'),
+      options: opaque('Options').optional().describe('Additional result options (optional).'),
     },
     body: { contentType: 'application/json', fields: ['id', 'status', 'reason', 'options'] },
   });
 
   defineTool(server, ctx, {
     name: 'delivery_change_parcels',
-    title: 'Доставка: массовое обновление [sandbox]',
+    title: 'Delivery: bulk update [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Передаёт службе доставки пакет заявок на обновление свойств посылок по инициативе Avito ' +
-      '(массовая операция). Результат по каждой заявке СД возвращает через delivery_change_parcel_result. ' +
-      'Метод реализуется на стороне СД, только для партнёров СД.',
+      '[SANDBOX] Sends the delivery service a batch of requests to update parcel properties on Avito\'s initiative ' +
+      '(a bulk operation). The delivery service returns the result for each request via delivery_change_parcel_result. ' +
+      'The method is implemented on the delivery-service side, for delivery-service partners only.',
     method: 'POST',
     path: '/sandbox/changeParcels',
     domain: 'delivery',
     input: {
-      applications: z.array(opaque('Application')).describe('Массив заявок на изменение посылок (по одной на посылку).'),
+      applications: z.array(opaque('Application')).describe('Array of parcel change requests (one per parcel).'),
       type: z
         .string()
-        .describe('Тип заявок. Enum: changeReceiver | extendParcelStorage | prohibitParcelReceive | prohibitParcelAcceptance | changeReceiverTerminalOnConfirmed.'),
+        .describe('Request type. Enum: changeReceiver | extendParcelStorage | prohibitParcelReceive | prohibitParcelAcceptance | changeReceiverTerminalOnConfirmed.'),
     },
     body: { contentType: 'application/json', fields: ['applications', 'type'] },
   });

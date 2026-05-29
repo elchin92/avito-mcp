@@ -11,14 +11,14 @@ import type { PendingActionStore } from './pending-actions.js';
 import { evaluatePolicy, requiresConfirmation } from './policy.js';
 import type { Primitive, QueryValue } from './url.js';
 
-/** Имена служебных полей, автоматически добавляемых к destructive tools. */
+/** Names of internal fields automatically added to destructive tools. */
 const META_PARAMS = ['dryRun', 'idempotencyKey'] as const;
 
 function isDestructive(risk: ToolRisk): boolean {
   return risk === 'write' || risk === 'money' || risk === 'public';
 }
 
-/** Чистые args для tool — без служебных meta-параметров. */
+/** Clean args for a tool — without the internal meta-parameters. */
 function stripMeta(args: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(args)) {
@@ -28,11 +28,12 @@ function stripMeta(args: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
- * Контекст, передаваемый в register-функции доменов.
- * Объединяет всё, что нужно tool-handler'у: HTTP-клиент, конфиг и pending-store
- * для confirmation flow. С v0.6.0 также пробрасывается McpServer — нужен resources/
- * prompts/sendLoggingMessage, регистрируемым в src/resources.ts и src/prompts.ts.
- * Поле `server` опционально, чтобы существующие тесты не пришлось править.
+ * Context passed to the domain register functions.
+ * Bundles everything a tool handler needs: the HTTP client, the config, and the
+ * pending-store for the confirmation flow. Since v0.6.0 the McpServer is also
+ * forwarded — it is required by resources/prompts/sendLoggingMessage registered in
+ * src/resources.ts and src/prompts.ts.
+ * The `server` field is optional so existing tests don't have to be updated.
  */
 export interface ToolContext {
   client: AvitoClient;
@@ -40,10 +41,10 @@ export interface ToolContext {
   pendingStore: PendingActionStore;
   server?: McpServer;
   /**
-   * v0.7.0: opt-in idempotency ledger. Если не передан — параметр
-   * idempotencyKey всё равно разрешён в schema (агент может его передать),
-   * но дедуп не выполняется. Это упрощает миграцию: existing tests могут
-   * не передавать idempotencyStore.
+   * v0.7.0: opt-in idempotency ledger. If not provided, the idempotencyKey
+   * parameter is still allowed in the schema (the agent may pass it), but no
+   * deduplication is performed. This simplifies migration: existing tests can
+   * omit idempotencyStore.
    */
   idempotencyStore?: IdempotencyStore;
 }
@@ -51,113 +52,113 @@ export interface ToolContext {
 export type ProfileIdKey = 'user_id' | 'userId';
 
 /**
- * Семантика воздействия tool на боевой аккаунт. Используется для:
- *   - AVITO_MCP_MODE — блокирует категории на этапе регистрации
- *   - AVITO_MCP_CONFIRMATION_MODE — требует подтверждения на runtime
+ * Semantics of a tool's impact on the live account. Used for:
+ *   - AVITO_MCP_MODE — blocks categories at registration time
+ *   - AVITO_MCP_CONFIRMATION_MODE — requires confirmation at runtime
  *   - MCP ToolAnnotations (readOnlyHint / destructiveHint / idempotentHint)
  *
- * Категории:
- *   - `sensitive` — возвращает credentials / tokens / секреты. Скрыт по default
- *                   даже в full_access. Включается через AVITO_MCP_EXPOSE_AUTH_TOOLS=1.
- *                   Примеры: auth_get_access_token, auth_refresh_*.
- *   - `read`      — только чтение, без побочных эффектов и без секретов в ответе.
- *                   GET и POST-as-query (analytics, balance, info, list).
- *   - `write`     — меняет данные пользователя, без денежных затрат и без visibility клиентам.
- *                   Drafts, settings, internal stock, отметка прочитанного.
- *   - `money`     — тратит деньги с баланса (VAS, promotion, CPA bids).
- *   - `public`    — видно клиентам или третьим сторонам (сообщения, ответы на отзывы,
- *                   смена цены/статуса/трекинга).
+ * Categories:
+ *   - `sensitive` — returns credentials / tokens / secrets. Hidden by default
+ *                   even in full_access. Enabled via AVITO_MCP_EXPOSE_AUTH_TOOLS=1.
+ *                   Examples: auth_get_access_token, auth_refresh_*.
+ *   - `read`      — read-only, no side effects and no secrets in the response.
+ *                   GET and POST-as-query (analytics, balance, info, list).
+ *   - `write`     — modifies user data, with no monetary cost and not visible to clients.
+ *                   Drafts, settings, internal stock, marking as read.
+ *   - `money`     — spends money from the balance (VAS, promotion, CPA bids).
+ *   - `public`    — visible to clients or third parties (messages, review replies,
+ *                   price/status/tracking changes).
  *
- * Default if omitted: `write` (fail-closed для safe-mode).
+ * Default if omitted: `write` (fail-closed for safe-mode).
  */
 export type ToolRisk = 'sensitive' | 'read' | 'write' | 'money' | 'public';
 
 /**
- * Декларативное описание одного MCP tool, обёртывающего HTTP-вызов Avito API.
+ * Declarative description of a single MCP tool wrapping an Avito API HTTP call.
  *
- * @template I — zod-shape входных параметров (объект `{ key: z.ZodType }`)
+ * @template I — zod-shape of the input parameters (an object `{ key: z.ZodType }`)
  */
 export interface ToolSpec<I extends ZodRawShape = ZodRawShape> {
-  /** Полное имя tool (с префиксом домена). Должно быть snake_case. */
+  /** Full tool name (with the domain prefix). Must be snake_case. */
   name: string;
   /**
-   * Опциональное человекочитаемое имя (MCP 2025-11-25 — поле `title` у Tool).
-   * Display-приоритет на клиенте: title → annotations.title → name. Если не задан,
-   * клиент показывает name (snake_case). Для русскоязычных пользователей сильно
-   * улучшает UX в Inspector / Claude Desktop.
+   * Optional human-readable name (MCP 2025-11-25 — the `title` field on Tool).
+   * Display priority on the client: title → annotations.title → name. If not set,
+   * the client shows name (snake_case). For Russian-speaking users this greatly
+   * improves the UX in Inspector / Claude Desktop.
    */
   title?: string;
-  /** Описание для LLM. Пишется на русском, кратко и явно (как в swagger summary). */
+  /** Description for the LLM. Written in Russian, concise and explicit (like a swagger summary). */
   description: string;
   method: HttpMethod;
-  /** Шаблон пути с {placeholders}, например "/core/v1/accounts/{user_id}/balance/". */
+  /** Path template with {placeholders}, for example "/core/v1/accounts/{user_id}/balance/". */
   path: string;
-  /** Zod-shape входных параметров. {} если параметров нет. */
+  /** Zod-shape of the input parameters. {} if there are no parameters. */
   input?: I;
-  /** Имена ключей из `input`, которые идут в path. Остальные — в query или body. */
+  /** Names of keys from `input` that go into the path. The rest go into query or body. */
   pathParams?: readonly string[];
-  /** Имена ключей из `input`, которые идут в query. */
+  /** Names of keys from `input` that go into the query. */
   queryParams?: readonly string[];
   /**
-   * Описание тела запроса.
-   *   - `contentType` — определяет сериализацию.
-   *   - `fields` — если указано, в body попадут только эти ключи из input.
-   *     Если не указано — все ключи input, кроме path/query.
-   *   - `defaults` — постоянные поля, всегда добавляемые в body (можно перекрыть через input).
-   *     Может быть объектом или функцией от контекста (для credentials из .env).
-   *   - `transform` — финальная трансформация body перед сериализацией. Применяется
-   *     ПОСЛЕ слияния defaults+input. Используется для nested-body (например `{message:{text}}`
-   *     из плоского `{text}`).
-   *   - Если `body` не задано — тело не отправляется.
+   * Description of the request body.
+   *   - `contentType` — determines the serialization.
+   *   - `fields` — if specified, only these keys from input are included in the body.
+   *     If not specified, all input keys except path/query.
+   *   - `defaults` — constant fields always added to the body (can be overridden via input).
+   *     May be an object or a function of the context (for credentials from .env).
+   *   - `transform` — final transformation of the body before serialization. Applied
+   *     AFTER merging defaults+input. Used for nested bodies (for example `{message:{text}}`
+   *     from a flat `{text}`).
+   *   - If `body` is not set, no body is sent.
    */
   body?: {
     contentType: BodyContentType;
     fields?: readonly string[];
     defaults?: Record<string, unknown> | ((ctx: ToolContext) => Record<string, unknown>);
     /**
-     * Финальная трансформация. Может вернуть объект (по умолчанию JSON-сериализуется как объект)
-     * или массив — для endpoints, где Avito ждёт top-level JSON array как body.
+     * Final transformation. May return an object (serialized as a JSON object by default)
+     * or an array — for endpoints where Avito expects a top-level JSON array as the body.
      */
     transform?: (body: Record<string, unknown>) => Record<string, unknown> | unknown[];
   };
-  /** false → запрос без Authorization (для /token и autoload-public). Default: true. */
+  /** false → request without Authorization (for /token and autoload-public). Default: true. */
   auth?: boolean;
   /**
-   * Если задано — отсутствующий path-параметр с этим именем подставится из config.profileId.
-   * Покрывает {user_id} и {userId} формы. Резко снижает галлюцинации агента.
+   * If set, a missing path parameter with this name is filled from config.profileId.
+   * Covers both {user_id} and {userId} forms. Sharply reduces agent hallucinations.
    */
   injectProfileId?: ProfileIdKey;
-  /** Имя для группировки в rate-limiter (по умолчанию — первый сегмент пути). */
+  /** Name for grouping in the rate-limiter (defaults to the first path segment). */
   domain?: string;
   /**
-   * Семантика воздействия. См. {@link ToolRisk}. Default — `'write'` (fail-closed для safe-mode).
-   * Все GET-tool'ы и POST-as-query (analytics, статистика) должны быть явно `'read'`.
+   * Impact semantics. See {@link ToolRisk}. Default is `'write'` (fail-closed for safe-mode).
+   * All GET tools and POST-as-query (analytics, statistics) must be explicitly `'read'`.
    */
   risk?: ToolRisk;
   /**
-   * Явный override MCP-аннотации `destructiveHint`. По умолчанию destructiveHint
-   * выводится из risk (money/public → true, остальное → false). Но risk описывает
-   * политику безопасности, а destructiveHint — семантику необратимости для клиента.
-   * Они расходятся для отмен/удалений (cancel/delete/remove/prohibit/blacklist):
-   * это `write` по политике (не тратит деньги, не публично), но необратимо по сути.
-   * Для таких tools укажите `destructiveHint: true`, чтобы аннотация была честной.
+   * Explicit override of the `destructiveHint` MCP annotation. By default destructiveHint
+   * is derived from risk (money/public → true, otherwise → false). But risk describes
+   * the security policy, while destructiveHint describes the irreversibility semantics for the client.
+   * They diverge for cancellations/deletions (cancel/delete/remove/prohibit/blacklist):
+   * these are `write` by policy (no money spent, not public) but irreversible in nature.
+   * For such tools set `destructiveHint: true` so the annotation is honest.
    */
   destructiveHint?: boolean;
   /**
-   * v0.5.0: дополнительные safety-измерения, ортогональные risk.
-   * Выводятся в `_meta` и в `dist/manifest.json` для UI клиента и для аудита.
-   * Не влияют на policy/confirmation решения — это аналитика, не enforcement.
+   * v0.5.0: additional safety dimensions, orthogonal to risk.
+   * Surfaced in `_meta` and in `dist/manifest.json` for the client UI and for auditing.
+   * Do not affect policy/confirmation decisions — this is analytics, not enforcement.
    */
   accessesLocalFiles?: boolean;
   environment?: 'prod' | 'sandbox' | 'local';
 }
 
-/** MCP ToolAnnotations выводятся из ToolRisk детерминированно. */
+/** MCP ToolAnnotations are derived deterministically from ToolRisk. */
 function riskToAnnotations(risk: ToolRisk): ToolAnnotations {
   switch (risk) {
     case 'sensitive':
-      // Read-only на стороне Avito, но возвращает секреты — для клиента это тоже
-      // важный сигнал. Сама защита secrets — в policy.ts (hidden by default).
+      // Read-only on the Avito side, but it returns secrets — that is also an
+      // important signal for the client. The secrets protection itself lives in policy.ts (hidden by default).
       return { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true };
     case 'read':
       return { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
@@ -170,15 +171,15 @@ function riskToAnnotations(risk: ToolRisk): ToolAnnotations {
 }
 
 /**
- * Регистрирует один tool в McpServer. Превращает декларативный ToolSpec в работающий
+ * Registers a single tool in the McpServer. Turns a declarative ToolSpec into a working
  * server.registerTool(name, config, handler).
  *
  * Handler:
- *   1. Разбивает args по pathParams / queryParams / body fields
- *   2. При необходимости подставляет config.profileId в отсутствующий path-параметр
- *   3. Вызывает client.request(...)
- *   4. Сериализует data в text content (агент сам распарсит JSON)
- *   5. Ошибки Avito API → isError content (агент видит код и текст ошибки и может среагировать)
+ *   1. Splits args into pathParams / queryParams / body fields
+ *   2. If needed, fills config.profileId into a missing path parameter
+ *   3. Calls client.request(...)
+ *   4. Serializes data into text content (the agent parses the JSON itself)
+ *   5. Avito API errors → isError content (the agent sees the error code and text and can react)
  */
 export function defineTool<I extends ZodRawShape>(
   server: McpServer,
@@ -206,10 +207,10 @@ export function defineTool<I extends ZodRawShape>(
     return;
   }
 
-  // Реальный исполнитель — отделён от обёртки, чтобы переиспользовать его
-  // при подтверждении через meta_confirm_action.
-  // ВАЖНО: принимает чистые args (без dryRun/idempotencyKey) — meta-параметры
-  // обрабатываются в handler выше.
+  // The real executor — separated from the wrapper so it can be reused
+  // on confirmation via meta_confirm_action.
+  // IMPORTANT: it takes clean args (without dryRun/idempotencyKey) — the meta-parameters
+  // are handled in the handler above.
   const execute = async (cleanArgs: Record<string, unknown>): Promise<CallToolResult> => {
     try {
       const { pathParams, query, body } = splitArgs(cleanArgs, spec, ctx);
@@ -231,9 +232,9 @@ export function defineTool<I extends ZodRawShape>(
           },
         ],
       };
-      // v0.6.0: structuredContent — поле MCP 2025-11-25 для клиентов, умеющих парсить JSON.
-      // Дублирует text, но без необходимости в regex/parse на стороне агента. Не задаём
-      // outputSchema → клиент валидирует не строго, поэтому смело отдаём любую форму.
+      // v0.6.0: structuredContent — the MCP 2025-11-25 field for clients that can parse JSON.
+      // Duplicates text but without requiring regex/parse on the agent side. We don't set
+      // outputSchema → the client validates loosely, so we can safely return any shape.
       const structured = toStructuredContent(response.status, response.data);
       if (structured !== undefined) result.structuredContent = structured;
       return result;
@@ -248,10 +249,10 @@ export function defineTool<I extends ZodRawShape>(
     const args = rawArgs ?? {};
     const cleanArgs = destructive ? stripMeta(args) : args;
 
-    // v0.7.0: dry-run на destructive tools. Если args.dryRun === true ИЛИ
-    // конфиг включает dryRunDefault, возвращаем preview запроса без HTTP-вызова.
-    // dry-run обходит confirmation и idempotency — preview безопасен и не имеет
-    // эффекта, поэтому ни confirm, ни dedup не нужны.
+    // v0.7.0: dry-run on destructive tools. If args.dryRun === true OR
+    // the config enables dryRunDefault, we return a request preview without an HTTP call.
+    // dry-run bypasses confirmation and idempotency — the preview is safe and has no
+    // effect, so neither confirm nor dedup is needed.
     const dryRunRequested = args.dryRun === true;
     const effectiveDryRun =
       destructive && (dryRunRequested || ctx.config.dryRunDefault === true);
@@ -259,11 +260,11 @@ export function defineTool<I extends ZodRawShape>(
       return dryRunPreview(spec, cleanArgs, ctx, dryRunRequested);
     }
 
-    // v0.7.0: idempotency. Если агент передал idempotencyKey И сервер имеет store,
-    // проверяем (toolName, key, hash(args)).
-    //   - hit + matching args → возвращаем кэш с пометкой idempotent_replay=true
-    //   - hit + different args → возвращаем структурированную ошибку (conflict)
-    //   - miss → выполняем, потом запоминаем
+    // v0.7.0: idempotency. If the agent passed idempotencyKey AND the server has a store,
+    // we check (toolName, key, hash(args)).
+    //   - hit + matching args → return the cache marked idempotent_replay=true
+    //   - hit + different args → return a structured error (conflict)
+    //   - miss → execute, then remember
     const idempotencyKey =
       destructive && typeof args.idempotencyKey === 'string' && args.idempotencyKey.length > 0
         ? args.idempotencyKey
@@ -341,8 +342,8 @@ export function defineTool<I extends ZodRawShape>(
     return result;
   };
 
-  // SDK типизирует callback через internal BaseToolCallback с собственными inferred CallToolResult,
-  // несовместимым с публичным CallToolResult-типом. Касаемся только сигнатуры — runtime OK.
+  // The SDK types the callback via an internal BaseToolCallback with its own inferred CallToolResult,
+  // incompatible with the public CallToolResult type. We only touch the signature — runtime is OK.
   // Build _meta with optional extra safety dimensions. Default environment='prod'
   // unless overridden (delivery sandbox tools, meta_*).
   const metaRecord: Record<string, unknown> = {
@@ -351,8 +352,8 @@ export function defineTool<I extends ZodRawShape>(
   };
   if (spec.accessesLocalFiles) metaRecord.accessesLocalFiles = true;
 
-  // v0.7.0: destructive tools получают опциональные dryRun + idempotencyKey
-  // в inputSchema. Read/sensitive — нет (для них эти параметры бессмысленны).
+  // v0.7.0: destructive tools get optional dryRun + idempotencyKey
+  // in inputSchema. Read/sensitive ones don't (these parameters are meaningless for them).
   const finalInputSchema: ZodRawShape = destructive
     ? {
         ...(inputSchema as ZodRawShape),
@@ -360,18 +361,18 @@ export function defineTool<I extends ZodRawShape>(
           .boolean()
           .optional()
           .describe(
-            'v0.7.0: если true — возвращает preview HTTP-запроса без вызова Avito API. ' +
-              'Безопасно для просмотра, что именно будет сделано. Default: значение ' +
-              'AVITO_MCP_DRY_RUN_DEFAULT (обычно false).',
+            'v0.7.0: if true — returns a preview of the HTTP request without calling the Avito API. ' +
+              'Safe for inspecting exactly what would be done. Default: the value of ' +
+              'AVITO_MCP_DRY_RUN_DEFAULT (usually false).',
           ),
         idempotencyKey: z
           .string()
           .min(8)
           .optional()
           .describe(
-            'v0.7.0: опциональный ключ для защиты от дублей. Повторный вызов с тем же ключом ' +
-              'в течение AVITO_MCP_IDEMPOTENCY_TTL_SEC возвращает закешированный результат. ' +
-              'Тот же ключ с другими args вернёт ошибку conflict — это безопасно по дизайну.',
+            'v0.7.0: optional key for duplicate protection. A repeat call with the same key ' +
+              'within AVITO_MCP_IDEMPOTENCY_TTL_SEC returns the cached result. ' +
+              'The same key with different args returns a conflict error — this is safe by design.',
           ),
       }
     : inputSchema;
@@ -396,11 +397,11 @@ export function defineTool<I extends ZodRawShape>(
 }
 
 /**
- * Возвращает preview HTTP-запроса без реального вызова Avito API.
- * v0.7.0: используется когда dryRun=true или AVITO_MCP_DRY_RUN_DEFAULT=true.
+ * Returns a preview of the HTTP request without actually calling the Avito API.
+ * v0.7.0: used when dryRun=true or AVITO_MCP_DRY_RUN_DEFAULT=true.
  *
- * Cодержит pathParams, query, body и итоговый method+path — агент может убедиться,
- * что параметры собрались правильно, перед боевым вызовом.
+ * Contains pathParams, query, body and the resulting method+path — the agent can verify
+ * that the parameters were assembled correctly before the live call.
  */
 function dryRunPreview(
   spec: ToolSpec,
@@ -436,8 +437,8 @@ function dryRunPreview(
 }
 
 /**
- * Добавляет к закешированному idempotency-результату пометку, что это replay.
- * Так агент видит "это не свежий результат, я уже выполнял этот ключ".
+ * Adds a marker to a cached idempotency result indicating that it is a replay.
+ * This way the agent sees "this is not a fresh result, I already executed this key".
  */
 function annotateReplay(result: CallToolResult): CallToolResult {
   const cloned: CallToolResult = {
@@ -451,13 +452,13 @@ function annotateReplay(result: CallToolResult): CallToolResult {
 }
 
 /**
- * Превращает HTTP-ответ Avito в structuredContent для CallToolResult.
+ * Turns an Avito HTTP response into structuredContent for a CallToolResult.
  *
- * MCP-2025-11-25 требует, чтобы structuredContent был JSON-объектом (top-level).
- * - object → как есть
- * - array  → {items: array, count, status} (объект-обёртка)
- * - binary → {mimeType, sizeBytes, base64, status} (без __binary флага)
- * - null / string → undefined (только text-content имеет смысл)
+ * MCP-2025-11-25 requires structuredContent to be a (top-level) JSON object.
+ * - object → as is
+ * - array  → {items: array, count, status} (wrapper object)
+ * - binary → {mimeType, sizeBytes, base64, status} (without the __binary flag)
+ * - null / string → undefined (only text-content makes sense)
  */
 function toStructuredContent(status: number, data: unknown): Record<string, unknown> | undefined {
   if (data === null || data === undefined) return undefined;
@@ -513,10 +514,10 @@ function splitArgs(
     }
   }
 
-  // Auto-inject Profile_id для отсутствующего path-параметра.
-  // v0.7.4: profileId опционален — инжектим только если он задан. Если нет и tool
-  // требует path-параметр, запрос уйдёт с незаполненным {user_id} и Avito вернёт
-  // понятную ошибку; до этого момента tools/list работает без кредов.
+  // Auto-inject Profile_id for a missing path parameter.
+  // v0.7.4: profileId is optional — we inject only if it is set. If it is not and the tool
+  // requires a path parameter, the request goes out with an unfilled {user_id} and Avito returns
+  // a clear error; until then tools/list works without credentials.
   if (
     spec.injectProfileId &&
     pathParams[spec.injectProfileId] === undefined &&
@@ -525,8 +526,8 @@ function splitArgs(
     pathParams[spec.injectProfileId] = ctx.config.profileId;
   }
 
-  // Подмешиваем body.defaults (constant fields, credentials из .env и т.п.) ПЕРЕД user-args,
-  // чтобы пользовательский ввод имел приоритет. Затем — опциональный transform.
+  // Mix in body.defaults (constant fields, credentials from .env, etc.) BEFORE user-args,
+  // so that user input takes priority. Then — the optional transform.
   let finalBody: Record<string, unknown> | unknown[] | undefined;
   if (spec.body) {
     const defaults =
@@ -574,8 +575,8 @@ function formatResponse(status: number, data: unknown): string {
 }
 
 /**
- * Короткое (~100-200 символов) описание pending action для UI/log/list_pending.
- * Не дампит args целиком — выдержки самых типичных идентификаторов.
+ * Short (~100-200 chars) description of a pending action for UI/log/list_pending.
+ * Does not dump the full args — excerpts the most typical identifiers.
  */
 function summarisePending(spec: ToolSpec, args: Record<string, unknown>): string {
   const parts: string[] = [];
@@ -587,5 +588,5 @@ function summarisePending(spec: ToolSpec, args: Record<string, unknown>): string
   return `${spec.method} ${spec.path}${tail}`;
 }
 
-/** Регистрационная функция домена. Каждый файл в src/domains/ экспортирует одну. */
+/** Domain register function. Each file in src/domains/ exports one. */
 export type DomainRegister = (server: McpServer, ctx: ToolContext) => void;

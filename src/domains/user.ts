@@ -1,5 +1,5 @@
 /**
- * Домен `user` — соответствует swaggers/Информация о пользователе.json
+ * `user` domain — maps to swaggers/Информация о пользователе.json
  *
  * Endpoints (3):
  *   GET  /core/v1/accounts/self                    → getUserInfoSelf
@@ -13,10 +13,10 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'user_get_user_info_self',
-    title: 'Профиль пользователя',
+    title: 'User profile',
     risk: 'read',
     description:
-      'Возвращает профиль текущего авторизованного аккаунта (get_user_info_self): числовой id (это и есть Profile_id), email, имя, верифицированные телефоны и profile_url. Только чтение, без параметров. Удобно, чтобы узнать Profile_id и проверить, под каким аккаунтом работает сервер; для баланса используйте get_user_balance, для списка операций — post_operations_history.',
+      'Returns the profile of the currently authorized account (get_user_info_self): numeric id (this is the Profile_id), email, name, verified phone numbers, and profile_url. Read-only, no parameters. Handy for finding out the Profile_id and checking which account the server is running under; for the balance use get_user_balance, for the list of operations use post_operations_history.',
     method: 'GET',
     path: '/core/v1/accounts/self',
     domain: 'core',
@@ -25,10 +25,10 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'user_get_user_balance',
-    title: 'Баланс кошелька',
+    title: 'Wallet balance',
     risk: 'read',
     description:
-      'Читает баланс кошелька аккаунта (get_user_balance): сумму реальных денег (real) и сумму бонусных средств (bonus) в рублях. Только чтение, моментальный снимок. Это кошелёк Личного кабинета, а не CPA-баланс (для CPA смотрите домен cpa). Для истории списаний/пополнений используйте post_operations_history.',
+      'Reads the account wallet balance (get_user_balance): the amount of real money (real) and the amount of bonus funds (bonus) in rubles. Read-only, a point-in-time snapshot. This is the Personal Account wallet, not the CPA balance (for CPA see the cpa domain). For the history of charges/top-ups use post_operations_history.',
     method: 'GET',
     path: '/core/v1/accounts/{user_id}/balance/',
     domain: 'core',
@@ -39,7 +39,7 @@ export const register: DomainRegister = (server, ctx) => {
         .positive()
         .optional()
         .describe(
-          'Номер аккаунта (Profile_id) в Личном кабинете Авито, format int64. Необязательный: по умолчанию подставляется Profile_id из .env (свой аккаунт). Узнать id можно через get_user_info_self.',
+          'Account number (Profile_id) in the Avito Personal Account, format int64. Optional: by default the Profile_id from .env (your own account) is substituted. You can find out the id via get_user_info_self.',
         ),
     },
     pathParams: ['user_id'],
@@ -48,10 +48,10 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'user_post_operations_history',
-    title: 'История операций',
+    title: 'Operations history',
     risk: 'read',
     description:
-      'Возвращает список операций по кошельку аккаунта за период (post_operations_history): списания и пополнения деньгами и бонусами, по каждой операции — amountRub, amountBonus, amountTotal, тип/название операции, тип услуги (vas, cpa, tariff и др.), itemId и даты. Только чтение. Это движения кошелька Личного кабинета, не CPA-баланс. Ограничения: dateTimeFrom не далее года назад, диапазон between from/to — не более одной недели; для текущего остатка используйте get_user_balance.',
+      'Returns the list of account wallet operations for a period (post_operations_history): charges and top-ups in money and bonuses, with amountRub, amountBonus, amountTotal, operation type/name, service type (vas, cpa, tariff, etc.), itemId, and dates for each operation. Read-only. These are Personal Account wallet movements, not the CPA balance. Constraints: dateTimeFrom no more than a year ago, the range between from/to no more than one week; for the current balance use get_user_balance.',
     method: 'POST',
     path: '/core/v1/accounts/operations_history/',
     domain: 'core',
@@ -59,12 +59,12 @@ export const register: DomainRegister = (server, ctx) => {
       dateTimeFrom: z
         .string()
         .describe(
-          'Начало периода выборки, обязательное. Формат date-time ISO 8601, например "2026-05-01T00:00:00". Не далее одного года назад от текущего момента.',
+          'Start of the selection period, required. Format date-time ISO 8601, for example "2026-05-01T00:00:00". No more than one year ago from the current moment.',
         ),
       dateTimeTo: z
         .string()
         .describe(
-          'Конец периода выборки, обязательное. Формат date-time ISO 8601, например "2026-05-08T00:00:00". Диапазон от dateTimeFrom — не более одной недели (7 дней).',
+          'End of the selection period, required. Format date-time ISO 8601, for example "2026-05-08T00:00:00". The range from dateTimeFrom is no more than one week (7 days).',
         ),
     },
     body: { contentType: 'application/json' },

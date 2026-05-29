@@ -1,5 +1,5 @@
 /**
- * Тесты структурированной таксономии ошибок (v0.7.0).
+ * Tests for the structured error taxonomy (v0.7.0).
  */
 import { describe, it, expect } from 'vitest';
 import { errorToMcpContent, AvitoApiError, AvitoTransportError } from '../src/core/errors.js';

@@ -1,23 +1,23 @@
 /**
- * Домен `orders` — соответствует swaggers/Управление заказами.json
+ * `orders` domain — maps to swaggers/Управление заказами.json
  *
- * 12 endpoints: получение заказов, переходы статусов, доставка курьером/Почтой/самовывоз, этикетки.
+ * 12 endpoints: fetching orders, status transitions, courier/postal/click-and-collect delivery, labels.
  *
  * Quirks:
- *   - operationId `checkConfirmationCode` коллидирует с одноимённым в delivery.json.
- *     Уникальность обеспечена префиксом домена (orders_check_confirmation_code).
- *   - downloadLabel возвращает PDF (binary); для simplicity отдаём raw как text content
- *     (LLM получит сырые байты как строку — обычно бесполезно, но операция выполнится).
- *     Использовать через прямой curl с токеном, если нужен файл.
- *   - Большинство dates — Unix timestamp в секундах (integer), не ISO.
+ *   - operationId `checkConfirmationCode` collides with the one of the same name in delivery.json.
+ *     Uniqueness is ensured by the domain prefix (orders_check_confirmation_code).
+ *   - downloadLabel returns a PDF (binary); for simplicity we return the raw bytes as text content
+ *     (the LLM receives the raw bytes as a string — usually useless, but the operation will run).
+ *     Use a direct curl with a token if you need the file.
+ *   - Most dates are Unix timestamps in seconds (integer), not ISO.
  *
- * ⚠️ Write-методы:
- *   - applyTransition меняет статус заказа
- *   - acceptReturnOrder выбирает отделение для возврата
- *   - markings передаёт честный знак
- *   - setOrderTrackingNumber устанавливает трек-номер
- *   - setCourierDeliveryRange, cncSetDetails — детали доставки
- *   - generateLabels(Extended) — формирует этикетки (платно?)
+ * ⚠️ Write methods:
+ *   - applyTransition changes the order status
+ *   - acceptReturnOrder selects the return drop-off point
+ *   - markings submits the "Chestny Znak" tracking codes
+ *   - setOrderTrackingNumber sets the tracking number
+ *   - setCourierDeliveryRange, cncSetDetails — delivery details
+ *   - generateLabels(Extended) — generates labels (paid?)
  */
 import { z } from 'zod';
 
@@ -28,64 +28,64 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_get_orders',
-    title: 'Заказы: список',
+    title: 'Orders: list',
     risk: 'read',
     description:
-      'Возвращает список заказов доставки (get_orders) с фильтрами по ID, статусу и дате создания. ' +
-      'Только чтение, ничего не меняет. Используйте как отправную точку: из ответа берите доступные действия (availableActions: confirm/reject/perform/receive/setMarkings/setTrackNumber/setCNCDetails и т.д.) для последующих write-операций. ' +
-      'Доступно только B2C-продавцам. Ответ содержит флаг hasMore для пагинации.',
+      'Returns a list of delivery orders (get_orders) with filters by ID, status, and creation date. ' +
+      'Read-only, changes nothing. Use it as a starting point: take the available actions from the response (availableActions: confirm/reject/perform/receive/setMarkings/setTrackNumber/setCNCDetails, etc.) for subsequent write operations. ' +
+      'Available only to B2C sellers. The response includes a hasMore flag for pagination.',
     method: 'GET',
     path: '/order-management/1/orders',
     domain: 'order-management',
     input: {
-      ids: z.array(z.string()).optional().describe('Фильтр по ID заказов в Авито (массив строк). Если не указан — возвращаются все заказы по другим фильтрам.'),
+      ids: z.array(z.string()).optional().describe('Filter by Avito order IDs (array of strings). If omitted, all orders matching the other filters are returned.'),
       statuses: z
         .array(z.string())
         .optional()
         .describe(
-          'Фильтр по статусам (массив). Допустимые значения: on_confirmation (ожидает подтверждения), ' +
-            'ready_to_ship (ждёт отправки), in_transit (в пути), canceled (отменён), delivered (доставлен покупателю), ' +
-            'on_return (на возврате), in_dispute (открыт спор), closed (закрыт).',
+          'Filter by statuses (array). Allowed values: on_confirmation (awaiting confirmation), ' +
+            'ready_to_ship (awaiting shipment), in_transit (in transit), canceled (canceled), delivered (delivered to the buyer), ' +
+            'on_return (being returned), in_dispute (dispute opened), closed (closed).',
         ),
-      dateFrom: z.number().int().optional().describe('Unix timestamp в секундах. Возвращает только заказы, созданные не раньше этого момента.'),
-      page: z.number().int().min(1).optional().describe('Номер страницы для пагинации (начиная с 1).'),
-      limit: z.number().int().min(1).max(100).optional().describe('Максимум заказов на странице. По API допускается до 20.'),
+      dateFrom: z.number().int().optional().describe('Unix timestamp in seconds. Returns only orders created no earlier than this moment.'),
+      page: z.number().int().min(1).optional().describe('Page number for pagination (starting from 1).'),
+      limit: z.number().int().min(1).max(100).optional().describe('Maximum orders per page. The API allows up to 20.'),
     },
     queryParams: ['ids', 'statuses', 'dateFrom', 'page', 'limit'],
   });
 
   defineTool(server, ctx, {
     name: 'orders_get_courier_delivery_range',
-    title: 'Заказы: слоты курьера',
+    title: 'Orders: courier time slots',
     risk: 'read',
     description:
-      'Возвращает доступные временные промежутки приезда курьера за товаром (get_courier_delivery_range), для доставки курьером продавца (RDBS/Courier). ' +
-      'Только чтение. Вызывайте ДО orders_set_courier_delivery_range — из ответа (dateOptions с интервалами и intervalType) выбирается конкретный слот. ' +
-      'Не путать с set-версией: эта только читает доступные интервалы, не бронирует их.',
+      'Returns the available time slots for a courier to pick up the item (get_courier_delivery_range), for seller-courier delivery (RDBS/Courier). ' +
+      'Read-only. Call it BEFORE orders_set_courier_delivery_range — a specific slot is chosen from the response (dateOptions with intervals and intervalType). ' +
+      'Do not confuse it with the set version: this one only reads the available intervals, it does not book them.',
     method: 'GET',
     path: '/order-management/1/order/getCourierDeliveryRange',
     domain: 'order-management',
     input: {
-      orderId: z.string().describe('ID заказа в Авито.'),
-      address: z.string().describe('Адрес продавца, откуда курьер забирает товар.'),
+      orderId: z.string().describe('Avito order ID.'),
+      address: z.string().describe("Seller's address where the courier picks up the item."),
     },
     queryParams: ['orderId', 'address'],
   });
 
   defineTool(server, ctx, {
     name: 'orders_download_label',
-    title: 'Заказы: скачать этикетку',
+    title: 'Orders: download label',
     risk: 'read',
     description:
-      'Скачивает сгенерированный PDF-файл с этикетками по taskID (download_label). Только чтение, ничего не меняет. ' +
-      'Вызывайте ПОСЛЕ orders_generate_labels или orders_generate_labels_extended, когда задача генерации завершена — taskID берётся из их ответа. ' +
-      'Возвращает структурированный binary-ответ {mimeType: "application/pdf", sizeBytes, base64}; декодируйте base64, чтобы сохранить или напечатать файл. ' +
-      'Если задача ещё не готова или taskID неверный — вернётся 404.',
+      'Downloads the generated PDF file with labels by taskID (download_label). Read-only, changes nothing. ' +
+      'Call it AFTER orders_generate_labels or orders_generate_labels_extended, once the generation task is complete — the taskID comes from their response. ' +
+      'Returns a structured binary response {mimeType: "application/pdf", sizeBytes, base64}; decode the base64 to save or print the file. ' +
+      'If the task is not ready yet or the taskID is wrong, a 404 is returned.',
     method: 'GET',
     path: '/order-management/1/orders/labels/{taskID}/download',
     domain: 'order-management',
     input: {
-      taskID: z.string().describe('ID задачи (документа) генерации этикеток, полученный из orders_generate_labels(_extended).'),
+      taskID: z.string().describe('ID of the label-generation task (document) obtained from orders_generate_labels(_extended).'),
     },
     pathParams: ['taskID'],
   });
@@ -94,13 +94,13 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_markings',
-    title: '⚠️ Заказы: честный знак',
+    title: '⚠️ Orders: Chestny Znak codes',
     risk: 'write',
     description:
-      '⚠️ Передаёт коды маркировки "Честный знак" (DataMatrix) для товаров в заказе (markings). ' +
-      'Write-операция: сохраняет коды на стороне Авито, требуется когда у заказа есть действие setMarkings (см. availableActions в orders_get_orders). ' +
-      'Максимум 50 записей маркировки за запрос; ответ содержит массив результатов по каждому товару (success/error). ' +
-      'Не путать с переходами статуса (orders_apply_transition) — этот метод лишь прикрепляет коды, статус заказа не меняет.',
+      '⚠️ Submits "Chestny Znak" marking codes (DataMatrix) for the items in an order (markings). ' +
+      'Write operation: stores the codes on the Avito side; required when the order has a setMarkings action (see availableActions in orders_get_orders). ' +
+      'Maximum 50 marking records per request; the response contains an array of per-item results (success/error). ' +
+      'Do not confuse it with status transitions (orders_apply_transition) — this method only attaches codes, it does not change the order status.',
     method: 'POST',
     path: '/order-management/1/markings',
     domain: 'order-management',
@@ -109,8 +109,8 @@ export const register: DomainRegister = (server, ctx) => {
         .array(z.record(z.string(), z.unknown()))
         .min(1)
         .describe(
-          'Массив записей маркировки (макс. 50). Каждая запись: itemId (ID товара в Авито), orderId (ID заказа в Авито) ' +
-            'и markings — массив кодов DataMatrix (до 10 кодов, каждый строка длиной 29–129 символов).',
+          'Array of marking records (max 50). Each record: itemId (Avito item ID), orderId (Avito order ID) ' +
+            'and markings — an array of DataMatrix codes (up to 10 codes, each a string of 29–129 characters).',
         ),
     },
     body: {
@@ -121,23 +121,23 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_accept_return_order',
-    title: '⚠️ Заказы: принять возврат',
+    title: '⚠️ Orders: accept return',
     risk: 'public',
     destructiveHint: true,
     description:
-      '⚠️ Подтверждает возврат товара покупателем и выбирает отделение Почты России, куда приедет возвратная посылка (accept_return_order). ' +
-      'Write/public-операция для курьерской доставки (Courier): подтверждение видно покупателю и необратимо запускает процесс возврата. ' +
-      'Вызывайте когда у заказа доступно действие acceptReturnOrder. Ответ содержит флаг success.',
+      '⚠️ Confirms the buyer\'s return of an item and selects the Russian Post office the return parcel will be sent to (accept_return_order). ' +
+      'Write/public operation for courier delivery (Courier): the confirmation is visible to the buyer and irreversibly starts the return process. ' +
+      'Call it when the order has an available acceptReturnOrder action. The response contains a success flag.',
     method: 'POST',
     path: '/order-management/1/order/acceptReturnOrder',
     domain: 'order-management',
     input: {
-      orderId: z.string().describe('ID заказа в Авито.'),
-      terminalNumber: z.string().describe('Номер отделения Почты России, куда придёт возвратная посылка (например "141138").'),
+      orderId: z.string().describe('Avito order ID.'),
+      terminalNumber: z.string().describe('Number of the Russian Post office the return parcel will be sent to (e.g. "141138").'),
       recipient: z
         .record(z.string(), z.unknown())
         .optional()
-        .describe('Данные человека, который заберёт возврат: name (ФИО) и phone (телефон, формат "+79999999999").'),
+        .describe('Details of the person who will collect the return: name (full name) and phone (phone, format "+79999999999").'),
     },
     body: {
       contentType: 'application/json',
@@ -147,31 +147,31 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_apply_transition',
-    title: '⚠️ Заказы: сменить статус',
+    title: '⚠️ Orders: change status',
     risk: 'public',
     destructiveHint: true,
     description:
-      '⚠️ Применяет переход статуса заказа (apply_transition), например подтверждение или отмену. ' +
-      'ВНИМАНИЕ: новый статус виден покупателю и влияет на сделку; переход необратим. ' +
-      'Допустимые переходы зависят от текущего статуса — список доступных действий см. в availableActions из orders_get_orders. ' +
-      'Ответ содержит флаг success.',
+      '⚠️ Applies an order status transition (apply_transition), such as confirmation or cancellation. ' +
+      'WARNING: the new status is visible to the buyer and affects the deal; the transition is irreversible. ' +
+      'The allowed transitions depend on the current status — see the list of available actions in availableActions from orders_get_orders. ' +
+      'The response contains a success flag.',
     method: 'POST',
     path: '/order-management/1/order/applyTransition',
     domain: 'order-management',
     input: {
-      orderId: z.string().describe('ID заказа в Авито.'),
+      orderId: z.string().describe('Avito order ID.'),
       transition: z
         .string()
         .describe(
-          'Название перехода. Допустимые значения: confirm (подтвердить заказ), reject (отменить заказ), ' +
-            'perform (подтвердить отправку, RDBS), receive (подтвердить доставку, RDBS/CNC). Набор зависит от текущего статуса.',
+          'Transition name. Allowed values: confirm (confirm the order), reject (cancel the order), ' +
+            'perform (confirm shipment, RDBS), receive (confirm delivery, RDBS/CNC). The set depends on the current status.',
         ),
       params: z
         .record(z.string(), z.unknown())
         .optional()
         .describe(
-          'Дополнительные параметры доставки. Для самовывоза (CNC) объект cnc с полями confirmCode (код, который покупатель показывает продавцу) ' +
-            'и marketplaceId (номер заказа в новой системе).',
+          'Additional delivery parameters. For click-and-collect (CNC), a cnc object with the fields confirmCode (the code the buyer shows the seller) ' +
+            'and marketplaceId (order number in the new system).',
         ),
     },
     body: {
@@ -182,18 +182,18 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_check_confirmation_code',
-    title: 'Заказы: проверка кода',
+    title: 'Orders: verify code',
     risk: 'read',
     description:
-      'Проверяет код подтверждения для выдачи заказа в ПВЗ (check_confirmation_code): покупатель называет код из приложения, метод валидирует его. ' +
-      'Фактически read-проверка, заказ не меняет. Ответ содержит status: success (код верный), fail (неверный), expired (истёк) или attempts (исчерпаны попытки). ' +
-      'Не путать с delivery_check_confirmation_code из домена доставки — этот метод относится к управлению заказами.',
+      'Verifies the confirmation code for handing over an order at a pickup point (check_confirmation_code): the buyer states the code from the app and the method validates it. ' +
+      'Effectively a read check, it does not change the order. The response contains status: success (code valid), fail (invalid), expired (expired), or attempts (attempts exhausted). ' +
+      'Do not confuse it with delivery_check_confirmation_code from the delivery domain — this method belongs to order management.',
     method: 'POST',
     path: '/order-management/1/order/checkConfirmationCode',
     domain: 'order-management',
     input: {
-      parcelID: z.string().describe('ID посылки в Авито (например "P00081306679").'),
-      confirmCode: z.string().describe('Код подтверждения, который покупатель показал/назвал при получении.'),
+      parcelID: z.string().describe('Avito parcel ID (e.g. "P00081306679").'),
+      confirmCode: z.string().describe('The confirmation code the buyer showed/stated upon receipt.'),
     },
     body: {
       contentType: 'application/json',
@@ -203,21 +203,21 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_cnc_set_details',
-    title: '⚠️ Заказы: самовывоз (детали)',
+    title: '⚠️ Orders: click-and-collect (details)',
     risk: 'write',
     description:
-      '⚠️ Подготавливает заказ с самовывозом и передаёт детали покупателю (cnc_set_details, CNC = click-and-collect). ' +
-      'Write-операция: продавец задаёт адрес получения, срок бронирования и комментарий, который увидит покупатель. ' +
-      'Вызывайте когда у заказа доступно действие setCNCDetails. После выдачи подтверждение делается через orders_apply_transition (receive) с кодом покупателя.',
+      '⚠️ Prepares a click-and-collect order and sends the details to the buyer (cnc_set_details, CNC = click-and-collect). ' +
+      'Write operation: the seller sets the pickup address, the booking period, and a comment the buyer will see. ' +
+      'Call it when the order has an available setCNCDetails action. After handover, confirmation is done via orders_apply_transition (receive) with the buyer\'s code.',
     method: 'POST',
     path: '/order-management/1/order/cncSetDetails',
     domain: 'order-management',
     input: {
-      id: z.string().describe('ID заказа в Авито.'),
-      marketplaceId: z.string().describe('Номер заказа в Авито в новой системе (marketplace).'),
-      bookingPeriod: z.number().int().positive().describe('Срок бронирования товара в часах (например 4).'),
-      address: z.string().optional().describe('Адрес получения товара покупателем (например "Тверская улица, 3, Москва").'),
-      details: z.string().optional().describe('Комментарий, который получит покупатель (например "Могу передать товар с 13:00 до 18:00").'),
+      id: z.string().describe('Avito order ID.'),
+      marketplaceId: z.string().describe('Order number in the new Avito system (marketplace).'),
+      bookingPeriod: z.number().int().positive().describe('Item booking period in hours (e.g. 4).'),
+      address: z.string().optional().describe('Address where the buyer picks up the item (e.g. "Tverskaya Street 3, Moscow").'),
+      details: z.string().optional().describe('A comment the buyer will receive (e.g. "I can hand over the item from 13:00 to 18:00").'),
     },
     body: {
       contentType: 'application/json',
@@ -227,24 +227,24 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_set_courier_delivery_range',
-    title: '⚠️ Заказы: выбрать слот курьера',
+    title: '⚠️ Orders: select courier slot',
     risk: 'write',
     description:
-      '⚠️ Выбирает (бронирует) конкретный временной промежуток приезда курьера за товаром (set_courier_delivery_range), для доставки курьером продавца. ' +
-      'Write-операция, в отличие от read-метода orders_get_courier_delivery_range, который только показывает доступные слоты — сначала вызовите его и возьмите интервал и intervalType из ответа. ' +
-      'Можно вызвать повторно для изменения времени, пока курьер ещё не забрал посылку. Ответ содержит флаг success.',
+      '⚠️ Selects (books) a specific time slot for a courier to pick up the item (set_courier_delivery_range), for seller-courier delivery. ' +
+      'A write operation, unlike the read method orders_get_courier_delivery_range, which only shows the available slots — call it first and take the interval and intervalType from the response. ' +
+      'Can be called again to change the time while the courier has not yet picked up the parcel. The response contains a success flag.',
     method: 'POST',
     path: '/order-management/1/order/setCourierDeliveryRange',
     domain: 'order-management',
     input: {
-      orderId: z.string().describe('ID заказа в Авито.'),
-      address: z.string().describe('Адрес продавца, откуда курьер забирает товар.'),
-      addressDetails: z.string().optional().describe('Детали адреса продавца (подъезд, этаж, квартира и т.п.).'),
-      name: z.string().describe('ФИО контактного лица у продавца.'),
-      phone: z.string().describe('Телефон контактного лица у продавца.'),
-      startDate: z.string().describe('Начальная дата/время приезда курьера в формате date-time (ISO 8601); берётся из ответа get-метода.'),
-      endDate: z.string().describe('Конечная дата/время приезда курьера в формате date-time (ISO 8601); берётся из ответа get-метода.'),
-      intervalType: z.string().describe('Тип интервала: fixed (фиксированный слот) или asap (как можно скорее). Берётся из ответа orders_get_courier_delivery_range.'),
+      orderId: z.string().describe('Avito order ID.'),
+      address: z.string().describe("Seller's address where the courier picks up the item."),
+      addressDetails: z.string().optional().describe('Seller address details (entrance, floor, apartment, etc.).'),
+      name: z.string().describe("Full name of the seller's contact person."),
+      phone: z.string().describe("Phone of the seller's contact person."),
+      startDate: z.string().describe('Start date/time of the courier arrival in date-time format (ISO 8601); taken from the get method response.'),
+      endDate: z.string().describe('End date/time of the courier arrival in date-time format (ISO 8601); taken from the get method response.'),
+      intervalType: z.string().describe('Interval type: fixed (fixed slot) or asap (as soon as possible). Taken from the orders_get_courier_delivery_range response.'),
     },
     body: {
       contentType: 'application/json',
@@ -263,18 +263,18 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_set_tracking_number',
-    title: '⚠️ Заказы: трек-номер',
+    title: '⚠️ Orders: tracking number',
     risk: 'public',
     description:
-      '⚠️ Передаёт трек-номер посылки для доставки партнёрами продавца (set_tracking_number, DBS). ' +
-      'Write/public-операция: трек-номер виден покупателю для отслеживания. Вызывайте когда у заказа доступно действие setTrackNumber (или fixTrackNumber для исправления). ' +
-      'Ответ содержит флаг success; при ошибке code: incorrect_number (некорректный номер) или already_set (номер уже привязан к другому заказу).',
+      '⚠️ Submits the parcel tracking number for delivery by the seller\'s partners (set_tracking_number, DBS). ' +
+      'Write/public operation: the tracking number is visible to the buyer for tracking. Call it when the order has an available setTrackNumber action (or fixTrackNumber to correct it). ' +
+      'The response contains a success flag; on error, code: incorrect_number (invalid number) or already_set (the number is already attached to another order).',
     method: 'POST',
     path: '/order-management/1/order/setTrackingNumber',
     domain: 'order-management',
     input: {
-      orderId: z.string().describe('ID заказа в Авито.'),
-      trackingNumber: z.string().describe('Трек-номер посылки от службы доставки (например "01-01031002199").'),
+      orderId: z.string().describe('Avito order ID.'),
+      trackingNumber: z.string().describe('Parcel tracking number from the delivery service (e.g. "01-01031002199").'),
     },
     body: {
       contentType: 'application/json',
@@ -284,17 +284,17 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_generate_labels',
-    title: 'Заказы: создать этикетки',
+    title: 'Orders: create labels',
     risk: 'write',
     description:
-      'Создаёт задачу на генерацию PDF-этикеток для заказов (generate_labels, до 100 заказов за раз). ' +
-      'Доступно только для ПВЗ-заказов. Возвращает taskID; дождитесь готовности и скачайте файл через orders_download_label. ' +
-      'Для больших партий (до 1000 заказов) используйте orders_generate_labels_extended — у него выше лимит, но строгий rate limit (1 запрос/мин).',
+      'Creates a task to generate PDF labels for orders (generate_labels, up to 100 orders at a time). ' +
+      'Available only for pickup-point orders. Returns a taskID; wait for it to be ready and download the file via orders_download_label. ' +
+      'For large batches (up to 1000 orders) use orders_generate_labels_extended — it has a higher limit but a strict rate limit (1 request/min).',
     method: 'POST',
     path: '/order-management/1/orders/labels',
     domain: 'order-management',
     input: {
-      orderIDs: z.array(z.string()).min(1).max(100).describe('Массив ID заказов в сервисе сделок (marketplace), от 1 до 100.'),
+      orderIDs: z.array(z.string()).min(1).max(100).describe('Array of order IDs in the deals service (marketplace), from 1 to 100.'),
     },
     body: {
       contentType: 'application/json',
@@ -304,17 +304,17 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'orders_generate_labels_extended',
-    title: 'Заказы: создать этикетки (до 1000)',
+    title: 'Orders: create labels (up to 1000)',
     risk: 'write',
     description:
-      'Создаёт задачу на генерацию PDF-этикеток для большой партии заказов (generate_labels_extended, до 1000 заказов за раз). ' +
-      'Доступно только для ПВЗ-заказов. Отличие от orders_generate_labels: выше лимит заказов (1000 против 100), но жёсткий rate limit — 1 запрос в минуту. ' +
-      'Возвращает taskID; дождитесь готовности и скачайте файл через orders_download_label.',
+      'Creates a task to generate PDF labels for a large batch of orders (generate_labels_extended, up to 1000 orders at a time). ' +
+      'Available only for pickup-point orders. Difference from orders_generate_labels: a higher order limit (1000 vs 100), but a strict rate limit — 1 request per minute. ' +
+      'Returns a taskID; wait for it to be ready and download the file via orders_download_label.',
     method: 'POST',
     path: '/order-management/1/orders/labels/extended',
     domain: 'order-management',
     input: {
-      orderIDs: z.array(z.string()).min(1).max(1000).describe('Массив ID заказов в сервисе сделок (marketplace), от 1 до 1000.'),
+      orderIDs: z.array(z.string()).min(1).max(1000).describe('Array of order IDs in the deals service (marketplace), from 1 to 1000.'),
     },
     body: {
       contentType: 'application/json',

@@ -4,9 +4,9 @@ import { randomBytes } from 'node:crypto';
 import type { ToolRisk } from './tool-factory.js';
 
 /**
- * Функция-исполнитель отложенного действия. Возвращается в pending action
- * чтобы при confirm можно было выполнить ровно тот же handler с теми же args.
- * Замкнута на оригинальный handler и cтрого один раз вызывается.
+ * Executor function for a pending action. Returned within the pending action
+ * so that on confirm the exact same handler can be run with the same args.
+ * Closes over the original handler and is meant to be called exactly once.
  */
 export type PendingExecutor = () => Promise<CallToolResult>;
 
@@ -21,7 +21,7 @@ export interface PendingAction {
   execute: PendingExecutor;
 }
 
-/** Public-facing view (без execute и без args — args могут содержать чувствительные данные). */
+/** Public-facing view (without execute and without args — args may contain sensitive data). */
 export interface PendingActionInfo {
   id: string;
   toolName: string;
@@ -34,18 +34,18 @@ export interface PendingActionInfo {
 /**
  * In-memory TTL'd store of pending actions awaiting confirmation.
  *
- * Сознательно НЕ персистится на диск:
- *   - после рестарта pending теряется, что лучше чем случайно подтвердить старое действие
- *   - stdio MCP сервер обычно ephemeral
- *   - меньше surface для leak'ов
+ * Deliberately NOT persisted to disk:
+ *   - after a restart the pending entries are lost, which is better than accidentally confirming a stale action
+ *   - a stdio MCP server is usually ephemeral
+ *   - smaller surface for leaks
  *
- * Конфирмация одноразовая: после успешного confirm запись удаляется.
- * Cancel и expiry тоже удаляют. Cleanup ленивый — при каждом get/list.
+ * Confirmation is one-time: after a successful confirm the entry is removed.
+ * Cancel and expiry remove it too. Cleanup is lazy — on every get/list.
  */
 /**
- * Подписчик на изменения store. v0.6.0 — нужен MCP resource
- * `avito://state/pending-actions`, чтобы клиенты могли подписаться через
- * resources/subscribe и получать notifications/resources/updated.
+ * Subscriber for store changes. v0.6.0 — needed for the MCP resource
+ * `avito://state/pending-actions`, so that clients can subscribe via
+ * resources/subscribe and receive notifications/resources/updated.
  */
 export type PendingChangeListener = (
   event: 'created' | 'deleted' | 'expired',
@@ -59,8 +59,8 @@ export class PendingActionStore {
   constructor(private readonly ttlMs: number) {}
 
   /**
-   * Создаёт запись. id — 32 hex символа (16 байт энтропии), достаточно
-   * сильно чтобы не угадать без timing-атаки.
+   * Creates an entry. id is 32 hex characters (16 bytes of entropy), strong
+   * enough that it can't be guessed without a timing attack.
    */
   create(input: {
     toolName: string;
@@ -82,13 +82,13 @@ export class PendingActionStore {
     return action;
   }
 
-  /** Возвращает запись если жива. Иначе undefined (вызывающий должен сам сообщить почему). */
+  /** Returns the entry if it's alive. Otherwise undefined (the caller must report why itself). */
   get(id: string): PendingAction | undefined {
     this.cleanupExpired();
     return this.actions.get(id);
   }
 
-  /** Возвращает true если запись была и удалилась, false если её и не было. */
+  /** Returns true if the entry existed and was removed, false if it never existed. */
   delete(id: string): boolean {
     const had = this.actions.get(id);
     const existed = this.actions.delete(id);
@@ -96,19 +96,19 @@ export class PendingActionStore {
     return existed;
   }
 
-  /** Безопасный list — без args, без execute. */
+  /** Safe list — without args, without execute. */
   list(): PendingActionInfo[] {
     this.cleanupExpired();
     return [...this.actions.values()].map(toInfo);
   }
 
-  /** Для тестов — текущий размер. */
+  /** For tests — the current size. */
   size(): number {
     this.cleanupExpired();
     return this.actions.size;
   }
 
-  /** Подписка на изменения store. Возвращает unsubscribe. */
+  /** Subscribe to store changes. Returns an unsubscribe function. */
   onChange(listener: PendingChangeListener): () => void {
     this.listeners.push(listener);
     return () => {
@@ -122,7 +122,7 @@ export class PendingActionStore {
       try {
         l(event, info);
       } catch {
-        // Подписчик не должен ломать store. Глотаем.
+        // A subscriber must not break the store. Swallow the error.
       }
     }
   }

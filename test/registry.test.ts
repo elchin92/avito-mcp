@@ -103,10 +103,11 @@ describe('tool registry invariants', () => {
     expect(noDesc.map((t) => t.name)).toEqual([]);
   });
 
-  it('every tool description contains Russian text (convention)', () => {
-    // Heuristic: every tool description should have Cyrillic somewhere — confirms convention.
-    const missingCyrillic = tools.filter((t) => !/[Ѐ-ӿ]/.test(t.description ?? ''));
-    expect(missingCyrillic.map((t) => t.name)).toEqual([]);
+  it('every tool description is in English (no Cyrillic) — convention', () => {
+    // Heuristic: tool descriptions are English-only for an international audience —
+    // a new Russian-only description should fail CI. (v0.8.0 i18n pass.)
+    const withCyrillic = tools.filter((t) => /[Ѐ-ӿ]/.test(t.description ?? ''));
+    expect(withCyrillic.map((t) => t.name)).toEqual([]);
   });
 
   it('every tool exposes ToolAnnotations (so MCP clients can warn before destructive calls)', () => {

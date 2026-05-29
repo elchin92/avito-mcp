@@ -16,7 +16,7 @@
 
 🇷🇺 **[Русская версия / Russian version →](./README.ru.md)**
 
-> **New in v0.7.5** — tool-definition quality pass: every tool's description and parameters rewritten for agent legibility (purpose, usage, side-effects, disambiguation), honest `destructiveHint` on irreversible actions, and a `glama.json` listing claim. See the [CHANGELOG](./CHANGELOG.md) for full history.
+> **New in v0.8.0** — internationalization: every tool's title, description and parameter docs are now in English for a global audience, MCP prompts are bilingual (EN + RU), and code comments are English throughout. No tool, schema or behaviour changes. See the [CHANGELOG](./CHANGELOG.md) for full history.
 
 ---
 

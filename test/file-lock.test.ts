@@ -1,7 +1,7 @@
 /**
- * Тесты межпроцессного file-lock (v0.7.0).
- * Не пытаемся реально форкать процессы — проверяем serialization
- * через параллельные withFileLock в том же процессе + симуляцию stale-lock.
+ * Tests for the cross-process file lock (v0.7.0).
+ * We don't actually fork processes — instead we verify serialization
+ * via parallel withFileLock calls in the same process plus a stale-lock simulation.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'node:fs';
@@ -32,8 +32,8 @@ describe('file-lock', () => {
         inside.push(`${id}:exit`);
       });
     await Promise.all([work('A'), work('B'), work('C')]);
-    // Каждый enter должен идти подряд со своим exit — без перемежения других.
-    // Проверяем парами: i-й enter и (i+1)-й exit должны быть одной буквой.
+    // Each enter must be immediately followed by its own exit — no interleaving with others.
+    // Check in pairs: the i-th enter and the (i+1)-th exit must share the same letter.
     expect(inside).toHaveLength(6);
     for (let i = 0; i < 6; i += 2) {
       const enter = inside[i];
@@ -50,14 +50,14 @@ describe('file-lock', () => {
         throw new Error('boom');
       }),
     ).rejects.toThrow('boom');
-    // Если lock не освобождён — следующий withFileLock зависнет; ставим короткий timeout.
+    // If the lock isn't released, the next withFileLock would hang; use a short timeout.
     let ran = false;
     await withFileLock(target, async () => { ran = true; }, { timeoutMs: 1000 });
     expect(ran).toBe(true);
   });
 
   it('throws FileLockTimeoutError when lock cannot be acquired within timeout', async () => {
-    // Создаём lock руками с живым (нашим) PID
+    // Create the lock manually with a live (our own) PID
     await fs.writeFile(`${target}.lock`, `${process.pid}\n${Date.now()}\n`, { mode: 0o600 });
     await expect(
       withFileLock(target, async () => 'never', { timeoutMs: 200 }),
@@ -66,7 +66,7 @@ describe('file-lock', () => {
   });
 
   it('snatches stale lock (dead PID)', async () => {
-    // PID 999999 заведомо не существует. process.kill(pid, 0) бросит ESRCH → stale.
+    // PID 999999 definitely doesn't exist. process.kill(pid, 0) will throw ESRCH → stale.
     await fs.writeFile(`${target}.lock`, `999999\n${Date.now()}\n`, { mode: 0o600 });
     let ran = false;
     await withFileLock(target, async () => { ran = true; }, { timeoutMs: 5000 });
@@ -74,8 +74,8 @@ describe('file-lock', () => {
   });
 
   it('snatches stale lock by age (timestamp > staleMs)', async () => {
-    // Живой PID но древний timestamp → должно быть stale.
-    const ancient = Date.now() - 120_000; // 2 минуты назад
+    // Live PID but an ancient timestamp → should be treated as stale.
+    const ancient = Date.now() - 120_000; // 2 minutes ago
     await fs.writeFile(`${target}.lock`, `${process.pid}\n${ancient}\n`, { mode: 0o600 });
     let ran = false;
     await withFileLock(target, async () => { ran = true; }, { timeoutMs: 5000, staleMs: 60_000 });

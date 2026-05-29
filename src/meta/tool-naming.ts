@@ -1,6 +1,6 @@
 /**
- * Префиксы доменов — должны совпадать с операционными именами из swagger-файлов.
- * При коллизиях operationId между файлами префикс делает имя уникальным.
+ * Domain prefixes — must match the operation names from the swagger files.
+ * When operationId values collide across files, the prefix makes the name unique.
  */
 export const DOMAIN_PREFIXES = {
   auth: 'auth',
@@ -26,7 +26,7 @@ export const DOMAIN_PREFIXES = {
 /**
  * camelCase / PascalCase / kebab-case → snake_case.
  *   "getUserBalance"      → "get_user_balance"
- *   "GetTokenOAuthRequest" → "get_token_o_auth_request" (для большинства случаев ок)
+ *   "GetTokenOAuthRequest" → "get_token_o_auth_request" (fine for most cases)
  *   "v1-list-items"       → "v1_list_items"
  */
 export function toSnakeCase(input: string): string {

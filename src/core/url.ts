@@ -2,8 +2,8 @@ export type Primitive = string | number | boolean;
 export type QueryValue = Primitive | Primitive[] | null | undefined;
 
 /**
- * Подставляет path-параметры в шаблон ("/items/{item_id}/") с url-encoding значений.
- * Бросает Error если в шаблоне остался незаполненный {placeholder}.
+ * Substitutes path parameters into a template ("/items/{item_id}/"), url-encoding the values.
+ * Throws an Error if an unfilled {placeholder} remains in the template.
  */
 export function fillPath(template: string, pathParams: Record<string, Primitive> = {}): string {
   const filled = template.replace(/\{([^}]+)\}/g, (_, key: string) => {
@@ -17,7 +17,7 @@ export function fillPath(template: string, pathParams: Record<string, Primitive>
 }
 
 /**
- * Собирает query-string из объекта. Пропускает null/undefined. Массивы — повторение ключа.
+ * Builds a query string from an object. Skips null/undefined. Arrays repeat the key.
  */
 export function buildQuery(query: Record<string, QueryValue> = {}): string {
   const params = new URLSearchParams();
@@ -37,8 +37,8 @@ export function buildQuery(query: Record<string, QueryValue> = {}): string {
 }
 
 /**
- * Полный URL: base + path-with-placeholders-resolved + query-string.
- * base без trailing slash, path с leading slash.
+ * Full URL: base + path-with-placeholders-resolved + query-string.
+ * base without a trailing slash, path with a leading slash.
  */
 export function buildUrl(
   baseUrl: string,

@@ -5,8 +5,8 @@ export interface RequestInfo {
 }
 
 /**
- * Доменная ошибка Avito API (4xx/5xx). Используется для маппинга в MCP isError content,
- * чтобы LLM-агент мог прочитать и среагировать.
+ * Avito API domain error (4xx/5xx). Used to map into MCP isError content
+ * so that an LLM agent can read it and react.
  */
 export class AvitoApiError extends Error {
   readonly status: number;
@@ -31,9 +31,9 @@ export class AvitoApiError extends Error {
 }
 
 /**
- * v0.7.4: креды Avito не сконфигурированы. Бросается лениво — только когда tool
- * реально пытается обратиться к Avito (получить токен). До этого момента сервер
- * спокойно отдаёт tools/list / resources / prompts без кредов (introspection mode).
+ * v0.7.4: Avito credentials are not configured. Thrown lazily — only when a tool
+ * actually tries to reach Avito (to obtain a token). Until then the server
+ * happily serves tools/list / resources / prompts without credentials (introspection mode).
  */
 export class MissingCredentialsError extends Error {
   constructor(message?: string) {
@@ -47,7 +47,7 @@ export class MissingCredentialsError extends Error {
 }
 
 /**
- * Сетевая ошибка (DNS, таймаут, обрыв). Отличаем от доменных, чтобы агент видел разницу.
+ * Network error (DNS, timeout, connection drop). Distinguished from domain errors so the agent can tell them apart.
  */
 export class AvitoTransportError extends Error {
   readonly request: RequestInfo;
@@ -64,10 +64,10 @@ export class AvitoTransportError extends Error {
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 /**
- * Структурированная таксономия ошибок (v0.7.0).
- * type — машинно-читаемая категория, retryable + retryAfter — подсказки для агента
- * стоит ли пробовать ещё раз и через сколько секунд. httpStatus сохраняется для
- * совместимости с предыдущими версиями. Эти типы попадают в structuredContent.error.
+ * Structured error taxonomy (v0.7.0).
+ * type is a machine-readable category; retryable + retryAfter are hints for the agent
+ * on whether to try again and after how many seconds. httpStatus is kept for
+ * compatibility with previous versions. These types end up in structuredContent.error.
  */
 export type ErrorType =
   | 'CONFIG_ERROR'
@@ -104,12 +104,12 @@ function classifyApiError(err: AvitoApiError): ErrorEnvelope {
 }
 
 /**
- * Формирует payload для MCP-tool ответа из ошибки.
- * SDK ожидает isError + content[].text для пользовательского сообщения.
- * v0.6.0: добавлен structuredContent с error_kind.
- * v0.7.0: structuredContent.error содержит формальный таксономический тип
- * (см. ErrorType), retryable, retryAfter — агент может принимать решение
- * программно без regex по тексту.
+ * Builds the payload for an MCP tool response from an error.
+ * The SDK expects isError + content[].text for the user-facing message.
+ * v0.6.0: added structuredContent with error_kind.
+ * v0.7.0: structuredContent.error contains a formal taxonomic type
+ * (see ErrorType), retryable, retryAfter — the agent can make decisions
+ * programmatically without running regex over the text.
  */
 export function errorToMcpContent(err: unknown): CallToolResult {
   let text: string;
@@ -143,9 +143,9 @@ export function errorToMcpContent(err: unknown): CallToolResult {
   return {
     isError: true,
     content: [{ type: 'text', text }],
-    // v0.7.0: новая структура — `error: { type, message, retryable, ... }`.
-    // Старое поле error_kind сохраняем для backwards-compat: код, который читал
-    // structuredContent.error_kind в v0.6.0, продолжит работать.
+    // v0.7.0: new structure — `error: { type, message, retryable, ... }`.
+    // The old error_kind field is kept for backwards-compat: code that read
+    // structuredContent.error_kind in v0.6.0 will keep working.
     structuredContent: {
       error: envelope,
       error_kind: legacyKindFromType(envelope.type),

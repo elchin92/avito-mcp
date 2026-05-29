@@ -1,20 +1,20 @@
 /**
- * MCP Resources (spec 2025-11-25). Этот модуль регистрирует на сервере
- * статические и динамические ресурсы:
+ * MCP Resources (spec 2025-11-25). This module registers static and dynamic
+ * resources on the server:
  *
- *   - `avito://docs/safety`              — markdown с safety-режимами и confirmation
- *   - `avito://manifest`                  — json реестр tool'ов (dist/manifest.json)
- *   - `avito://state/config`              — sanitized snapshot активного config (без секретов)
+ *   - `avito://docs/safety`              — markdown with safety modes and confirmation
+ *   - `avito://manifest`                  — JSON registry of tools (dist/manifest.json)
+ *   - `avito://state/config`              — sanitized snapshot of the active config (no secrets)
  *   - `avito://state/pending-actions`     — live JSON pending-actions (subscribable!)
- *   - `avito://state/rate-limits`         — последний снимок rate-limits по доменам
+ *   - `avito://state/rate-limits`         — latest rate-limit snapshot per domain
  *   - `avito://swaggers/{file}`           — raw swagger (template + list callback)
  *
- * `state/pending-actions` единственный, где сервер посылает `notifications/resources/updated`,
- * когда содержимое меняется (создан / подтверждён / отменён pending). Достигается путём
- * прокидывания EventEmitter-подобного onChange из PendingActionStore.
+ * `state/pending-actions` is the only one where the server emits `notifications/resources/updated`
+ * when its contents change (pending created / confirmed / cancelled). This is achieved by
+ * wiring an EventEmitter-like onChange from the PendingActionStore.
  *
- * Все ресурсы read-only. Зависимости — те же что и у tool-ов: ctx.client (для rate-limits),
- * ctx.config (для config snapshot и фильтрации секретов), ctx.pendingStore (для pending).
+ * All resources are read-only. Dependencies are the same as for tools: ctx.client (for rate-limits),
+ * ctx.config (for the config snapshot and secret filtering), ctx.pendingStore (for pending).
  */
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -36,24 +36,24 @@ import { PACKAGE_NAME, VERSION } from './version.js';
 const here = dirname(fileURLToPath(import.meta.url));
 
 /**
- * Корень репозитория. В dev-режиме (tsx) src/resources.ts → '..',
- * в build (node) dist/resources.js → '..'. Та же логика что в src/version.ts.
+ * Repository root. In dev mode (tsx) src/resources.ts → '..',
+ * in a build (node) dist/resources.js → '..'. Same logic as in src/version.ts.
  */
 const REPO_ROOT = resolve(here, '..');
 const SAFETY_DOC = resolve(REPO_ROOT, 'docs', 'safety.md');
 const MANIFEST = resolve(REPO_ROOT, 'dist', 'manifest.json');
 const SWAGGERS_DIR = resolve(REPO_ROOT, 'swaggers');
 
-/** Public URI для подписки клиентов на pending-actions updates. */
+/** Public URI for clients to subscribe to pending-actions updates. */
 export const PENDING_ACTIONS_URI = 'avito://state/pending-actions';
 
 /**
- * Удаляет из config поля, которые НИКОГДА не должны утечь клиенту:
+ * Removes from config the fields that must NEVER leak to the client:
  * client_id / client_secret / confirmation_secret / token_file path.
  *
- * Для каждого redacted-ключа всегда эмитим явный маркер: '[redacted]' если
- * value было задано или null если нет. Это видно клиенту даже когда исходный
- * field был undefined / отсутствовал — без сюрпризов "потерянного" поля.
+ * For every redacted key we always emit an explicit marker: '[redacted]' if
+ * the value was set, or null if it was not. The client sees this even when the
+ * original field was undefined / absent — no surprises from a "lost" field.
  */
 function sanitizeConfig(cfg: Record<string, unknown>): Record<string, unknown> {
   const REDACTED_KEYS = ['clientId', 'clientSecret', 'confirmationSecret', 'tokenFile'] as const;
@@ -65,7 +65,7 @@ function sanitizeConfig(cfg: Record<string, unknown>): Record<string, unknown> {
       out[k] = v;
     }
   }
-  // Гарантируем что все redacted-ключи присутствуют, даже если их не было в cfg.
+  // Ensure all redacted keys are present, even if they were absent from cfg.
   for (const k of REDACTED_KEYS) {
     if (!(k in out)) out[k] = null;
   }
@@ -104,8 +104,8 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Safety modes & confirmation guide',
       description:
-        'Markdown-документация по AVITO_MCP_MODE, AVITO_MCP_CONFIRMATION_MODE, ' +
-        'AVITO_MCP_CONFIRMATION_SECRET и upload guard. Тот же файл что docs/safety.md.',
+        'Markdown documentation for AVITO_MCP_MODE, AVITO_MCP_CONFIRMATION_MODE, ' +
+        'AVITO_MCP_CONFIRMATION_SECRET and the upload guard. The same file as docs/safety.md.',
       mimeType: 'text/markdown',
     },
     async (uri): Promise<ReadResourceResult> => {
@@ -126,10 +126,10 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
     'tools-manifest',
     'avito://manifest',
     {
-      title: 'Tools manifest (живой реестр tool-ов)',
+      title: 'Tools manifest (live tool registry)',
       description:
-        'JSON-каталог всех зарегистрированных MCP tool с их risk/domain/annotations. ' +
-        'Тот же файл, что dist/manifest.json — генерируется через npm run generate:manifest.',
+        'JSON catalogue of every registered MCP tool with its risk/domain/annotations. ' +
+        'The same file as dist/manifest.json — generated via npm run generate:manifest.',
       mimeType: 'application/json',
     },
     async (uri): Promise<ReadResourceResult> => {
@@ -155,10 +155,10 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
     'config-snapshot',
     'avito://state/config',
     {
-      title: 'Активная конфигурация сервера',
+      title: 'Active server configuration',
       description:
-        'Снимок effective config (mode, allow/deny, confirmation, upload), без секретов. ' +
-        'Используйте чтобы быстро понять, в каком режиме работает сервер.',
+        'Snapshot of the effective config (mode, allow/deny, confirmation, upload), without secrets. ' +
+        'Use it to quickly understand which mode the server is running in.',
       mimeType: 'application/json',
     },
     async (uri): Promise<ReadResourceResult> => {
@@ -175,10 +175,10 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
     'rate-limits',
     'avito://state/rate-limits',
     {
-      title: 'Последний снимок rate-limits',
+      title: 'Latest rate-limits snapshot',
       description:
-        'Текущие X-RateLimit-Limit / Remaining / Reset по логическим доменам Avito API. ' +
-        'Пусто, если ни одного запроса ещё не было.',
+        'Current X-RateLimit-Limit / Remaining / Reset per logical Avito API domain. ' +
+        'Empty if no request has been made yet.',
       mimeType: 'application/json',
     },
     async (uri): Promise<ReadResourceResult> => {
@@ -192,16 +192,16 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
   );
 
   // ─────────── avito://state/pending-actions ───────────
-  // subscribable: при изменении pending-store сервер шлёт resources/updated.
+  // subscribable: when the pending-store changes, the server sends resources/updated.
   server.registerResource(
     'pending-actions',
     PENDING_ACTIONS_URI,
     {
       title: 'Pending actions (live)',
       description:
-        'Текущие отложенные действия ожидающие confirmation. Subscribable: клиент может ' +
-        'подписаться через resources/subscribe и получать notifications/resources/updated ' +
-        'при каждом create/confirm/cancel/expire.',
+        'Pending actions currently awaiting confirmation. Subscribable: a client can ' +
+        'subscribe via resources/subscribe and receive notifications/resources/updated ' +
+        'on every create/confirm/cancel/expire.',
       mimeType: 'application/json',
     },
     async (uri): Promise<ReadResourceResult> => {
@@ -223,9 +223,9 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
     },
   );
 
-  // SDK McpServer не регистрирует subscribe/unsubscribe автоматически — capability
-  // мы заявили в server.ts, обработчики обязаны быть. Реализуем тонко:
-  // отслеживаем set подписчиков, при изменении pending-actions шлём только им.
+  // The SDK McpServer does not register subscribe/unsubscribe automatically — we
+  // declared the capability in server.ts, so the handlers must exist. We implement
+  // it lightly: track a set of subscribers and, on a pending-actions change, notify only them.
   const subscribers = new Set<string>();
   server.server.setRequestHandler(SubscribeRequestSchema, async (req) => {
     subscribers.add(req.params.uri);
@@ -236,8 +236,8 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
     return {};
   });
 
-  // Подключаем emitter: каждое change в PendingActionStore -> sendResourceUpdated,
-  // если есть подписчик на этот URI.
+  // Wire up the emitter: every change in PendingActionStore -> sendResourceUpdated,
+  // if there is a subscriber for this URI.
   ctx.pendingStore.onChange(() => {
     if (!subscribers.has(PENDING_ACTIONS_URI)) return;
     server.server
@@ -248,7 +248,7 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
   });
 
   // ─────────── avito://swaggers/{file} ───────────
-  // ResourceTemplate с list callback — клиент видит каждый swagger как отдельный resource.
+  // ResourceTemplate with a list callback — the client sees each swagger as a separate resource.
   const swaggerFiles = existsSync(SWAGGERS_DIR)
     ? readdirSync(SWAGGERS_DIR).filter((f) => f.toLowerCase().endsWith('.json'))
     : [];
@@ -278,20 +278,20 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Avito swagger (raw OpenAPI)',
       description:
-        'Сырые swagger-файлы из swaggers/. По одному resource на каждый файл. ' +
-        'Используйте чтобы дать агенту полный контекст endpoint-а без mcp tools.',
+        'Raw swagger files from swaggers/. One resource per file. ' +
+        'Use it to give an agent the full context of an endpoint without MCP tools.',
       mimeType: 'application/json',
     },
     async (uri, variables): Promise<ReadResourceResult> => {
       const slugRaw = Array.isArray(variables.slug) ? variables.slug[0] : variables.slug;
       const slug = decodeURIComponent(String(slugRaw ?? ''));
-      // Защита от path-traversal: не пускаем '..', '/' и нулевые байты.
+      // Path-traversal protection: disallow '..', '/' and null bytes.
       if (!slug || slug.includes('..') || slug.includes('/') || slug.includes('\0')) {
         throw new Error(`Invalid swagger slug: ${slug}`);
       }
       const filename = `${slug}.json`;
       const full = join(SWAGGERS_DIR, filename);
-      // Проверяем что разрешённый путь не выходит за пределы каталога.
+      // Verify the resolved path does not escape the directory.
       if (!resolve(full).startsWith(resolve(SWAGGERS_DIR) + '/')) {
         throw new Error(`Swagger path escapes directory: ${slug}`);
       }

@@ -1,5 +1,5 @@
 /**
- * Тесты idempotency-store (v0.7.0). Изолированные unit-тесты без MCP.
+ * Tests for the idempotency store (v0.7.0). Isolated unit tests without MCP.
  */
 import { describe, it, expect } from 'vitest';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';

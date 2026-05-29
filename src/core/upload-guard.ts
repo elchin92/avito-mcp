@@ -2,21 +2,21 @@ import { promises as fs } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 
 /**
- * Защита `messenger_upload_images` от чтения произвольных файлов с диска.
- * Каждая проверка fail-closed: если что-то пошло не так, выбрасываем —
- * вызывающий обернёт это в MCP isError.
+ * Protects `messenger_upload_images` from reading arbitrary files off disk.
+ * Every check is fail-closed: if anything goes wrong, we throw —
+ * the caller wraps it into an MCP isError.
  *
- * Слои:
- *   1. resolve абсолютного пути
- *   2. realpath → защита от symlink escape
- *   3. realpath также для каждого allowed dir
- *   4. строгое `dir + sep` startsWith — защита от /safe-dir-malicious
- *   5. fs.stat: только regular file (не dir, не device, не socket)
+ * Layers:
+ *   1. resolve the absolute path
+ *   2. realpath → protection against symlink escape
+ *   3. realpath for each allowed dir as well
+ *   4. strict `dir + sep` startsWith — protection against /safe-dir-malicious
+ *   5. fs.stat: regular file only (not dir, not device, not socket)
  *   6. size ≤ maxBytes
- *   7. extension в allowlist
+ *   7. extension in the allowlist
  *   8. magic-byte sniffing (JPEG / PNG / WEBP)
  *
- * Все pre-check сделаны до открытия файла на чтение — read только если все пройдены.
+ * All pre-checks run before the file is opened for reading — we read only if they all pass.
  */
 
 const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
