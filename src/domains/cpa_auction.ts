@@ -13,14 +13,26 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'CPA-аукцион: мои ставки',
     risk: 'read',
     description:
-      'Текущие и доступные ставки в CPA-аукционе с курсорной пагинацией. ' +
-      'fromItemID — курсор (ID объявления, с которого продолжить), batchSize — размер страницы.',
+      'Читает действующие и доступные ставки CPA-аукциона по объявлениям пользователя (только чтение, расход не меняет). ' +
+      'Возвращает по каждому объявлению текущую ставку pricePenny (в копейках за действие), время её действия expirationTime (RFC3339; отсутствует — действует бессрочно) и список доступных ставок availablePrices. ' +
+      'Постранично, курсором fromItemID. Чтобы изменить ставки — cpa_auction_save_item_bids. Лимит 200 запросов/мин.',
     method: 'GET',
     path: '/auction/1/bids',
     domain: 'auction',
     input: {
-      fromItemID: z.number().int().positive().optional().describe('Курсор: ID объявления.'),
-      batchSize: z.number().int().min(1).max(200).optional().describe('Размер страницы (1–200).'),
+      fromItemID: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Курсор пагинации: ID последнего объявления из предыдущей страницы (по умолчанию 0 — с начала).'),
+      batchSize: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe('Размер страницы — число объявлений в ответе (1–200, по умолчанию 200).'),
     },
     queryParams: ['fromItemID', 'batchSize'],
   });
@@ -30,8 +42,9 @@ export const register: DomainRegister = (server, ctx) => {
     title: '⚠️ CPA-аукцион: сохранить ставки',
     risk: 'money',
     description:
-      '⚠️ Сохранение новых ставок в CPA-аукционе для объявлений (до 200 за запрос). ' +
-      'items: массив {itemId, bid (в копейках), ...} — см. swagger.',
+      'Сохраняет (перезаписывает) ставки в CPA-аукционе для объявлений. ВНИМАНИЕ: влияет на расход в аукционе (money) — выше ставка, выше позиция показа. ' +
+      'pricePenny — в копейках за действие; expirationTime задаёт срок действия (без поля либо null — бессрочно). ' +
+      'До 200 объявлений за запрос, лимит 200 запросов/мин. Текущие и доступные ставки см. в cpa_auction_get_user_bids.',
     method: 'POST',
     path: '/auction/1/bids',
     domain: 'auction',
@@ -40,7 +53,10 @@ export const register: DomainRegister = (server, ctx) => {
         .array(z.record(z.string(), z.unknown()))
         .min(1)
         .max(200)
-        .describe('Массив ставок {itemId, bid, ...}. См. swaggers/CPA-аукцион.json.'),
+        .describe(
+          'Массив ставок (1–200). Каждый элемент: itemID (int, ID объявления, обязателен), pricePenny (int, ставка в копейках, обязательна), ' +
+            'expirationTime (string RFC3339, например "2023-06-29T12:34:34+03:00"; null/отсутствует — бессрочно). См. swaggers/CPA-аукцион.json.',
+        ),
     },
     body: { contentType: 'application/json', fields: ['items'] },
   });

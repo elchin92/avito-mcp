@@ -15,7 +15,7 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Остатки: получить',
     risk: 'read',
     description:
-      'Получение текущих остатков для списка объявлений. strong_consistency — гарантия свежих данных.',
+      'Читает текущие остатки (доступное количество) по списку объявлений на складе (get_stocks_info). Только чтение, ничего не меняет. Возвращает по каждому item_id: quantity (доступно = подано/отредактировано минус бронь), is_unlimited, is_multiple, is_out_of_stock. Изменение остатков — stock_update_stocks.',
     method: 'POST',
     path: '/stock-management/1/info',
     domain: 'stock-management',
@@ -24,11 +24,11 @@ export const register: DomainRegister = (server, ctx) => {
         .array(z.number().int().positive())
         .min(1)
         .max(200)
-        .describe('ID объявлений (макс 200 за запрос).'),
+        .describe('Идентификаторы объявлений на сайте Avito (item_id), для которых нужны остатки; от 1 до 200 за один запрос.'),
       strong_consistency: z
         .boolean()
         .optional()
-        .describe('Требовать строгую консистентность (медленнее, но свежо).'),
+        .describe('Если true — пропустить кеш и отдать данные из базы (строгая консистентность): свежее, но медленнее. По умолчанию данные могут браться из кеша. Опционально.'),
     },
     body: { contentType: 'application/json', fields: ['item_ids', 'strong_consistency'] },
   });
@@ -38,8 +38,7 @@ export const register: DomainRegister = (server, ctx) => {
     title: '⚠️ Остатки: изменить',
     risk: 'public',
     description:
-      '⚠️ ИЗМЕНЯЕТ остатки в объявлениях. stocks — массив {item_id, quantity} (количество товара); ' +
-      'опционально external_id (идентификатор во внешней системе). Поля item_id и quantity обязательны.',
+      '⚠️ Обновляет остатки (количество) товаров по объявлениям на складе (update_stocks). Влияет на доступность объявлений к заказу: quantity=0 переводит объявление в «нет в наличии». Принимает массив {item_id, quantity, external_id?}; quantity — целое 0..999999. Возвращает по каждому объявлению success и errors. Текущие остатки — stock_get_stocks_info.',
     method: 'PUT',
     path: '/stock-management/1/stocks',
     domain: 'stock-management',
@@ -47,17 +46,17 @@ export const register: DomainRegister = (server, ctx) => {
       stocks: z
         .array(
           z.object({
-            item_id: z.number().int().positive().describe('Идентификатор объявления на сайте.'),
-            quantity: z.number().int().min(0).describe('Новое количество товара (>= 0).'),
+            item_id: z.number().int().positive().describe('Идентификатор объявления на сайте Avito, для которого задаётся остаток. Обязателен.'),
+            quantity: z.number().int().min(0).describe('Новое количество товара в наличии; целое от 0 до 999999. 0 означает отсутствие товара. Обязателен.'),
             external_id: z
               .string()
               .optional()
-              .describe('Идентификатор объявления во внешней системе (опционально).'),
+              .describe('Идентификатор объявления во внешней системе (например, в учётной системе продавца); возвращается в ответе. Опционально.'),
           }),
         )
         .min(1)
         .max(200)
-        .describe('Массив остатков по объявлениям (макс 200 за запрос).'),
+        .describe('Массив остатков по объявлениям; от 1 до 200 элементов за один запрос.'),
     },
     body: { contentType: 'application/json', fields: ['stocks'] },
   });

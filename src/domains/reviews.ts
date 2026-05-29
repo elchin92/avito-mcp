@@ -12,7 +12,8 @@ export const register: DomainRegister = (server, ctx) => {
     name: 'reviews_get_ratings_info_v1',
     title: 'Рейтинг пользователя',
     risk: 'read',
-    description: 'Информация о рейтинге пользователя (общая оценка, количество отзывов).',
+    description:
+      'Возвращает агрегированный рейтинг текущего пользователя (reviews_get_ratings_info_v1): средняя оценка score, общее число активных отзывов и число отзывов, влияющих на рейтинг, плюс флаг включён ли рейтинг. Параметров нет, постранично ничего не возвращает. Нужен сам список отзывов — используйте reviews_get_reviews_v1.',
     method: 'GET',
     path: '/ratings/v1/info',
     domain: 'ratings',
@@ -23,13 +24,25 @@ export const register: DomainRegister = (server, ctx) => {
     name: 'reviews_get_reviews_v1',
     title: 'Список отзывов',
     risk: 'read',
-    description: 'Список активных отзывов на пользователя с пагинацией (offset+limit).',
+    description:
+      'Возвращает постраничный список активных отзывов на текущего пользователя (reviews_get_reviews_v1): id отзыва, оценку, текст, автора, объявление, приложенные фото и текущий ответ продавца, а также total — общее число отзывов. Используйте для просмотра отдельных отзывов и получения reviewId (нужен для reviews_create_review_answer_v1). Нужна только сводная оценка без перечня — берите reviews_get_ratings_info_v1.',
     method: 'GET',
     path: '/ratings/v1/reviews',
     domain: 'ratings',
     input: {
-      offset: z.number().int().min(0).optional().describe('Смещение пагинации.'),
-      limit: z.number().int().min(1).max(100).optional().describe('Сколько отзывов вернуть (1–100).'),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe('Смещение пагинации: сколько отзывов пропустить от начала списка. По умолчанию 0; для следующей страницы увеличивайте на размер limit.'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe('Максимальное число отзывов на странице. Допустимый диапазон по API: 1–50 (по умолчанию используется верхняя граница).'),
     },
     queryParams: ['offset', 'limit'],
   });
@@ -39,13 +52,20 @@ export const register: DomainRegister = (server, ctx) => {
     title: '⚠️ Ответить на отзыв',
     risk: 'public',
     description:
-      '⚠️ ПУБЛИЧНЫЙ ответ на отзыв — будет виден покупателям. Подтверждайте у пользователя.',
+      'Публикует ответ продавца на отзыв (reviews_create_review_answer_v1). ВНИМАНИЕ: ответ ПУБЛИЧНЫЙ — после модерации виден всем на странице профиля. Требует reviewId (из reviews_get_reviews_v1) и текст message; возвращает id созданного ответа и timestamp. Подтверждайте действие у пользователя. Удалить ответ — reviews_remove_review_answer_v1.',
     method: 'POST',
     path: '/ratings/v1/answers',
     domain: 'ratings',
     input: {
-      reviewId: z.number().int().positive().describe('ID отзыва.'),
-      message: z.string().min(1).describe('Текст ответа на отзыв.'),
+      reviewId: z
+        .number()
+        .int()
+        .positive()
+        .describe('ID отзыва, на который публикуется ответ. Берётся из поля id в reviews_get_reviews_v1.'),
+      message: z
+        .string()
+        .min(1)
+        .describe('Текст публичного ответа на отзыв (не может быть пустым). Проходит модерацию перед публикацией.'),
     },
     body: { contentType: 'application/json', fields: ['reviewId', 'message'] },
   });
@@ -54,12 +74,18 @@ export const register: DomainRegister = (server, ctx) => {
     name: 'reviews_remove_review_answer_v1',
     title: '⚠️ Удалить ответ на отзыв',
     risk: 'public',
-    description: '⚠️ УДАЛЯЕТ ответ на отзыв.',
+    destructiveHint: true,
+    description:
+      'Безвозвратно удаляет ранее опубликованный ответ продавца на отзыв (reviews_remove_review_answer_v1). ВНИМАНИЕ: удаление НЕОБРАТИМО и сразу убирает публичный ответ из профиля; возвращает флаг success. Подтверждайте действие у пользователя. Опубликовать ответ заново — reviews_create_review_answer_v1.',
     method: 'DELETE',
     path: '/ratings/v1/answers/{answer_id}',
     domain: 'ratings',
     input: {
-      answer_id: z.number().int().positive().describe('ID ответа.'),
+      answer_id: z
+        .number()
+        .int()
+        .positive()
+        .describe('ID удаляемого ответа на отзыв (не путать с reviewId). Берётся из поля answer.id отзыва в reviews_get_reviews_v1.'),
     },
     pathParams: ['answer_id'],
   });

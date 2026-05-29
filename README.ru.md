@@ -16,13 +16,7 @@
 
 🇬🇧 **[English version →](./README.md)**
 
-> **Новое в v0.7.2** — пачка багфиксов: 6 input-схем приведены к реальным телам запросов Avito (`stock_update_stocks` quantity, BBIP forecasts, grouping в account spendings, `perPage` в promotion orders, массив в delivery custom-area-schedule, обязательные поля create-parcel) + исправлен счётчик tools в README (145). См. [CHANGELOG](./CHANGELOG.md#072---2026-05-28).
->
-> v0.7.1 — `promotion_create_bbip_order_for_items_v1` приведён к контракту Avito `BbipOrderByItemV1` (`{itemId, duration, oldPrice, price}`); старое поле `budget` ломало любой BBIP-ордер.
->
-> v0.7.0 — **universal-package hardening**: опциональные `dryRun` и `idempotencyKey` на каждом destructive tool, межпроцессный file-lock на токен, структурированная таксономия ошибок (`error.type`, `retryable`, `retryAfter`), три новых типизированных meta-tool (`meta_health`, `meta_auth_status`, `meta_capabilities`), CLI флаги (`--readonly` / `--dry-run` / `--health` / `--no-confirmation`). Без breaking changes; безопасные дефолты сохранены.
->
-> v0.6.0 — полное выравнивание под **MCP-спеку 2025-11-25**: 6 MCP-ресурсов, 5 готовых промптов, structured-выводы, MCP-logging, подписки на `state/pending-actions`.
+> **Новое в v0.7.5** — проход по качеству tool-описаний: у каждого инструмента переписаны описание и параметры под читаемость для агента (назначение, когда применять, сайд-эффекты, отличие версий), честный `destructiveHint` на необратимых действиях и claim листинга через `glama.json`. Полная история — в [CHANGELOG](./CHANGELOG.md).
 
 ---
 

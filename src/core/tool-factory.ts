@@ -135,6 +135,15 @@ export interface ToolSpec<I extends ZodRawShape = ZodRawShape> {
    */
   risk?: ToolRisk;
   /**
+   * Явный override MCP-аннотации `destructiveHint`. По умолчанию destructiveHint
+   * выводится из risk (money/public → true, остальное → false). Но risk описывает
+   * политику безопасности, а destructiveHint — семантику необратимости для клиента.
+   * Они расходятся для отмен/удалений (cancel/delete/remove/prohibit/blacklist):
+   * это `write` по политике (не тратит деньги, не публично), но необратимо по сути.
+   * Для таких tools укажите `destructiveHint: true`, чтобы аннотация была честной.
+   */
+  destructiveHint?: boolean;
+  /**
    * v0.5.0: дополнительные safety-измерения, ортогональные risk.
    * Выводятся в `_meta` и в `dist/manifest.json` для UI клиента и для аудита.
    * Не влияют на policy/confirmation решения — это аналитика, не enforcement.
@@ -179,6 +188,11 @@ export function defineTool<I extends ZodRawShape>(
   const inputSchema = spec.input ?? ({} as I);
   const risk: ToolRisk = spec.risk ?? 'write';
   const annotations = riskToAnnotations(risk);
+  // Honest destructiveHint override: cancellations/deletions are policy-`write`
+  // but irreversible, so the derived hint (false) would understate them. See ToolSpec.
+  if (spec.destructiveHint !== undefined) {
+    annotations.destructiveHint = spec.destructiveHint;
+  }
 
   // Policy gate: hide tools that violate mode / allowlist / denylist BEFORE registration.
   // Hiding (rather than blocking at call time) means the agent never sees the tool in

@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2026-05-29
+
+**Tool-definition quality pass.** Every one of the 137 API tools had its description and parameter docs rewritten for agent legibility, following Glama's Tool Definition Quality rubric (purpose → usage → behaviour/side-effects → parameter semantics → disambiguation). Pure metadata: no tool added/removed/renamed, no schema/behaviour change. `tsc`, `eslint` and 144/144 tests all pass.
+
+### Changed
+
+- **Enriched all tool descriptions** — each now front-loads a clear verb + resource, states when (and when *not*) to use it, flags side effects and visibility (money / public-to-buyer / irreversible), and disambiguates version-suffixed or sandbox-vs-prod siblings (`_v1`/`_v2`/`_v3`, `[SANDBOX]` vs `[3PL]`).
+- **Every input parameter now has a meaningful `.describe()`** — formats, units, constraints and enum values sourced from the bundled swagger snapshot. Previously-opaque params (e.g. `announcementID`, delivery nested bodies) are explained.
+- **Honest `destructiveHint` annotations** — cancellations, deletions, removals, unsubscribes and account re-links are policy-`write` but irreversible, so they now report `destructiveHint: true` to MCP clients instead of inheriting `false`. New optional `ToolSpec.destructiveHint` override drives this; risk classification and confirmation policy are unchanged.
+
+### Added
+
+- **`glama.json`** (repo root) — claims ownership of the Glama listing (`maintainers: [elchin92]`) and lets Glama pick up metadata; closes the "No glama.json" profile-completion gap.
+
+### Compatibility
+
+- No tools added/removed/renamed; manifest stays at 145 tools (141 introspectable without `AVITO_MCP_EXPOSE_AUTH_TOOLS`). Behaviour identical to v0.7.4 — descriptions, parameter docs and one annotation hint are the only changes.
+
 ## [0.7.4] - 2026-05-28
 
 **Introspection without credentials + Docker.** The server now starts and serves `tools/list`, resources and prompts even when `Client_id` / `Client_secret` / `Profile_id` are absent — needed by registry indexers (Glama) to score the server, by MCP inspectors, and so `npx avito-mcp` can preview the catalogue before configuration. Credentials are enforced lazily.
