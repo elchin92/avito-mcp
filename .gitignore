@@ -9,6 +9,7 @@ dist/
 .env
 .env.local
 .avito-token.json
+.npmrc
 
 # Local MCP config (contains absolute paths, use .mcp.json.example as template)
 .mcp.json
