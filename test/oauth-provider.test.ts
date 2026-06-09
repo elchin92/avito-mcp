@@ -57,6 +57,8 @@ function makeHttpConfig(overrides: Partial<HttpConfig> = {}): HttpConfig {
     allowNoAuth: false,
     allowedHosts: [],
     allowedOrigins: [],
+    maxSessions: 100,
+    sessionIdleSec: 1800,
     oauthOwnerPassword: OWNER_PASSWORD,
     oauthTokenTtlSec: 3600,
     oauthStoreFile: undefined,
@@ -393,5 +395,126 @@ describe('AvitoOAuthProvider — wrong owner password', () => {
     // Misconfiguration → server_error (500), never a redirect/code.
     expect(cap.redirects.length).toBe(0);
     expect(cap.statusCodes).toContain(500);
+  });
+});
+
+describe('AvitoOAuthProvider — RFC 8252 loopback redirect_uri (v0.9.1)', () => {
+  it('approveConsent accepts a loopback redirect on a different (ephemeral) port', async () => {
+    // Native clients register http://127.0.0.1:<port>/callback but authorize from
+    // whatever ephemeral port they bound at runtime — RFC 8252 §7.3 requires the
+    // AS to accept the port variance, and the SDK's GET /authorize already does.
+    const provider = newProvider();
+    const client = registerClient(provider, 'http://127.0.0.1:8765/callback');
+    const verifier = randomBytes(32).toString('base64url');
+
+    const cap = fakeRes();
+    await provider.approveConsent(
+      {
+        body: approveBody(client, verifier, OWNER_PASSWORD, {
+          redirect_uri: 'http://127.0.0.1:49152/callback',
+        }),
+      } as import('express').Request,
+      cap.res,
+    );
+
+    expect(cap.redirects.length).toBe(1);
+    expect(cap.redirects[0]).toContain('http://127.0.0.1:49152/callback');
+    expect(extractCode(cap.redirects[0]!)).toBeTruthy();
+  });
+
+  it('still rejects a redirect_uri mismatch on a non-loopback host', async () => {
+    const provider = newProvider();
+    const client = registerClient(provider, 'https://client.example/callback');
+    const verifier = randomBytes(32).toString('base64url');
+
+    const cap = fakeRes();
+    await provider.approveConsent(
+      {
+        body: approveBody(client, verifier, OWNER_PASSWORD, {
+          redirect_uri: 'https://evil.example/callback',
+        }),
+      } as import('express').Request,
+      cap.res,
+    );
+
+    expect(cap.redirects.length).toBe(0);
+    expect(cap.statusCodes).toContain(400);
+  });
+});
+
+describe('AvitoOAuthProvider — token housekeeping (v0.9.1)', () => {
+  it('refresh rotation revokes the paired old access token', async () => {
+    const provider = newProvider();
+    const client = registerClient(provider);
+    const verifier = randomBytes(32).toString('base64url');
+    const cap = fakeRes();
+    await provider.approveConsent(
+      { body: approveBody(client, verifier, OWNER_PASSWORD) } as import('express').Request,
+      cap.res,
+    );
+    const code = extractCode(cap.redirects[0]!)!;
+    const first = await provider.exchangeAuthorizationCode(
+      client,
+      code,
+      verifier,
+      client.redirect_uris[0],
+    );
+    await expect(provider.verifyAccessToken(first.access_token)).resolves.toBeTruthy();
+
+    const second = await provider.exchangeRefreshToken(client, first.refresh_token!);
+
+    // The abandoned access token must be gone (the client never presents it
+    // again, so lazy expiry would never collect it).
+    await expect(provider.verifyAccessToken(first.access_token)).rejects.toThrow();
+    await expect(provider.verifyAccessToken(second.access_token)).resolves.toBeTruthy();
+  });
+
+  it('sweepExpired drops expired tokens (and keeps live ones)', async () => {
+    const { OAuthStore } = await import('../src/http/oauth/store.js');
+    const store = new OAuthStore();
+    try {
+      const dead1 = store.createAccessToken({ clientId: 'c', scopes: [], expiresAt: Date.now() - 1000 });
+      const dead2 = store.createRefreshToken({ clientId: 'c', scopes: [], expiresAt: Date.now() - 1000 });
+      const live = store.createAccessToken({ clientId: 'c', scopes: [], expiresAt: Date.now() + 60_000 });
+
+      const removed = store.sweepExpired();
+      expect(removed).toBe(2);
+      expect(store.getAccessToken(live)).toBeTruthy();
+      expect(store.getAccessToken(dead1)).toBeUndefined();
+      expect(store.getRefreshToken(dead2)).toBeUndefined();
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe('OAuth router — /authorize/approve rate limit (v0.9.1)', () => {
+  it('answers 429 after the per-IP attempt budget is exhausted', async () => {
+    if (!createOAuthSubsystem) return; // index.ts not present — covered elsewhere
+    const express = (await import('express')).default;
+    const subsystem = createOAuthSubsystem(makeHttpConfig());
+    const app = express();
+    app.use(subsystem.router);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', () => resolve()));
+    const { port } = server.address() as import('node:net').AddressInfo;
+
+    try {
+      const statuses: number[] = [];
+      for (let i = 0; i < 11; i += 1) {
+        const r = await fetch(`http://127.0.0.1:${port}/authorize/approve`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: 'owner_password=wrong-guess',
+        });
+        statuses.push(r.status);
+        await r.arrayBuffer(); // drain
+      }
+      // The first attempts fail with 400 (malformed request) — but they all
+      // count, and the budget (10/15 min) trips before the 11th.
+      expect(statuses[statuses.length - 1]).toBe(429);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

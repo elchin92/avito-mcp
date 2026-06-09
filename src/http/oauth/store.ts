@@ -47,6 +47,12 @@ export interface TokenRecord {
   resource?: string;
   /** Absolute expiry, ms epoch. */
   expiresAt: number;
+  /**
+   * On refresh-token records: the access token this refresh token was minted
+   * with, so rotation can revoke the pair eagerly (the client abandons the old
+   * access token on refresh — lazy expiry would never collect it).
+   */
+  accessToken?: string;
 }
 
 /** Shape persisted to (and loaded from) the optional JSON file. */
@@ -70,11 +76,51 @@ export class OAuthStore {
   /** Set when a flush is already scheduled, to coalesce bursty mutations. */
   private flushScheduled = false;
 
+  private sweepTimer?: NodeJS.Timeout;
+
   /**
    * @param storeFile optional JSON path for best-effort persistence across restarts.
    */
   constructor(private readonly storeFile?: string) {
     if (this.storeFile) this.loadSync();
+    // Expired entries are otherwise removed only when that exact key is looked
+    // up again — tokens a client walks away from would accumulate forever (in
+    // memory AND in the persisted file). unref() so the timer never holds the
+    // process open.
+    this.sweepTimer = setInterval(() => this.sweepExpired(), 60_000);
+    this.sweepTimer.unref();
+  }
+
+  /** Stops the periodic sweep (tests / graceful shutdown). */
+  close(): void {
+    if (this.sweepTimer) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = undefined;
+    }
+  }
+
+  /**
+   * Drops every expired auth code / access token / refresh token. Returns the
+   * number of entries removed. Exposed for tests; runs every minute in prod.
+   */
+  sweepExpired(now = Date.now()): number {
+    let removed = 0;
+    for (const [code, rec] of this.authCodes) {
+      if (rec.expiresAt <= now) {
+        this.authCodes.delete(code);
+        removed += 1;
+      }
+    }
+    for (const map of [this.accessTokens, this.refreshTokens]) {
+      for (const [token, rec] of map) {
+        if (rec.expiresAt <= now) {
+          map.delete(token);
+          removed += 1;
+        }
+      }
+    }
+    if (removed > 0) this.scheduleFlush();
+    return removed;
   }
 
   // ─────────────────────────── id/secret generators ───────────────────────────

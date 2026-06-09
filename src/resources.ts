@@ -52,18 +52,45 @@ export const WEBHOOK_EVENTS_URI = 'avito://webhook/events';
 
 /**
  * Removes from config the fields that must NEVER leak to the client:
- * client_id / client_secret / confirmation_secret / token_file path.
+ * client_id / client_secret / confirmation_secret / token_file path, plus the
+ * v0.9.0 nested secrets (http.oauthOwnerPassword, http.authTokens,
+ * http.oauthStoreFile, webhook.secret, webhook.logFile).
  *
  * For every redacted key we always emit an explicit marker: '[redacted]' if
  * the value was set, or null if it was not. The client sees this even when the
  * original field was undefined / absent — no surprises from a "lost" field.
+ *
+ * Defence in depth: after the explicit redactions, a recursive sweep censors
+ * any remaining key whose NAME looks secret-bearing, so a future config field
+ * cannot silently leak through this resource again.
  */
+const SECRET_KEY_RE = /(secret|password|token|credential)s?$/i;
+
+function redactSecretKeysDeep(value: unknown, depth = 0): unknown {
+  if (depth > 6 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((v) => redactSecretKeysDeep(v, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (SECRET_KEY_RE.test(k)) {
+      const empty = v === undefined || v === '' || v === null || (Array.isArray(v) && v.length === 0);
+      out[k] = empty ? null : '[redacted]';
+    } else {
+      out[k] = redactSecretKeysDeep(v, depth + 1);
+    }
+  }
+  return out;
+}
+
 function sanitizeConfig(cfg: Record<string, unknown>): Record<string, unknown> {
   const REDACTED_KEYS = ['clientId', 'clientSecret', 'confirmationSecret', 'tokenFile'] as const;
+  const mark = (v: unknown): string | null =>
+    v === undefined || v === '' || v === null || (Array.isArray(v) && v.length === 0)
+      ? null
+      : '[redacted]';
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(cfg)) {
     if ((REDACTED_KEYS as readonly string[]).includes(k)) {
-      out[k] = v === undefined || v === '' || v === null ? null : '[redacted]';
+      out[k] = mark(v);
     } else {
       out[k] = v;
     }
@@ -72,7 +99,22 @@ function sanitizeConfig(cfg: Record<string, unknown>): Record<string, unknown> {
   for (const k of REDACTED_KEYS) {
     if (!(k in out)) out[k] = null;
   }
-  return out;
+  // v0.9.1: the nested http/webhook blocks introduced in v0.9.0 carry secrets too.
+  if (typeof out.http === 'object' && out.http !== null) {
+    const http = { ...(out.http as Record<string, unknown>) };
+    http.oauthOwnerPassword = mark(http.oauthOwnerPassword);
+    http.authTokens = mark(http.authTokens);
+    // File paths follow the tokenFile convention: presence yes, location no.
+    http.oauthStoreFile = mark(http.oauthStoreFile);
+    out.http = http;
+  }
+  if (typeof out.webhook === 'object' && out.webhook !== null) {
+    const webhook = { ...(out.webhook as Record<string, unknown>) };
+    webhook.secret = mark(webhook.secret);
+    webhook.logFile = mark(webhook.logFile);
+    out.webhook = webhook;
+  }
+  return redactSecretKeysDeep(out) as Record<string, unknown>;
 }
 
 function jsonResource(uri: string, payload: unknown): ReadResourceResult {
@@ -268,24 +310,43 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
 
   // Wire up the emitter: every change in PendingActionStore -> sendResourceUpdated,
   // if there is a subscriber for this URI.
-  ctx.pendingStore.onChange(() => {
-    if (!subscribers.has(PENDING_ACTIONS_URI)) return;
-    server.server
-      .sendResourceUpdated({ uri: PENDING_ACTIONS_URI })
-      .catch((err: unknown) => {
-        logger.debug({ err }, 'sendResourceUpdated failed');
-      });
-  });
+  //
+  // The stores are process-wide singletons while Streamable HTTP builds one
+  // McpServer per session, so every subscription registered here MUST be torn
+  // down when this server closes — otherwise each session leaks two listeners
+  // (and sendResourceUpdated calls against dead sessions) forever.
+  const unsubscribers: Array<() => void> = [];
+  unsubscribers.push(
+    ctx.pendingStore.onChange(() => {
+      if (!subscribers.has(PENDING_ACTIONS_URI)) return;
+      server.server
+        .sendResourceUpdated({ uri: PENDING_ACTIONS_URI })
+        .catch((err: unknown) => {
+          logger.debug({ err }, 'sendResourceUpdated failed');
+        });
+    }),
+  );
 
   // v0.9.0: same wiring for webhook events — notify subscribers on each delivery.
-  ctx.webhookStore?.onChange(() => {
-    if (!subscribers.has(WEBHOOK_EVENTS_URI)) return;
-    server.server
-      .sendResourceUpdated({ uri: WEBHOOK_EVENTS_URI })
-      .catch((err: unknown) => {
-        logger.debug({ err }, 'sendResourceUpdated failed');
-      });
-  });
+  if (ctx.webhookStore) {
+    unsubscribers.push(
+      ctx.webhookStore.onChange(() => {
+        if (!subscribers.has(WEBHOOK_EVENTS_URI)) return;
+        server.server
+          .sendResourceUpdated({ uri: WEBHOOK_EVENTS_URI })
+          .catch((err: unknown) => {
+            logger.debug({ err }, 'sendResourceUpdated failed');
+          });
+      }),
+    );
+  }
+
+  const previousOnClose = server.server.onclose;
+  server.server.onclose = () => {
+    for (const unsubscribe of unsubscribers) unsubscribe();
+    subscribers.clear();
+    previousOnClose?.();
+  };
 
   // ─────────── avito://swaggers/{file} ───────────
   // ResourceTemplate with a list callback — the client sees each swagger as a separate resource.

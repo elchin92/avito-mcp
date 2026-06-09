@@ -10,7 +10,7 @@
 | A problem with the Avito API itself (rate limits, missing endpoint, wrong response from `api.avito.ru`) | [Avito API support](https://developers.avito.ru/) — we can't fix Avito's side |
 | A problem with your MCP client (Claude Desktop, Cursor, etc.) | Report it to that project — we don't maintain the clients |
 
-**Before opening an issue:** check existing [issues](https://github.com/elchin92/avito-mcp/issues?q=is%3Aissue) and the [README troubleshooting section](README.md#troubleshooting) (if present).
+**Before opening an issue:** check existing [issues](https://github.com/elchin92/avito-mcp/issues?q=is%3Aissue) and the [README](README.md) — most setup questions are answered in the [Connect your AI client](README.md#connect-your-ai-client) and [Security](README.md#security) sections.
 
 **When you do open an issue, include:**
 - MCP client + version (e.g. "Claude Desktop 0.9.2 on macOS 14")

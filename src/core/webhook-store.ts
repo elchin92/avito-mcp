@@ -13,7 +13,8 @@
  * Deliberately NOT a source of truth: events older than `bufferSize` fall off.
  * For durable history set AVITO_MCP_WEBHOOK_LOG_FILE (append-only JSONL).
  */
-import { appendFile } from 'node:fs';
+import { appendFile, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 import { logger } from '../logger.js';
@@ -80,6 +81,9 @@ export class WebhookStore {
   private total = 0;
   private lastReceivedAt: number | undefined;
 
+  /** Throttle for append-failure logging: first failure logs, then one per minute. */
+  private lastAppendErrorAt = 0;
+
   /**
    * @param bufferSize max retained events (oldest dropped past this).
    * @param logFile    optional JSONL path; each event appended fire-and-forget.
@@ -87,7 +91,20 @@ export class WebhookStore {
   constructor(
     private readonly bufferSize: number,
     private readonly logFile?: string,
-  ) {}
+  ) {
+    if (this.logFile) {
+      // fs.appendFile does not create parent directories — without this a typo'd
+      // AVITO_MCP_WEBHOOK_LOG_FILE silently loses every event (ENOENT per append).
+      try {
+        mkdirSync(dirname(this.logFile), { recursive: true });
+      } catch (err) {
+        logger.warn(
+          { err, logFile: this.logFile },
+          'webhook log: cannot create parent directory — events will NOT be persisted',
+        );
+      }
+    }
+  }
 
   /** Records a raw delivery, returns the normalised event. Never throws. */
   record(raw: unknown): WebhookEvent {
@@ -153,7 +170,14 @@ export class WebhookStore {
   private appendLog(event: WebhookEvent): void {
     if (!this.logFile) return;
     appendFile(this.logFile, JSON.stringify(event) + '\n', (err) => {
-      if (err) logger.debug({ err, logFile: this.logFile }, 'webhook log append failed');
+      if (!err) return;
+      // warn (not debug): a broken durability log is silent data loss. Throttled
+      // to once a minute so a persistently broken path can't flood the log.
+      const now = Date.now();
+      if (now - this.lastAppendErrorAt >= 60_000) {
+        this.lastAppendErrorAt = now;
+        logger.warn({ err, logFile: this.logFile }, 'webhook log append failed — events are NOT being persisted');
+      }
     });
   }
 }

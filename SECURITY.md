@@ -16,10 +16,12 @@ We'll reply on the same advisory thread. Once a fix is released, the advisory be
 
 ## In scope
 
-- Leakage of `Client_secret`, `access_token`, or the OAuth token cache file (default location is per-user state dir, configurable via `AVITO_TOKEN_FILE`) to logs, stdout, or any endpoint other than `api.avito.ru`.
+- Leakage of `Client_secret`, `access_token`, or the OAuth token cache file (default location is per-user state dir, configurable via `AVITO_TOKEN_FILE`) to logs, stdout, MCP resources, or any endpoint other than `api.avito.ru`.
 - Arbitrary code execution from a malicious MCP-client message.
 - TLS / certificate-validation bypasses against `api.avito.ru`.
 - Race conditions in the OAuth token store that could expose tokens on shared machines.
+- **The remote HTTP surface** (`AVITO_MCP_TRANSPORT=http|both`): bypasses of the OAuth 2.1 authorization server or the bearer guard on `/mcp`, leakage of `AVITO_MCP_OAUTH_OWNER_PASSWORD` / issued tokens / `AVITO_MCP_HTTP_AUTH_TOKEN`, DNS-rebinding or session-hijacking attacks on the Streamable HTTP transport.
+- **The webhook receiver**: leakage of `AVITO_MCP_WEBHOOK_SECRET`, or ways to read or forge buffered events without the secret.
 - Confirmed vulnerable dependencies (with an exploit path through how we use them).
 
 ## Not in scope

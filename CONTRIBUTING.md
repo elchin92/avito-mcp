@@ -13,7 +13,7 @@ src/domains/<name>.ts                  ← one file per swagger, declarative too
        ↓
 src/meta/domain-registry.ts            ← one line registers the domain
        ↓
-139 MCP tools exposed via stdio (138 swagger + 1 meta)
+148 MCP tools (141 Avito API + 7 local/meta), served over stdio or Streamable HTTP
 ```
 
 Run `npm run generate:manifest` to produce an up-to-date `dist/manifest.json` with the
@@ -38,8 +38,10 @@ One `defineTool(server, ctx, { ... })` call in the appropriate `src/domains/<nam
 
 - **Tool naming:** `<domain>_<snake_case_operationId>`. Example: `items_get_item_info`. Resolve operationId collisions across files via the domain prefix (e.g. `delivery_check_confirmation_code` vs `orders_check_confirmation_code`).
 - **Versioned operations within a domain:** suffix with `_v1`/`_v2` (e.g. `cpa_chats_by_time_v1`, `cpa_chats_by_time_v2`).
-- **Descriptions are in Russian** — the target audience are Russian-speaking Avito sellers and their AI agents.
-- **`risk` field is required** on every new tool. Without it, the tool defaults to `'write'` and is blocked under `AVITO_SAFE_MODE=read-only` — which is the right fail-closed behaviour, but you should be explicit:
+- **Tool definitions are in English** (titles, descriptions, parameter docs) — the audience is global and includes the AI agents themselves. Follow the existing description style: front-load a clear verb + resource, state when (and when not) to use the tool, flag side effects and money/public visibility.
+- **Every tool gets a human-readable `title`** — the manifest snapshot test enforces full title coverage; a new tool without a title fails CI. Prefix destructive titles with `⚠️`.
+- **`risk` field is required** on every new tool. Without it, the tool defaults to `'write'` and is hidden under `AVITO_MCP_MODE=read_only` — which is the right fail-closed behaviour, but you should be explicit:
+  - `'sensitive'` — returns secrets/tokens (auth-style tools). Hidden by default even in `full_access`; opt-in via `AVITO_MCP_EXPOSE_AUTH_TOOLS=1`.
   - `'read'` — GETs and POST-as-query (analytics, statistics, balance, info). No side effects on the server.
   - `'write'` — modifies your own data without immediate customer impact or money spent (drafts, settings, internal stock, marking chats as read).
   - `'money'` — spends balance (VAS purchases, CPA bids, paid promotion orders).
@@ -61,12 +63,14 @@ One `defineTool(server, ctx, { ... })` call in the appropriate `src/domains/<nam
 
 ```bash
 npm run lint
-npx tsc --noEmit
+npm run typecheck
+npm run typecheck:scripts
 npm run build
+npm run generate:manifest
 npm test
 ```
 
-All four must pass.
+All of these must pass — they mirror the CI gate (CI additionally runs a non-blocking `npm audit` and a secret scan). If you added or renamed a tool, the manifest snapshot test will flag it; update the snapshot deliberately (`npx vitest run -u`) and commit it together with your change.
 
 ## Filing issues
 

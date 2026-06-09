@@ -91,6 +91,8 @@ function makeFakeConfig(): Config {
       allowNoAuth: false,
       allowedHosts: [],
       allowedOrigins: [],
+      maxSessions: 100,
+      sessionIdleSec: 1800,
       oauthTokenTtlSec: 3600,
     },
     webhook: {

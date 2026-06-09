@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![CI](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-141_passing-brightgreen)](./test)
+[![Tests](https://img.shields.io/badge/tests-200_passing-brightgreen)](./test)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
@@ -12,11 +12,11 @@
 [![Avito API snapshot](https://img.shields.io/badge/Avito_API_snapshot-2026--05--25-orange)](./swaggers)
 
 > **Give your AI agents hands and feet on Avito.**
-> Local MCP server that lets Claude, Cursor, Cline and any other AI assistant **do real work on Avito for you** — answer customers, manage listings, run promotions, fulfil orders, analyse stats. **141 Avito API tools** + **7 local/meta tools** = up to **148 MCP tools** across **18 official Avito APIs**, one `npx` command to install.
+> An MCP server that lets Claude, Cursor, Cline and any other AI assistant **do real work on Avito for you** — answer customers, manage listings, run promotions, fulfil orders, analyse stats. **141 Avito API tools** + **7 local/meta tools** = up to **148 MCP tools** across **18 official Avito APIs**. Runs locally over stdio or as a shared **remote MCP** over HTTP (OAuth 2.1), with a built-in **webhook receiver** for real-time chat events. One `npx` command to install.
 
 🇷🇺 **[Русская версия / Russian version →](./README.ru.md)**
 
-> **New in v0.9.0** — **remote MCP over HTTP** (Streamable HTTP, secured by OAuth 2.1) and an **Avito webhook receiver** (real-time chat events + 3 new tools). stdio stays the default. See [Remote MCP](#remote-mcp-over-http-oauth-21-v090) · [Webhook](#avito-webhook-receiver-v090) · full history in the [CHANGELOG](./CHANGELOG.md).
+> **New in v1.0.0** — security-hardening pass over the remote MCP / OAuth / webhook surface (33 audited findings fixed) and a [stability commitment](#versioning--stability) for the public API. Full history in the [CHANGELOG](./CHANGELOG.md).
 
 ---
 
@@ -27,8 +27,8 @@ Avito is Russia's largest classifieds marketplace (~250M monthly visits). Sellin
 `avito-mcp` exposes every public Avito API as a tool your AI agent can call. Plug it into your favourite MCP client and your agent can run an entire Avito storefront — autonomously — from natural language.
 
 - 🔌 **Universal** — works with 15+ MCP clients (Claude Desktop, Cursor, Cline, Continue, Windsurf, Zed, ChatGPT, …)
-- 🔒 **Local-first** — stdio transport by default, your OAuth credentials never leave your machine (optional [remote HTTP mode](#remote-mcp-over-http-oauth-21-v090) for shared/team deployments)
-- 🤖 **Built for autonomy** — pairs naturally with multi-agent runtimes and cron-scheduled agents for hands-off, always-on operation
+- 🔒 **Local-first** — stdio transport by default, your OAuth credentials never leave your machine (optional [remote HTTP mode](#remote-mcp-over-http-oauth-21) for shared/team deployments)
+- 🤖 **Built for autonomy** — dry-run, idempotency keys, a confirmation flow and risk-tagged tools make it safe to leave an agent running unattended
 - ⚡ **Zero install** — `npx -y avito-mcp`, no clone/build, no Docker
 
 ---
@@ -37,7 +37,7 @@ Avito is Russia's largest classifieds marketplace (~250M monthly visits). Sellin
 
 **1.** Get OAuth credentials from the [Avito Developer Portal](https://www.avito.ru/professionals/api): `Client_id`, `Client_secret`, and your `Profile_id` (your numeric account ID, shown on the same page).
 
-**2.** Add this snippet to your MCP client's config (the JSON is **the same for every client** — only the file path differs, see the next section):
+**2.** Add this snippet to your MCP client's config (the JSON is **the same for every client** — only the file path differs, see [Connect your AI client](#connect-your-ai-client)):
 
 ```json
 {
@@ -69,9 +69,10 @@ Most MCP servers are designed to be **called by hand** from a chat window. `avit
 
 Typical deployment patterns:
 
-- **Reactive agent** — a Claude/Cursor session permanently open, monitoring chats and replying to customers in your tone of voice.
+- **Reactive agent** — a Claude/Cursor session permanently open, monitoring chats and replying to customers in your tone of voice. Pair with the [webhook receiver](#avito-webhook-receiver) to react the instant a customer writes instead of polling.
 - **Cron-scheduled agent** — a runtime fires up your agent every N minutes to triage new orders, top up promotion budgets, refresh stats.
-- **Multi-agent swarm** — separate agents for "support", "promotion", "logistics" each holding only the tools they need.
+- **Multi-agent swarm** — separate agents for "support", "promotion", "logistics", each holding only the tools they need (via `AVITO_MCP_ALLOW_TOOLS` / safety modes).
+- **Team / hosted deployment** — one [remote MCP instance](#remote-mcp-over-http-oauth-21) behind OAuth 2.1, shared by several clients and humans.
 
 The stdio transport keeps every credential and API response on your machine. No proxy. No SaaS in the middle.
 
@@ -91,7 +92,7 @@ The stdio transport keeps every credential and API response on your machine. No 
 | `AVITO_MCP_MODE=read_only` | ~82 (only `risk=read`) |
 | `AVITO_MCP_MODE=guarded` | ~125 (adds `write`, hides `money`/`public`) |
 
-141 wrap Avito API endpoints; 7 are local meta tools: `meta_get_rate_limits`, three `meta_*_action` for the confirmation flow (when enabled), plus `meta_health`, `meta_auth_status`, `meta_capabilities` (v0.7.0). The Avito count grew by 3 in v0.9.0 — the new `messenger_get_webhook_events`, `messenger_get_webhook_status` and `messenger_register_webhook` tools (see [Webhook](#avito-webhook-receiver-v090)). Run `npm run generate:manifest` to dump the full inventory to `dist/manifest.json`.
+141 tools wrap Avito API endpoints; 7 are local meta tools — `meta_get_rate_limits`, three `meta_*_action` tools for the [confirmation flow](#security), plus `meta_health`, `meta_auth_status` and `meta_capabilities` for introspection. The authoritative inventory lives in [`dist/manifest.json`](./dist/manifest.json) (regenerate with `npm run generate:manifest`).
 
 Every public endpoint from Avito's 18 OpenAPI specs is exposed. Click any group to expand.
 
@@ -129,9 +130,9 @@ Every public endpoint from Avito's 18 OpenAPI specs is exposed. Click any group 
 - `messenger_post_blacklist_v2` ⚠️ — block users (with reason codes)
 - `messenger_post_webhook_v3` ⚠️ — subscribe to push notifications (needs public URL)
 - `messenger_post_webhook_unsubscribe` — unsubscribe
-- `messenger_get_webhook_events` — drain events received by the built-in [webhook receiver](#avito-webhook-receiver-v090) (v0.9.0)
-- `messenger_get_webhook_status` — receiver stats: retained / total received / last received (v0.9.0)
-- `messenger_register_webhook` ⚠️ — subscribe the configured public URL with Avito in one call (v0.9.0)
+- `messenger_get_webhook_events` — drain events received by the built-in [webhook receiver](#avito-webhook-receiver)
+- `messenger_get_webhook_status` — receiver stats: retained / total received / last received
+- `messenger_register_webhook` ⚠️ — subscribe the configured public URL with Avito in one call
 </details>
 
 <details>
@@ -163,7 +164,7 @@ XML/YML/CSV feed uploads, report retrieval, ID mapping, category schema lookup. 
 - `autoload_get_report_items_by_id`, `autoload_get_report_items_fees_by_id` — per-item results
 - `autoload_get_ad_ids_by_avito_ids`, `autoload_get_avito_ids_by_ad_ids` — ID mapping
 - `autoload_user_docs_tree`, `autoload_user_docs_node_fields` — category schema reference
-- + 6 deprecated v1 endpoints, kept under their original names for compatibility
+- + 5 legacy endpoints (deprecated v1 and early v2), kept under their original names for compatibility
 </details>
 
 <details>
@@ -210,7 +211,7 @@ Avito's logistics partner API for delivery service providers. Most users will ne
 
 ---
 
-## MCP resources & prompts (v0.6.0)
+## MCP resources & prompts
 
 Beyond tools, the server exposes MCP **resources** (data your agent can fetch without an API call) and **prompts** (canned workflows that orchestrate the right tools in the right order).
 
@@ -223,7 +224,7 @@ Beyond tools, the server exposes MCP **resources** (data your agent can fetch wi
 | `avito://state/config` | `application/json` | Active config snapshot — secrets redacted |
 | `avito://state/rate-limits` | `application/json` | Latest `X-RateLimit-*` per Avito domain |
 | `avito://state/pending-actions` | `application/json` | Pending confirmations — **subscribable**, emits `notifications/resources/updated` |
-| `avito://webhook/events` | `application/json` | Buffered Avito [webhook](#avito-webhook-receiver-v090) events — **subscribable** (v0.9.0) |
+| `avito://webhook/events` | `application/json` | Buffered Avito [webhook](#avito-webhook-receiver) events — **subscribable** |
 | `avito://swaggers/{slug}` | `application/json` | One resource per file in `swaggers/` (autocomplete via `complete`) |
 
 Subscribe to `avito://state/pending-actions` and your client sees every create/confirm/cancel/expire in real time — perfect for UIs that want a "things waiting for human" indicator. Subscribe to `avito://webhook/events` and the client is notified the moment Avito delivers a new chat event.
@@ -240,22 +241,22 @@ Subscribe to `avito://state/pending-actions` and your client sees every create/c
 
 ### Structured tool outputs
 
-Every tool now returns `structuredContent` alongside the text block — clients can parse Avito responses as JSON without regex:
+Every tool returns `structuredContent` alongside the text block — clients can parse Avito responses as JSON without regex:
 
 - Objects → `{ status, ...data }`
 - Arrays → `{ status, items, count }`
 - Binary (PDF labels, audio) → `{ status, mimeType, sizeBytes, base64 }`
-- Errors → `{ error_kind, status?, request, body? }` with `isError: true`
+- Errors → `{ error: { type, message, retryable, retryAfter?, httpStatus? }, error_kind }` with `isError: true` — see [Structured error taxonomy](#structured-error-taxonomy)
 
 ### MCP logging
 
-Selected pino events (mode changes, hidden-tool reports, confirmation lifecycle, rate-limit warnings) are forwarded to the client as `notifications/message` with `logger: "avito-mcp"`. Clients that adjust verbosity via `logging/setLevel` work as expected. Pino → stderr is preserved.
+Selected pino events (mode changes, hidden-tool reports, confirmation lifecycle, rate-limit warnings) are forwarded to the client as `notifications/message` with `logger: "avito-mcp"`, with sensitive fields censored. Clients that adjust verbosity via `logging/setLevel` work as expected. Pino → stderr is preserved.
 
 ---
 
-## Universal safety primitives (v0.7.0)
+## Universal safety primitives
 
-These are opt-in primitives meant to make the package safe to use in **any** automation context — manual chat, scheduled jobs, multi-agent runtimes, server farms — without committing to a specific orchestrator or backend.
+Opt-in primitives that make the package safe to use in **any** automation context — manual chat, scheduled jobs, multi-agent runtimes, server farms — without committing to a specific orchestrator or backend.
 
 ### Dry-run
 
@@ -301,7 +302,7 @@ All errors return both human text and a machine envelope:
 }
 ```
 
-`type` ∈ `AVITO_BAD_REQUEST | AVITO_UNAUTHORIZED | AVITO_FORBIDDEN | AVITO_NOT_FOUND | AVITO_RATE_LIMIT | AVITO_SERVER_ERROR | AVITO_API_ERROR | NETWORK_ERROR | TIMEOUT | INTERNAL_ERROR`.
+`type` ∈ `AVITO_BAD_REQUEST | AVITO_UNAUTHORIZED | AVITO_FORBIDDEN | AVITO_NOT_FOUND | AVITO_RATE_LIMIT | AVITO_SERVER_ERROR | AVITO_API_ERROR | NETWORK_ERROR | TIMEOUT | CONFIG_ERROR | INTERNAL_ERROR`.
 
 Agents can branch on `retryable` and `retryAfter` programmatically — no regex over English text.
 
@@ -317,7 +318,7 @@ All three have strict `outputSchema` (zod) — clients can validate against the 
 
 ### Cross-process token lock
 
-If you run multiple avito-mcp processes against the same token file (cron + chat + CLI), they no longer hit Avito's `/token` endpoint in parallel. The first to acquire `{tokenFile}.lock` refreshes; the rest wait, then read the freshly-refreshed token from disk. Stale locks (dead PID, ancient timestamp) are reclaimed automatically. Tunable via `AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS` (default 30s).
+If you run multiple avito-mcp processes against the same token file (cron + chat + CLI), they never hit Avito's `/token` endpoint in parallel. The first to acquire `{tokenFile}.lock` refreshes; the rest wait, then read the freshly-refreshed token from disk. Stale locks (dead PID, ancient timestamp) are reclaimed automatically. Tunable via `AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS` (default 30s).
 
 ### CLI flags
 
@@ -328,6 +329,7 @@ avito-mcp --readonly             # AVITO_MCP_MODE=read_only
 avito-mcp --guarded              # AVITO_MCP_MODE=guarded
 avito-mcp --dry-run              # AVITO_MCP_DRY_RUN_DEFAULT=true
 avito-mcp --no-confirmation      # AVITO_MCP_CONFIRMATION_MODE=off
+avito-mcp --http | --both        # AVITO_MCP_TRANSPORT=http | both
 avito-mcp --health               # print JSON health snapshot and exit
 ```
 
@@ -341,9 +343,9 @@ healthcheck:
 
 ---
 
-## Remote MCP over HTTP (OAuth 2.1) (v0.9.0)
+## Remote MCP over HTTP (OAuth 2.1)
 
-By default `avito-mcp` speaks **stdio** — perfect for a local client. v0.9.0 adds an optional **remote** mode: serve the same 148 tools over the network as a **Streamable HTTP** MCP server, so a hosted agent, a team, or a phone-based client can connect to one shared instance. Access is gated by **OAuth 2.1** (authorization-code + PKCE + Dynamic Client Registration), with a human-in-the-loop consent screen.
+By default `avito-mcp` speaks **stdio** — perfect for a local client. It can also run as a **remote** MCP server: the same 148 tools served over the network via **Streamable HTTP**, so a hosted agent, a team, or a phone-based client can connect to one shared instance. Access is gated by **OAuth 2.1** (authorization-code + PKCE + Dynamic Client Registration), with a human-in-the-loop consent screen.
 
 ### Turn it on
 
@@ -361,21 +363,22 @@ AVITO_MCP_OAUTH_OWNER_PASSWORD=…    # REQUIRED in oauth mode — the only pers
 
 ### How the OAuth flow works
 
-1. A client hits `/.well-known/oauth-protected-resource` on `/mcp`, discovers the authorization server, and reads `/.well-known/oauth-authorization-server`.
+1. A client hits `/.well-known/oauth-protected-resource/mcp` (the RFC 9728 path-suffixed URL the 401's `WWW-Authenticate` header points to), discovers the authorization server, and reads `/.well-known/oauth-authorization-server`.
 2. The client **self-registers** via Dynamic Client Registration (`POST /register`) — no manual client setup.
 3. It runs **authorization-code + PKCE**: opens `/authorize` in a browser.
-4. A **human approves** at `/authorize` by entering `AVITO_MCP_OAUTH_OWNER_PASSWORD`. This is the gate — without the owner password no token is ever issued.
+4. A **human approves** at `/authorize` by entering `AVITO_MCP_OAUTH_OWNER_PASSWORD`. This is the gate — without the owner password no token is ever issued, and the approval endpoint is rate-limited against brute force.
 5. The client exchanges the code at `/token` for a bearer token (TTL `AVITO_MCP_OAUTH_TOKEN_TTL_SEC`, default 3600s), and that token guards every `/mcp` request.
 
 | Endpoint | Purpose |
 |---|---|
 | `/mcp` | Streamable HTTP MCP transport (the tools) |
 | `/.well-known/oauth-authorization-server` | OAuth 2.1 AS metadata |
-| `/.well-known/oauth-protected-resource` | Resource-server metadata for `/mcp` |
-| `/authorize` | Consent screen — human enters the owner password |
+| `/.well-known/oauth-protected-resource/mcp` | Resource-server metadata for `/mcp` (RFC 9728 path-suffixed) |
+| `/authorize` | Consent screen — human enters the owner password (rate-limited) |
 | `/token` | Authorization-code → bearer token exchange |
 | `/register` | Dynamic Client Registration (DCR) |
-| `/healthz` | Liveness probe (no auth) |
+| `/revoke` | Token revocation (RFC 7009) |
+| `/healthz` | Liveness probe (no auth — answers only `{ok, name, version}`) |
 
 ### All HTTP / OAuth env vars
 
@@ -391,8 +394,10 @@ AVITO_MCP_OAUTH_OWNER_PASSWORD=…    # REQUIRED in oauth mode — the only pers
 | `AVITO_MCP_OAUTH_STORE_FILE` | — | Optional file to persist issued tokens/clients across restarts |
 | `AVITO_MCP_HTTP_AUTH_TOKEN` | — | `bearer` mode: shared secret(s), comma-separated |
 | `AVITO_MCP_HTTP_ALLOW_NO_AUTH` | `0` | Allow `auth=none` on a non-loopback host (**discouraged**) |
-| `AVITO_MCP_HTTP_ALLOWED_HOSTS` | — | CSV — DNS-rebinding protection (accepted `Host` values) |
-| `AVITO_MCP_HTTP_ALLOWED_ORIGINS` | — | CSV — DNS-rebinding protection (accepted `Origin` values) |
+| `AVITO_MCP_HTTP_ALLOWED_HOSTS` | derived | CSV — DNS-rebinding protection (accepted `Host` values). When unset, derived from the public URL + bind address — protection is **on by default** (off only for a wildcard bind with no public URL) |
+| `AVITO_MCP_HTTP_ALLOWED_ORIGINS` | derived | CSV — DNS-rebinding protection (accepted `Origin` values). Same derivation as above |
+| `AVITO_MCP_HTTP_MAX_SESSIONS` | `100` | Max concurrent Streamable HTTP sessions — `initialize` beyond it → 503 |
+| `AVITO_MCP_HTTP_SESSION_IDLE_SEC` | `1800` | Sessions idle longer than this are reaped (clients that vanished without `DELETE`) |
 
 > **Security model.** Node binds `127.0.0.1` and speaks plain HTTP. **TLS is terminated by a reverse proxy** (nginx / Caddy) on your domain, which forwards to `http://127.0.0.1:3000`. Never expose port 3000 directly to the internet. `auth=none` on a public host is refused unless you set `AVITO_MCP_HTTP_ALLOW_NO_AUTH=1`.
 
@@ -411,8 +416,8 @@ server {
     ssl_certificate     /etc/letsencrypt/live/mcp.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/mcp.example.com/privkey.pem;
 
-    # MCP transport + OAuth (discovery, authorize, token, register) + webhook receiver.
-    location ~ ^/(mcp|\.well-known/oauth-authorization-server|\.well-known/oauth-protected-resource|authorize|token|register|avito/webhook) {
+    # MCP transport + OAuth (discovery, authorize, token, register, revoke) + webhook receiver.
+    location ~ ^/(mcp|\.well-known/oauth-authorization-server|\.well-known/oauth-protected-resource|authorize|token|register|revoke|avito/webhook) {
         proxy_pass         http://127.0.0.1:3000;
         proxy_http_version 1.1;
 
@@ -436,11 +441,12 @@ mcp.example.com {
     # Caddy obtains and renews the TLS cert automatically.
     # Caddy preserves the Host header by default (no header_up needed).
     reverse_proxy /mcp* http://127.0.0.1:3000
-    reverse_proxy /.well-known/oauth-authorization-server http://127.0.0.1:3000
-    reverse_proxy /.well-known/oauth-protected-resource   http://127.0.0.1:3000
+    reverse_proxy /.well-known/oauth-authorization-server* http://127.0.0.1:3000
+    reverse_proxy /.well-known/oauth-protected-resource*   http://127.0.0.1:3000
     reverse_proxy /authorize* http://127.0.0.1:3000
     reverse_proxy /token*     http://127.0.0.1:3000
     reverse_proxy /register*  http://127.0.0.1:3000
+    reverse_proxy /revoke*    http://127.0.0.1:3000
     reverse_proxy /avito/webhook* http://127.0.0.1:3000
 }
 ```
@@ -461,9 +467,9 @@ Clients then send `Authorization: Bearer long-random-secret` to `/mcp`. The same
 
 ---
 
-## Avito webhook receiver (v0.9.0)
+## Avito webhook receiver
 
-Polling `messenger_get_chats_v2` works, but for **real-time** reactions (reply the instant a customer writes) Avito can **push** events to you. v0.9.0 ships a built-in receiver: point Avito at a secret URL and the server buffers every event for your agent to read.
+Polling `messenger_get_chats_v2` works, but for **real-time** reactions (reply the instant a customer writes) Avito can **push** events to you. The server ships a built-in receiver: point Avito at a secret URL and every event is buffered for your agent to read.
 
 This works **even in pure stdio mode** — Avito only needs a public URL to POST to; your MCP client never touches it. (If `AVITO_MCP_TRANSPORT=stdio` and a webhook secret is set, the server still starts a tiny HTTP listener just for the receiver.)
 
@@ -484,12 +490,12 @@ POST {AVITO_MCP_WEBHOOK_PUBLIC_URL}{AVITO_MCP_WEBHOOK_PATH}/{AVITO_MCP_WEBHOOK_S
   → 200 {"ok":true}      (answered in well under Avito's 2-second deadline)
 ```
 
-The secret is part of the path, so the URL is unguessable — that's the auth. Subscribe the URL with Avito either through your account or in one call with the new `messenger_register_webhook` tool.
+The secret is part of the path, so the URL is unguessable — that's the auth. The URL must be **public HTTPS** (the server refuses to register loopback/private addresses with Avito). Subscribe the URL with Avito either through your account or in one call with the `messenger_register_webhook` tool.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AVITO_MCP_WEBHOOK_SECRET` | — | Enables the receiver; the unguessable path segment Avito must hit |
-| `AVITO_MCP_WEBHOOK_ENABLED` | `0` | Alternative toggle (use a secret + this if you prefer an explicit flag) |
+| `AVITO_MCP_WEBHOOK_SECRET` | — | Enables the receiver; the unguessable path segment Avito must hit. **Required** — without it the receiver stays disabled |
+| `AVITO_MCP_WEBHOOK_ENABLED` | `1` when a secret is set | Explicit toggle: set `0` to disable without unsetting the secret. `1` without a secret does nothing (warned at startup) |
 | `AVITO_MCP_WEBHOOK_PUBLIC_URL` | (HTTP public URL) | Public base Avito POSTs to |
 | `AVITO_MCP_WEBHOOK_PATH` | `/avito/webhook` | Path prefix before the secret segment |
 | `AVITO_MCP_WEBHOOK_BUFFER` | `100` | In-memory ring-buffer size |
@@ -736,29 +742,41 @@ Avito provides **separate APIs** for the following verticals — their swagger s
 | 📊 Real-estate reports | [Avito Realty Reports API](https://developers.avito.ru/api-catalog/realty-reports/documentation) |
 | 🏠 Short-term rent | [Avito STR API](https://developers.avito.ru/api-catalog/str/documentation#ApiDescriptionBlock) |
 
-Also out of scope: `authorization_code` OAuth flow (no public redirect URI on a local CLI) and Avito sandbox (no sandbox credentials). The **webhook receiver** is now supported as of v0.9.0 — see the [Webhook](#avito-webhook-receiver-v090) section.
+Also out of scope: the `authorization_code` OAuth flow against Avito itself (no public redirect URI on a local CLI) and the Avito sandbox (Avito issues no sandbox credentials — every call hits production).
 
 ---
 
 ## Security
 
-- **Local stdio by default** — no proxy, no remote endpoints, no telemetry. The optional [remote HTTP mode](#remote-mcp-over-http-oauth-21-v090) is opt-in (`AVITO_MCP_TRANSPORT=http`), binds loopback, and is guarded by OAuth 2.1 (or a bearer secret) behind your own TLS proxy.
+- **Local stdio by default** — no proxy, no remote endpoints, no telemetry. The optional [remote HTTP mode](#remote-mcp-over-http-oauth-21) is opt-in (`AVITO_MCP_TRANSPORT=http`), binds loopback, and is guarded by OAuth 2.1 (or a bearer secret) behind your own TLS proxy, with DNS-rebinding protection on by default.
 - Credentials live in your MCP client's `env` block or local `.env`. They're never sent anywhere except `api.avito.ru`.
 - OAuth tokens cached in a per-user state directory (chmod 600):
   - Linux: `$XDG_STATE_HOME/avito-mcp/token.json` (≈ `~/.local/state/avito-mcp/token.json`)
   - macOS: `~/Library/Application Support/avito-mcp/token.json`
   - Windows: `%APPDATA%\avito-mcp\token.json`
   - Override with `AVITO_TOKEN_FILE`. Delete the file to force a refresh.
-- **Three-layer safety model** (every layer opt-in via env vars; defaults preserve v0.1.x behaviour for trivial calls but harden everything destructive):
+- **Three-layer safety model** (every layer opt-in via env vars; the defaults keep trivial reads frictionless but harden everything destructive):
   - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — registration-time gate. Hidden tools never appear in `tools/list`. `read_only` ≈ 82 tools, `guarded` adds writes (~125 tools), `full_access` is the full 141 Avito + 7 meta (+ opt-in extras).
   - **`AVITO_MCP_ALLOW_TOOLS` / `AVITO_MCP_DENY_TOOLS`** — per-tool gating. Deny wins over allow.
-  - **`AVITO_MCP_CONFIRMATION_MODE`** (`off` / `money_public` (default) / `all_destructive`) — runtime gate. Destructive tools return `{requires_confirmation: true, confirmation_id: ...}`; agent must call `meta_confirm_action` to execute. Pending state is in-memory, TTL'd (default 15 min), one-shot.
+  - **`AVITO_MCP_CONFIRMATION_MODE`** (`off` / `money_public` (default) / `all_destructive`) — runtime gate. Destructive tools return `{requires_confirmation: true, confirmation_id: ...}`; the agent must call `meta_confirm_action` to execute. Pending state is in-memory, TTL'd (default 15 min), one-shot. `AVITO_MCP_CONFIRMATION_SECRET` upgrades this to **hard confirmation** — only a human who knows the secret can approve.
   - **`AVITO_MCP_EXPOSE_AUTH_TOOLS`** (default: `0`) — `auth_*` tools return OAuth tokens; classed as `sensitive` and hidden by default even in `full_access`.
   - **`AVITO_MCP_ALLOWED_UPLOAD_DIRS`** — `messenger_upload_images` reads files from disk; without an explicit directory allowlist it doesn't register at all. Path validation uses `realpath` (symlink-escape proof), extension allowlist (jpg/jpeg/png/webp), size cap (`AVITO_MCP_MAX_UPLOAD_MB`, default 15), magic-byte sniff with extension cross-check.
 - Every tool is tagged with one of five risks (`sensitive` / `read` / `write` / `money` / `public`), exposed as MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`) and as `_meta.risk`, and listed in [`dist/manifest.json`](./dist/manifest.json). Well-behaved MCP clients warn before destructive calls.
-- See [`docs/safety.md`](./docs/safety.md) for ready-to-paste configs (analytics-only, customer-support with confirmation, listings-only, full admin) and a frank discussion of what the confirmation flow is and isn't (it's a server-side two-step + audit layer, not a cryptographic human-approval mechanism).
+- See [`docs/safety.md`](./docs/safety.md) for ready-to-paste configs (analytics-only, customer-support with confirmation, listings-only, full admin) and a frank discussion of what the confirmation flow is and isn't (it's a server-side two-step + audit layer, not a cryptographic human-approval mechanism — unless you add the hard-confirmation secret).
 - **All 141 Avito tools hit production** — Avito has no sandbox. Write methods cost real money or are visible to real customers. Safe read-only tools for first runs: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
 - **Found a security issue?** Private reporting via [SECURITY.md](./SECURITY.md) — don't open a public issue.
+
+---
+
+## Versioning & stability
+
+As of **v1.0.0** the public surface is covered by [SemVer](https://semver.org):
+
+- **Stable (breaking change ⇒ major bump):** tool names and their input schemas, env var names and defaults, resource URIs (`avito://…`), prompt names, the risk classification model, the structured error taxonomy, and the CLI flags.
+- **Additive (minor bump):** new tools when Avito ships new endpoints, new opt-in env vars, new resources/prompts.
+- **Patch:** bug fixes, security hardening, doc corrections, dependency bumps.
+
+The bundled Avito swagger snapshot is data, not API — refreshing it (and the tools that follow from it) is a minor bump as long as existing tool names keep working.
 
 ---
 
@@ -789,7 +807,7 @@ Then point your MCP client at:
 { "command": "node", "args": ["/absolute/path/to/avito-mcp/dist/server.js"] }
 ```
 
-A template config is in [.mcp.json.example](./.mcp.json.example).
+A template config is in [.mcp.json.example](./.mcp.json.example). A multi-stage [`Dockerfile`](./Dockerfile) is included for container deployments.
 
 ### CLI flags
 
@@ -798,7 +816,7 @@ npx avito-mcp --version    # print the installed version
 npx avito-mcp --help       # show env vars + usage
 ```
 
-The server has no other flags by design — all knobs are env vars (see `--help` output).
+All other knobs are env vars (see `--help` output or [.env.example](./.env.example)).
 
 ---
 

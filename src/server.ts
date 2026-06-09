@@ -156,12 +156,55 @@ async function startServer(): Promise<void> {
     bindMcpLogger(server);
   }
 
+  // Misconfiguration guards for the webhook receiver (config stays permissive;
+  // the user-facing warnings live here where the logger is available).
+  const { parseBool } = await import('./config.js');
+  if (parseBool(process.env.AVITO_MCP_WEBHOOK_ENABLED) && !config.webhook.secret) {
+    logger.warn(
+      'AVITO_MCP_WEBHOOK_ENABLED is set but AVITO_MCP_WEBHOOK_SECRET is missing — the webhook ' +
+        'receiver stays DISABLED (without a secret every delivery would be rejected).',
+    );
+  }
+  if (config.webhook.enabled) {
+    try {
+      const host = new URL(config.webhook.publicUrl).hostname;
+      if (host === 'localhost' || host === '::1' || host.startsWith('127.') || host === '0.0.0.0') {
+        logger.warn(
+          { publicUrl: config.webhook.publicUrl },
+          'webhook public URL is a loopback address — Avito cannot deliver events to it. ' +
+            'Set AVITO_MCP_WEBHOOK_PUBLIC_URL (or AVITO_MCP_HTTP_PUBLIC_URL) to the public HTTPS address.',
+        );
+      }
+    } catch {
+      /* publicUrl not parseable — startHttpServer/register tool will surface it */
+    }
+  }
+
   // ── HTTP listener: remote MCP (Streamable HTTP) and/or the webhook receiver ──
   let httpUrl: string | undefined;
   if (runHttpMcp || config.webhook.enabled) {
     const { startHttpServer } = await import('./http/app.js');
     const handle = await startHttpServer(baseCtx, config);
     httpUrl = handle.url;
+
+    // Graceful shutdown: close sessions + listener on SIGTERM/SIGINT (Docker stop,
+    // systemd restart, Ctrl-C). Without this Node kills in-flight /mcp responses
+    // and never flushes the OAuth store. Pure-stdio runs keep the default
+    // behaviour — their lifecycle is the stdin pipe.
+    let shuttingDown = false;
+    const shutdown = (signal: string): void => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      logger.info({ signal }, 'avito-mcp shutting down');
+      void handle
+        .close()
+        .catch((err) => logger.warn({ err }, 'error during HTTP shutdown'))
+        .finally(() => process.exit(0));
+      // Hard exit if something hangs (an open SSE stream, a stuck close).
+      setTimeout(() => process.exit(0), 10_000).unref();
+    };
+    process.once('SIGTERM', () => shutdown('SIGTERM'));
+    process.once('SIGINT', () => shutdown('SIGINT'));
   }
 
   if (!credentialsConfigured) {

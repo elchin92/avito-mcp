@@ -38,6 +38,8 @@ function makeHttpConfig(): HttpConfig {
     allowNoAuth: true,
     allowedHosts: [],
     allowedOrigins: [],
+    maxSessions: 100,
+    sessionIdleSec: 1800,
     oauthTokenTtlSec: 3600,
   };
 }
@@ -238,9 +240,90 @@ describe('webhook domain tools', () => {
     const r = await client.callTool({ name: 'messenger_get_webhook_events', arguments: {} });
     expect(r.isError).not.toBe(true);
     const payload = parseStructured<{ enabled: boolean; count: number }>(
-      r as { structuredContent?: unknown; content?: unknown },
+      r as { structuredContent?: unknown; count?: number },
     );
     expect(payload.enabled).toBe(false);
     expect(payload.count).toBe(0);
+  });
+});
+
+describe('messenger_register_webhook (v0.9.1 hardening)', () => {
+  let cleanup: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    await cleanup?.();
+    cleanup = undefined;
+  });
+
+  type Preview = { request_preview: { body: { url?: string } } };
+
+  it('dry-run computes the receiver URL from the webhook config', async () => {
+    const rig = await makeRig();
+    cleanup = async () => {
+      await rig.client.close();
+      await fs.rm(rig.cfg.tokenFile, { force: true });
+    };
+
+    const r = await rig.client.callTool({
+      name: 'messenger_register_webhook',
+      arguments: { dryRun: true },
+    });
+    expect(r.isError).not.toBe(true);
+    const payload = parseStructured<Preview>(r as { structuredContent?: unknown });
+    expect(payload.request_preview.body.url).toBe(
+      `https://mcp.example.com/avito/webhook/${WEBHOOK_SECRET}`,
+    );
+  });
+
+  it('rejects a loopback public URL — Avito could never deliver to it', async () => {
+    const rig = await makeRig({
+      webhook: makeWebhookConfig({ publicUrl: 'http://127.0.0.1:3000' }),
+    });
+    cleanup = async () => {
+      await rig.client.close();
+      await fs.rm(rig.cfg.tokenFile, { force: true });
+    };
+
+    const r = await rig.client.callTool({
+      name: 'messenger_register_webhook',
+      arguments: { dryRun: true },
+    });
+    const text = JSON.stringify(r.content) + JSON.stringify(r.structuredContent ?? {});
+    expect(text).toContain('not reachable from Avito');
+  });
+
+  it('explicit url override works even when the receiver is NOT configured', async () => {
+    // Pre-0.9.1 this threw 'not configured' BEFORE the override was even merged.
+    const rig = await makeRig({
+      webhook: makeWebhookConfig({ enabled: false, secret: undefined }),
+    });
+    cleanup = async () => {
+      await rig.client.close();
+      await fs.rm(rig.cfg.tokenFile, { force: true });
+    };
+
+    const r = await rig.client.callTool({
+      name: 'messenger_register_webhook',
+      arguments: { dryRun: true, url: 'https://hooks.example.com/avito-events' },
+    });
+    expect(r.isError).not.toBe(true);
+    const payload = parseStructured<Preview>(r as { structuredContent?: unknown });
+    expect(payload.request_preview.body.url).toBe('https://hooks.example.com/avito-events');
+  });
+
+  it('errors clearly when unconfigured and no url is given', async () => {
+    const rig = await makeRig({
+      webhook: makeWebhookConfig({ enabled: false, secret: undefined }),
+    });
+    cleanup = async () => {
+      await rig.client.close();
+      await fs.rm(rig.cfg.tokenFile, { force: true });
+    };
+
+    const r = await rig.client.callTool({
+      name: 'messenger_register_webhook',
+      arguments: { dryRun: true },
+    });
+    const text = JSON.stringify(r.content) + JSON.stringify(r.structuredContent ?? {});
+    expect(text).toContain('not configured');
   });
 });

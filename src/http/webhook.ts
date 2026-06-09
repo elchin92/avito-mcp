@@ -27,9 +27,11 @@ import type { WebhookStore } from '../core/webhook-store.js';
 /**
  * Constant-time secret comparison. Node's timingSafeEqual requires equal-length
  * buffers, so a length mismatch short-circuits to false (without leaking the
- * expected length through a thrown error).
+ * expected length through a thrown error). Exported for the app-level error
+ * handler, which must honour the always-200 contract for genuine Avito
+ * deliveries even when body parsing failed.
  */
-function secretsMatch(provided: string, expected: string): boolean {
+export function secretsMatch(provided: string, expected: string): boolean {
   const a = Buffer.from(provided, 'utf8');
   const b = Buffer.from(expected, 'utf8');
   if (a.length !== b.length) return false;

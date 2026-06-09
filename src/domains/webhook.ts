@@ -53,6 +53,44 @@ function maskSecret(secret: string): string {
   return '•'.repeat(secret.length - 4) + secret.slice(-4);
 }
 
+/**
+ * Rejects URLs Avito's infrastructure can never deliver to: non-HTTPS schemes,
+ * loopback/wildcard hosts and RFC 1918 private ranges. Registering such a URL
+ * "succeeds" on the Avito side but silently delivers nothing — the worst
+ * possible failure mode for a webhook subscription.
+ */
+function assertAvitoReachableUrl(raw: string): void {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Webhook URL is not a valid URL: ${raw}`);
+  }
+  const host = url.hostname.toLowerCase();
+  const isLoopback =
+    host === 'localhost' ||
+    host === '0.0.0.0' ||
+    host === '::1' ||
+    host === '[::1]' ||
+    host.startsWith('127.');
+  const isPrivate =
+    host.startsWith('10.') ||
+    host.startsWith('192.168.') ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  if (isLoopback || isPrivate) {
+    throw new Error(
+      `Webhook URL host '${host}' is not reachable from Avito (loopback/private address). ` +
+        'Set AVITO_MCP_WEBHOOK_PUBLIC_URL (or AVITO_MCP_HTTP_PUBLIC_URL) to the public ' +
+        'HTTPS address of this server, or pass `url` explicitly.',
+    );
+  }
+  if (url.protocol !== 'https:') {
+    throw new Error(
+      `Webhook URL must be HTTPS (got ${url.protocol}//): Avito only delivers events to public HTTPS endpoints.`,
+    );
+  }
+}
+
 export const register: DomainRegister = (server, ctx) => {
   // ────────────────────────────── READ: events ──────────────────────────────
 
@@ -224,14 +262,24 @@ export const register: DomainRegister = (server, ctx) => {
       contentType: 'application/json',
       // Note: `url` is intentionally NOT pinned via `fields` so a user-supplied `url`
       // input overrides the computed default (splitArgs merges { ...defaults, ...body }).
+      // defaults() must not throw on an unconfigured receiver — it runs even when the
+      // caller passes an explicit `url`; the requirement is enforced in transform(),
+      // which sees the merged body.
       defaults: (c) => {
         const w = c.config.webhook;
-        if (!w.enabled || !w.secret) {
+        if (!w.enabled || !w.secret) return {};
+        return { url: `${w.publicUrl}${w.path}/${w.secret}` };
+      },
+      transform: (body) => {
+        const url = typeof body.url === 'string' ? body.url : undefined;
+        if (!url) {
           throw new Error(
-            'Webhook receiver is not configured: set AVITO_MCP_WEBHOOK_SECRET (and AVITO_MCP_WEBHOOK_PUBLIC_URL for a public domain).',
+            'Webhook receiver is not configured: set AVITO_MCP_WEBHOOK_SECRET (and ' +
+              'AVITO_MCP_WEBHOOK_PUBLIC_URL for a public domain), or pass `url` explicitly.',
           );
         }
-        return { url: `${w.publicUrl}${w.path}/${w.secret}` };
+        assertAvitoReachableUrl(url);
+        return body;
       },
     },
   });

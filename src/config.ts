@@ -55,9 +55,18 @@ export interface HttpConfig {
   authTokens: string[];
   /** Allow `auth=none` on a non-loopback host (otherwise fail-closed). */
   allowNoAuth: boolean;
-  /** DNS-rebinding protection allowlists. Empty → derived from publicUrl + host. */
+  /**
+   * DNS-rebinding protection allowlists. Empty → derived from publicUrl + the
+   * bind host/port in src/http/mcp-http.ts (protection stays ON; it is only
+   * skipped for a wildcard bind without an explicit public URL, where no
+   * meaningful allowlist can be derived).
+   */
   allowedHosts: string[];
   allowedOrigins: string[];
+  /** Max concurrent Streamable HTTP MCP sessions; initialize beyond this → 503. */
+  maxSessions: number;
+  /** Sessions idle longer than this are reaped (a crashed client never DELETEs). */
+  sessionIdleSec: number;
   /** OAuth owner password gating the /authorize consent step (oauth mode). */
   oauthOwnerPassword?: string;
   /** Access-token TTL in seconds (oauth mode). */
@@ -99,7 +108,7 @@ function parseToolList(raw: string | undefined): string[] {
   return [...seen];
 }
 
-function parseBool(raw: string | undefined, fallback = false): boolean {
+export function parseBool(raw: string | undefined, fallback = false): boolean {
   if (raw === undefined) return fallback;
   const v = raw.trim().toLowerCase();
   return v === '1' || v === 'true' || v === 'yes' || v === 'on';
@@ -197,6 +206,8 @@ function buildHttpConfig(): HttpConfig {
     allowNoAuth: parseBool(process.env.AVITO_MCP_HTTP_ALLOW_NO_AUTH),
     allowedHosts: parseToolList(process.env.AVITO_MCP_HTTP_ALLOWED_HOSTS),
     allowedOrigins: parseToolList(process.env.AVITO_MCP_HTTP_ALLOWED_ORIGINS),
+    maxSessions: parsePositiveInt(process.env.AVITO_MCP_HTTP_MAX_SESSIONS, 100),
+    sessionIdleSec: parsePositiveInt(process.env.AVITO_MCP_HTTP_SESSION_IDLE_SEC, 1800),
     oauthOwnerPassword: process.env.AVITO_MCP_OAUTH_OWNER_PASSWORD || undefined,
     oauthTokenTtlSec: parsePositiveInt(process.env.AVITO_MCP_OAUTH_TOKEN_TTL_SEC, 3600),
     oauthStoreFile: process.env.AVITO_MCP_OAUTH_STORE_FILE || undefined,
@@ -205,11 +216,19 @@ function buildHttpConfig(): HttpConfig {
 
 function buildWebhookConfig(httpPublicUrl: string): WebhookConfig {
   const secret = process.env.AVITO_MCP_WEBHOOK_SECRET?.trim() || undefined;
-  const enabled = parseBool(process.env.AVITO_MCP_WEBHOOK_ENABLED) || secret !== undefined;
+  // A secret is REQUIRED for the receiver to do anything (without one every
+  // request 404s), so ENABLED without a secret stays disabled — server.ts warns
+  // about that combo at startup. With a secret present, the explicit flag wins:
+  // AVITO_MCP_WEBHOOK_ENABLED=0 turns the receiver off without unsetting the secret.
+  const rawEnabled = process.env.AVITO_MCP_WEBHOOK_ENABLED?.trim() || undefined;
+  const enabled = secret !== undefined && (rawEnabled === undefined ? true : parseBool(rawEnabled));
   const publicUrl = stripTrailingSlash(
     process.env.AVITO_MCP_WEBHOOK_PUBLIC_URL?.trim() || httpPublicUrl,
   );
-  const path = process.env.AVITO_MCP_WEBHOOK_PATH?.trim() || '/avito/webhook';
+  // Normalize to '/prefix' — Express silently registers an unmatchable route
+  // for a path without a leading slash.
+  const rawPath = process.env.AVITO_MCP_WEBHOOK_PATH?.trim() || '/avito/webhook';
+  const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
   return {
     enabled,
     secret,

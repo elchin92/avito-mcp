@@ -15,6 +15,7 @@
  */
 import express from 'express';
 import type { Router, RequestHandler } from 'express';
+import { rateLimit } from 'express-rate-limit';
 
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
@@ -43,8 +44,24 @@ export function createOAuthSubsystem(httpConfig: HttpConfig): OAuthSubsystem {
   const router = express.Router();
   // Body parser for the consent POST (the SDK's own routers parse their own
   // bodies; this one is ours). extended:false matches the SDK's usage.
+  //
+  // Rate limit: this endpoint verifies the OWNER PASSWORD — the single gate to
+  // minting tokens. The SDK rate-limits the endpoints it mounts (/authorize,
+  // /token, /register) but this custom route is ours to protect; without a
+  // limiter and with open DCR, the password is brute-forceable at line speed.
+  // 10 attempts / 15 min / IP mirrors the strictest SDK sibling.
   router.post(
     '/authorize/approve',
+    rateLimit({
+      windowMs: 15 * 60 * 1000,
+      limit: 10,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: {
+        error: 'too_many_requests',
+        error_description: 'Too many consent attempts. Try again in 15 minutes.',
+      },
+    }),
     express.urlencoded({ extended: false }) as RequestHandler,
     provider.approveConsent,
   );

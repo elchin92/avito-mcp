@@ -14,9 +14,15 @@ import { promises as fs } from 'node:fs';
 
 import { AvitoClient } from '../src/core/client.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
+import { WebhookStore } from '../src/core/webhook-store.js';
 import { registerResources, PENDING_ACTIONS_URI } from '../src/resources.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config } from '../src/config.js';
+
+// Distinctive values so the leak assertions can grep the raw resource text.
+const OWNER_PASSWORD = 'owner-pass-LEAK-CANARY-1';
+const BEARER_TOKEN = 'bearer-LEAK-CANARY-2';
+const WEBHOOK_SECRET = 'webhook-LEAK-CANARY-3';
 
 function makeConfig(): Config {
   return {
@@ -44,17 +50,23 @@ function makeConfig(): Config {
       port: 3000,
       publicUrl: 'http://127.0.0.1:3000',
       auth: 'oauth',
-      authTokens: [],
+      authTokens: [BEARER_TOKEN],
       allowNoAuth: false,
       allowedHosts: [],
       allowedOrigins: [],
+      maxSessions: 100,
+      sessionIdleSec: 1800,
+      oauthOwnerPassword: OWNER_PASSWORD,
       oauthTokenTtlSec: 3600,
+      oauthStoreFile: '/var/lib/avito-mcp/oauth.json',
     },
     webhook: {
-      enabled: false,
+      enabled: true,
+      secret: WEBHOOK_SECRET,
       publicUrl: 'http://127.0.0.1:3000',
       path: '/avito/webhook',
       bufferSize: 100,
+      logFile: '/var/log/avito-mcp/webhooks.jsonl',
     },
   };
 }
@@ -62,6 +74,7 @@ function makeConfig(): Config {
 async function makeRig() {
   const cfg = makeConfig();
   const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
+  const webhookStore = new WebhookStore(cfg.webhook.bufferSize);
   const avito = new AvitoClient(cfg);
   const server = new McpServer(
     { name: 'avito-mcp', version: '0.6.0' },
@@ -71,7 +84,7 @@ async function makeRig() {
       },
     },
   );
-  const ctx: ToolContext = { client: avito, config: cfg, pendingStore, server };
+  const ctx: ToolContext = { client: avito, config: cfg, pendingStore, webhookStore, server };
   registerResources(server, ctx);
 
   const [a, b] = InMemoryTransport.createLinkedPair();
@@ -119,7 +132,8 @@ describe('MCP resources — listing & static reads', () => {
     };
 
     const res = await client.readResource({ uri: 'avito://state/config' });
-    const body = JSON.parse((res.contents[0] as { text: string }).text);
+    const text = (res.contents[0] as { text: string }).text;
+    const body = JSON.parse(text);
     expect(body.config.clientId).toBe('[redacted]');
     expect(body.config.clientSecret).toBe('[redacted]');
     expect(body.config.tokenFile).toBe('[redacted]');
@@ -127,6 +141,40 @@ describe('MCP resources — listing & static reads', () => {
     expect(body.config.mode).toBe('full_access');
     // confirmationSecret was undefined → exposed as null, not the value.
     expect(body.config.confirmationSecret).toBeNull();
+
+    // v0.9.1: the nested http/webhook blocks must not leak their secrets either.
+    expect(body.config.http.oauthOwnerPassword).toBe('[redacted]');
+    expect(body.config.http.authTokens).toBe('[redacted]');
+    expect(body.config.http.oauthStoreFile).toBe('[redacted]');
+    expect(body.config.webhook.secret).toBe('[redacted]');
+    expect(body.config.webhook.logFile).toBe('[redacted]');
+    // Non-secret nested fields survive intact.
+    expect(body.config.http.publicUrl).toBe('http://127.0.0.1:3000');
+    expect(body.config.webhook.path).toBe('/avito/webhook');
+    // Belt and braces: no secret VALUE appears anywhere in the serialized resource.
+    for (const secret of ['cid', 'sec', OWNER_PASSWORD, BEARER_TOKEN, WEBHOOK_SECRET]) {
+      expect(text).not.toContain(`"${secret}"`);
+    }
+  });
+
+  it('unsubscribes pending/webhook store listeners when the server closes', async () => {
+    const { server, client, ctx, cfg } = await makeRig();
+    cleanup = async () => {
+      await fs.rm(cfg.tokenFile, { force: true });
+    };
+
+    // unsubscribe() REPLACES the listeners array, so read it fresh each time.
+    const listenerCount = (store: unknown): number =>
+      (store as { listeners: unknown[] }).listeners.length;
+    expect(listenerCount(ctx.pendingStore)).toBe(1);
+    expect(listenerCount(ctx.webhookStore)).toBe(1);
+
+    // Streamable HTTP closes the per-session server exactly like this; the
+    // process-wide stores must not retain the session's listeners afterwards.
+    await client.close();
+    await server.close();
+    expect(listenerCount(ctx.pendingStore)).toBe(0);
+    expect(listenerCount(ctx.webhookStore)).toBe(0);
   });
 
   it('reads avito://state/pending-actions reflecting live store', async () => {

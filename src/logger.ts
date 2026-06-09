@@ -16,24 +16,57 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
  * or passes a full Response through err.cause, we want any field with a
  * sensitive name to be replaced with '[redacted]' before serialization.
  *
- * Paths starting with '*.' match at any nesting level. If pino does not find a path,
- * it silently ignores it. Feel free to extend this list.
+ * NB (v0.9.1): a pino `*` wildcard matches exactly ONE key level — '*.token'
+ * does NOT cover {a:{b:{token}}}. Sensitive names are therefore listed at one,
+ * two and three levels deep, plus the realistic deep shapes (err.response.headers).
+ * If pino does not find a path, it silently ignores it. Feel free to extend.
  */
+const SENSITIVE_KEYS = [
+  'Authorization',
+  'authorization',
+  'accessToken',
+  'access_token',
+  'refresh_token',
+  'refreshToken',
+  'client_secret',
+  'clientSecret',
+  'bearer',
+  'Bearer',
+  'token',
+  'secret',
+  'password',
+  'owner_password',
+  'ownerPassword',
+  'oauthOwnerPassword',
+];
+
 const REDACT_PATHS = [
-  '*.Authorization',
-  '*.authorization',
-  '*.accessToken',
-  '*.access_token',
-  '*.refresh_token',
-  '*.refreshToken',
-  '*.client_secret',
-  '*.clientSecret',
-  '*.bearer',
-  '*.Bearer',
-  '*.token',
+  ...SENSITIVE_KEYS.map((k) => `*.${k}`),
+  ...SENSITIVE_KEYS.map((k) => `*.*.${k}`),
+  ...SENSITIVE_KEYS.map((k) => `*.*.*.${k}`),
   'headers.Authorization',
   'headers.authorization',
+  'err.response.headers.authorization',
+  'err.response.headers.Authorization',
 ];
+
+/**
+ * Recursive censor for the MCP log mirror: bindMcpLogger sends the ORIGINAL
+ * payload object to the client, bypassing pino's redaction entirely — so the
+ * same sensitive-key set must be applied here before the payload leaves the
+ * process.
+ */
+const SENSITIVE_KEY_RE = /(authorization|secret|password|token|bearer)s?$/i;
+
+function censorSensitive(value: unknown, depth = 0): unknown {
+  if (depth > 6 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((v) => censorSensitive(v, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = SENSITIVE_KEY_RE.test(k) ? '[redacted]' : censorSensitive(v, depth + 1);
+  }
+  return out;
+}
 
 export const logger = pino(
   {
@@ -99,7 +132,7 @@ export function bindMcpLogger(server: McpServer): void {
         time: new Date().toISOString(),
         service: 'avito-mcp',
         msg: msg ?? '',
-        ...(data ?? {}),
+        ...((censorSensitive(data) as Record<string, unknown> | undefined) ?? {}),
       };
       server
         .sendLoggingMessage({

@@ -12,20 +12,22 @@
  * start time, so a misconfigured remote server refuses to boot rather than exposing
  * the Avito credentials it holds.
  */
-import express, { type RequestHandler } from 'express';
+import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import type { Server as HttpServer } from 'node:http';
 
 import type { Config, HttpConfig } from '../config.js';
 import type { ToolContext } from '../core/tool-factory.js';
 import { logger } from '../logger.js';
-import { healthPayload } from '../build-server.js';
+import { PACKAGE_NAME, VERSION } from '../version.js';
 import { createOAuthSubsystem } from './oauth/index.js';
 import { createMcpHttpHandler } from './mcp-http.js';
-import { createWebhookRouter } from './webhook.js';
+import { createWebhookRouter, secretsMatch } from './webhook.js';
 
 export interface HttpServerHandle {
   url: string;
+  /** The actual bound port (differs from config when port 0 was requested, e.g. tests). */
+  port: number;
   close(): Promise<void>;
 }
 
@@ -72,6 +74,11 @@ export async function startHttpServer(baseCtx: ToolContext, config: Config): Pro
 
   const app = express();
   app.disable('x-powered-by');
+  // The documented remote setup is a local reverse proxy (nginx/Caddy) doing TLS.
+  // Trust exactly that hop so req.ip (rate-limit keying, logs) is the real client
+  // address — and ONLY loopback, so a spoofed X-Forwarded-For from a direct
+  // connection is never believed.
+  app.set('trust proxy', 'loopback');
   // JSON for MCP/DCR; urlencoded for the OAuth /token request and the /authorize
   // consent form (both are application/x-www-form-urlencoded). body-parser's _body
   // guard makes this safe even where the SDK auth handlers also parse.
@@ -79,8 +86,11 @@ export async function startHttpServer(baseCtx: ToolContext, config: Config): Pro
   app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 
   // ── health probe (always on) ───────────────────────────────────────────────
+  // Deliberately minimal: this endpoint is reachable without auth, so it must
+  // not describe the deployment (auth scheme, safety mode, URLs, credential
+  // state). The rich snapshot stays on the local-only `--health` CLI.
   app.get('/healthz', (_req, res) => {
-    res.json(healthPayload(config));
+    res.json({ ok: true, name: PACKAGE_NAME, version: VERSION });
   });
 
   // ── webhook receiver (independent of MCP transport) ─────────────────────────
@@ -131,6 +141,43 @@ export async function startHttpServer(baseCtx: ToolContext, config: Config): Pro
     app.all('/mcp', guard, mcp.handleRequest);
   }
 
+  // ── uniform 404 + error contract ─────────────────────────────────────────────
+  // Catch-all 404: byte-identical to the webhook route's wrong-secret answer, so
+  // a probe can't distinguish "receiver exists, wrong secret" from "no receiver
+  // here" (Express' default HTML 404 differs in content-type and headers).
+  app.use((_req, res) => {
+    res.status(404).json({ error: 'not found' });
+  });
+  // Final error handler. Without one, Express answers a body-parse failure with
+  // its default HTML page — a full stack trace in development mode. Two contracts:
+  //   • a genuine Avito delivery (correct secret in the path) is ALWAYS answered
+  //     200 even if the body was malformed, so Avito never retries/disables us;
+  //   • everything else gets a terse JSON status with no internals.
+  const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
+    const status =
+      typeof (err as { status?: unknown })?.status === 'number' &&
+      (err as { status: number }).status >= 400 &&
+      (err as { status: number }).status < 600
+        ? (err as { status: number }).status
+        : 500;
+    const w = config.webhook;
+    if (w.enabled && w.secret) {
+      const prefix = `${w.path}/`;
+      if (req.path.startsWith(prefix) && secretsMatch(req.path.slice(prefix.length), w.secret)) {
+        logger.warn({ err: (err as Error)?.message }, 'webhook delivery error (answered 200 anyway)');
+        if (!res.headersSent) res.status(200).json({ ok: true });
+        return;
+      }
+    }
+    logger.warn({ err: (err as Error)?.message, path: req.path, status }, 'http request error');
+    if (!res.headersSent) {
+      res.status(status).json({ error: status === 400 ? 'bad_request' : 'error' });
+    } else {
+      res.end();
+    }
+  };
+  app.use(errorHandler);
+
   const server = await new Promise<HttpServer>((resolve, reject) => {
     const s = app.listen(h.port, h.host, () => resolve(s));
     s.on('error', reject);
@@ -148,8 +195,12 @@ export async function startHttpServer(baseCtx: ToolContext, config: Config): Pro
     'avito-mcp HTTP listener started',
   );
 
+  const address = server.address();
+  const boundPort = typeof address === 'object' && address !== null ? address.port : h.port;
+
   return {
-    url: `http://${h.host}:${h.port}`,
+    url: `http://${h.host}:${boundPort}`,
+    port: boundPort,
     close: async () => {
       for (const c of closers) await c().catch(() => undefined);
       await new Promise<void>((resolve) => server.close(() => resolve()));

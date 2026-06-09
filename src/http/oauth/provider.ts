@@ -26,6 +26,7 @@ import {
   InvalidTokenError,
   ServerError,
 } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { redirectUriMatches } from '@modelcontextprotocol/sdk/server/auth/handlers/authorize.js';
 import type {
   AuthorizationParams,
   OAuthServerProvider,
@@ -251,7 +252,11 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
       return;
     }
     // Re-confirm the redirect_uri is registered for this client (defence in depth).
-    if (!client.redirect_uris.includes(redirectUri)) {
+    // Must use the SDK's matching semantics, not exact equality: GET /authorize
+    // already accepted RFC 8252 §7.3 loopback clients (any port on
+    // localhost/127.0.0.1/[::1]), so an exact match here would dead-end exactly
+    // those flows — after the owner has typed the password.
+    if (!client.redirect_uris.some((registered) => redirectUriMatches(redirectUri, registered))) {
       res.status(400).json({ error: 'invalid_request', error_description: 'Unregistered redirect_uri' });
       return;
     }
@@ -364,8 +369,12 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     if (reqResource !== undefined && rec.resource !== undefined && reqResource !== rec.resource) {
       throw new InvalidRequestError('resource does not match the original authorization');
     }
-    // Rotate: invalidate the presented refresh token, then mint a fresh pair.
+    // Rotate: invalidate the presented refresh token AND the access token it was
+    // paired with (the client abandons it on refresh, so lazy expiry would never
+    // collect it — each refresh would orphan one entry forever), then mint a
+    // fresh pair.
     this.store.deleteRefreshToken(refreshToken);
+    if (rec.accessToken) this.store.deleteAccessToken(rec.accessToken);
     return this.issueTokens(client.client_id, grantedScopes, rec.resource ?? reqResource);
   }
 
@@ -420,12 +429,14 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     const expiresAt = Date.now() + this.ttlSec * 1000;
     const accessToken = this.store.createAccessToken({ clientId, scopes, resource, expiresAt });
     // Refresh tokens outlive access tokens; give them a generous fixed lifetime.
+    // The paired access token is linked so rotation can revoke it eagerly.
     const refreshExpiresAt = Date.now() + Math.max(this.ttlSec, 30 * 24 * 60 * 60) * 1000;
     const refreshToken = this.store.createRefreshToken({
       clientId,
       scopes,
       resource,
       expiresAt: refreshExpiresAt,
+      accessToken,
     });
     return {
       access_token: accessToken,

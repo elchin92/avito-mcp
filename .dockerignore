@@ -11,7 +11,12 @@ swaggers/*.local.json
 # Secrets / local state — MUST never enter the image.
 .env
 .env.local
+.remote.env
+.npmrc
 .avito-token.json
+.mcp.json
+*.jsonl
+deploy/Caddyfile
 *.tgz
 logs
 *.log

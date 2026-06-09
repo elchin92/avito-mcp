@@ -40,3 +40,4 @@ webhook-events.jsonl
 *.jsonl
 deploy/Caddyfile
 AUDIT-*.md
+deploy/Caddyfile.bak*
