@@ -1,5 +1,5 @@
 /**
- * `cpa` domain — swaggers/CPA Авито.json (11 endpoints).
+ * `cpa` domain — swaggers/cpa.json (11 endpoints).
  * CPA (Cost-Per-Action): calls, chats, balances, complaints.
  *
  * Quirks: the `chatsByTime` operationId appears twice (v1 + v2). Names are unified

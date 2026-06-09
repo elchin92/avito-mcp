@@ -46,6 +46,24 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     dryRunDefault: false,
     idempotencyTtlSec: 3600,
     tokenLockTimeoutMs: 30_000,
+    http: {
+      transport: 'stdio',
+      host: '127.0.0.1',
+      port: 3000,
+      publicUrl: 'http://127.0.0.1:3000',
+      auth: 'oauth',
+      authTokens: [],
+      allowNoAuth: false,
+      allowedHosts: [],
+      allowedOrigins: [],
+      oauthTokenTtlSec: 3600,
+    },
+    webhook: {
+      enabled: false,
+      publicUrl: 'http://127.0.0.1:3000',
+      path: '/avito/webhook',
+      bufferSize: 100,
+    },
     ...overrides,
   };
 }

@@ -1,5 +1,5 @@
 /**
- * Domain `cpa_target` — swaggers/Настройка цены целевого действия.json (5 endpoints).
+ * Domain `cpa_target` — swaggers/cpa-target-action.json (5 endpoints).
  * Manages target-action bids (CPA promotion bids).
  *
  * ⚠️ Write: removePromotion / saveAutoBid / saveManualBid — change bids / stop promotion.

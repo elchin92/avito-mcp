@@ -1,0 +1,21 @@
+[Unit]
+Description=Caddy (avito-mcp reverse proxy + automatic HTTPS)
+Documentation=https://caddyserver.com/docs/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+# Reuse the cert store from the ad-hoc run (~/.local/share/caddy) so no re-issue.
+Environment=HOME=/root
+ExecStart=/usr/local/bin/caddy run --config /srv/avito_mcp/deploy/Caddyfile --adapter caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /srv/avito_mcp/deploy/Caddyfile --adapter caddyfile --force
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10s
+LimitNOFILE=1048576
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -3,6 +3,35 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-06-09
+
+**Remote MCP + webhook receiver.** Two big additive capabilities: the server can now be served over the network as a **remote MCP** (Streamable HTTP) secured by **OAuth 2.1**, and it can **receive Avito webhooks** (real-time chat/message events) instead of only polling. stdio remains the default and is unchanged — every existing local deployment keeps working byte-for-byte. `tsc`, `eslint` and the full suite pass.
+
+### Added
+
+- **Remote MCP over HTTP (Streamable HTTP transport).** New `AVITO_MCP_TRANSPORT = stdio` (default) `| http | both` (CLI: `--http`). In `http`/`both` mode the server exposes the MCP endpoint at `/mcp` plus a full **OAuth 2.1** authorization server:
+  - `AVITO_MCP_HTTP_HOST` (default `127.0.0.1`), `AVITO_MCP_HTTP_PORT` (default `3000`), `AVITO_MCP_HTTP_PUBLIC_URL` (e.g. `https://mcp.example.com` — used to build OAuth issuer / resource metadata; no trailing slash).
+  - `AVITO_MCP_HTTP_AUTH = oauth` (default) `| bearer | none`. In **oauth** mode clients self-register (**DCR**, `/register`), run **authorization-code + PKCE**, a human approves at `/authorize` by entering the **owner password** (`AVITO_MCP_OAUTH_OWNER_PASSWORD`, **required** in oauth mode — the only person who can mint a token), and the issued bearer token then guards `/mcp`. Token TTL via `AVITO_MCP_OAUTH_TOKEN_TTL_SEC` (default `3600`); optional on-disk persistence via `AVITO_MCP_OAUTH_STORE_FILE`.
+  - **bearer** mode uses one or more shared secrets (`AVITO_MCP_HTTP_AUTH_TOKEN`, comma-separated). **none** disables auth — refused on a non-loopback host unless `AVITO_MCP_HTTP_ALLOW_NO_AUTH=1` (discouraged).
+  - **DNS-rebinding protection** via `AVITO_MCP_HTTP_ALLOWED_HOSTS` / `AVITO_MCP_HTTP_ALLOWED_ORIGINS` (CSV).
+  - Endpoints exposed: `/mcp`, `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`, `/authorize`, `/token`, `/register`, `/healthz`. Node binds `127.0.0.1`; TLS is terminated by a reverse proxy (nginx/Caddy) — ready-to-paste configs in both READMEs.
+- **Avito webhook receiver** — the server can now accept Avito's real-time messenger push (new messages / chat events) at a secret-guarded URL, so agents react to events instead of polling. Works **even in pure stdio mode** (Avito needs a public URL; the MCP client does not).
+  - `AVITO_MCP_WEBHOOK_SECRET` (enables the receiver; the secret is a path segment so the URL is unguessable) or `AVITO_MCP_WEBHOOK_ENABLED`. `AVITO_MCP_WEBHOOK_PUBLIC_URL` (public base Avito POSTs to; defaults to the HTTP public URL), `AVITO_MCP_WEBHOOK_PATH` (default `/avito/webhook`), `AVITO_MCP_WEBHOOK_BUFFER` (ring-buffer size, default `100`), `AVITO_MCP_WEBHOOK_LOG_FILE` (optional JSONL audit log).
+  - Receiver endpoint: `POST {PUBLIC_URL}{PATH}/{SECRET}` → `200 {"ok":true}` in well under Avito's 2-second deadline.
+- **3 new tools** (all in the `messenger` domain): `messenger_get_webhook_events` (read — drains the buffered events), `messenger_get_webhook_status` (read — receiver stats: retained / total received / last received), `messenger_register_webhook` (write — subscribes the configured public URL with Avito).
+- **New subscribable resource** `avito://webhook/events` — clients can `resources/subscribe` and receive `notifications/resources/updated` as events arrive.
+
+### Changed
+
+- **Tool count 145 → 148** (+3 webhook tools). `dist/manifest.json` updated; `counts_by_risk` gains 2 `read` + 1 `write`.
+- **`express` added as a runtime dependency** (Express 5) — backs the HTTP transport, the OAuth endpoints and the webhook receiver. Pulled in lazily; pure-stdio deployments never start the HTTP listener.
+- **Swagger filenames in `swaggers/` are now English** (`messenger.json`, `items.json`, `orders.json`, `delivery.json`, …) instead of the previous Cyrillic names. The `avito://swaggers/{slug}` resource slugs and the `complete` autocomplete follow the new names. (Supersedes the v0.8.0 note that the on-disk specs kept Russian filenames.)
+
+### Compatibility
+
+- **stdio is still the default** — with no `AVITO_MCP_TRANSPORT` set, behaviour is identical to v0.8.0. The HTTP listener, OAuth endpoints and webhook receiver are all opt-in.
+- No tools removed or renamed; the 145 existing tools are unchanged. New env vars all have safe defaults.
+
 ## [0.8.0] - 2026-05-29
 
 **Internationalization (i18n) pass.** All tool definitions, code comments and runtime-facing strings are now in English for a global audience of developers and AI agents; MCP prompts are bilingual (English + Russian). No tools added/removed/renamed, no schema or behaviour change — pure surface-language metadata. `tsc`, `eslint` and 144/144 tests pass.
@@ -446,6 +475,7 @@ Avito provides separate APIs for the following verticals; their swagger specs ar
 ### Fixed
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
 
+[0.9.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.9.0
 [0.5.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.5.1
 [0.5.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.5.0
 [0.4.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.4.1

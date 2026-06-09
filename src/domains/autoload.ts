@@ -1,5 +1,5 @@
 /**
- * Domain `autoload` — corresponds to swaggers/Автозагрузка.json
+ * Domain `autoload` — corresponds to swaggers/autoload.json
  *
  * 17 endpoints: autoload profiles (v1 deprecated + v2), launching uploads, reports,
  * ID mappings, category field documentation.
@@ -51,7 +51,7 @@ export const register: DomainRegister = (server, ctx) => {
       schedule: z
         .record(z.string(), z.unknown())
         .describe(
-          'Schedule of regular uploads (array of periods): each element = {rate: number of listings per period, weekdays: [0-6, where 0=Monday], time_slots: [0-23, where 0 = the 00:00-01:00 interval]}. Moscow time. Required. See the ExportSchedule schema in swagger Автозагрузка.json.',
+          'Schedule of regular uploads (array of periods): each element = {rate: number of listings per period, weekdays: [0-6, where 0=Monday], time_slots: [0-23, where 0 = the 00:00-01:00 interval]}. Moscow time. Required. See the ExportSchedule schema in swagger autoload.json.',
         ),
       agreement: z
         .boolean()
@@ -185,12 +185,12 @@ export const register: DomainRegister = (server, ctx) => {
       feeds_data: z
         .array(z.record(z.string(), z.unknown()))
         .describe(
-          'Array of feeds (at least one). Each element = {feed_name: feed name for the report, feed_url: URL of the file with listings, starts with http/https}. Required. See the FeedsData schema in swagger Автозагрузка.json.',
+          'Array of feeds (at least one). Each element = {feed_name: feed name for the report, feed_url: URL of the file with listings, starts with http/https}. Required. See the FeedsData schema in swagger autoload.json.',
         ),
       schedule: z
         .record(z.string(), z.unknown())
         .describe(
-          'Schedule of regular uploads (array of periods): each element = {rate: number of listings per period, weekdays: [0-6, where 0=Monday], time_slots: [0-23, where 0 = the 00:00-01:00 interval]}. Moscow time. Required. See the ExportSchedule schema in swagger Автозагрузка.json.',
+          'Schedule of regular uploads (array of periods): each element = {rate: number of listings per period, weekdays: [0-6, where 0=Monday], time_slots: [0-23, where 0 = the 00:00-01:00 interval]}. Moscow time. Required. See the ExportSchedule schema in swagger autoload.json.',
         ),
       agreement: z
         .boolean()

@@ -10,6 +10,7 @@ import { hashArgs, type IdempotencyStore, IdempotencyConflictError } from './ide
 import type { PendingActionStore } from './pending-actions.js';
 import { evaluatePolicy, requiresConfirmation } from './policy.js';
 import type { Primitive, QueryValue } from './url.js';
+import type { WebhookStore } from './webhook-store.js';
 
 /** Names of internal fields automatically added to destructive tools. */
 const META_PARAMS = ['dryRun', 'idempotencyKey'] as const;
@@ -47,6 +48,13 @@ export interface ToolContext {
    * omit idempotencyStore.
    */
   idempotencyStore?: IdempotencyStore;
+  /**
+   * v0.9.0: optional ring buffer of received Avito webhook events. Present only
+   * when the webhook receiver is enabled. The webhook domain tools and the
+   * avito://webhook/events resource read from it; undefined → those tools report
+   * the receiver as disabled rather than failing.
+   */
+  webhookStore?: WebhookStore;
 }
 
 export type ProfileIdKey = 'user_id' | 'userId';

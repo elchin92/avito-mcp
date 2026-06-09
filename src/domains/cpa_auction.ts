@@ -1,5 +1,5 @@
 /**
- * Domain `cpa_auction` — swaggers/CPA-аукцион.json (2 endpoints).
+ * Domain `cpa_auction` — swaggers/cpa-auction.json (2 endpoints).
  *
  * ⚠️ Write: saveItemBids — saves CPA auction bids (up to 200 listings per request).
  */
@@ -55,7 +55,7 @@ export const register: DomainRegister = (server, ctx) => {
         .max(200)
         .describe(
           'Array of bids (1–200). Each element: itemID (int, listing ID, required), pricePenny (int, bid in kopecks, required), ' +
-            'expirationTime (string RFC3339, e.g. "2023-06-29T12:34:34+03:00"; null/absent — indefinite). See swaggers/CPA-аукцион.json.',
+            'expirationTime (string RFC3339, e.g. "2023-06-29T12:34:34+03:00"; null/absent — indefinite). See swaggers/cpa-auction.json.',
         ),
     },
     body: { contentType: 'application/json', fields: ['items'] },

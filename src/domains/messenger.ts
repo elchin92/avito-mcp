@@ -1,5 +1,5 @@
 /**
- * `messenger` domain — corresponds to swaggers/Мессенджер.json
+ * `messenger` domain — corresponds to swaggers/messenger.json
  *
  * 13 endpoints: reading/sending messages, chats, blacklist, webhooks, voice, images.
  *

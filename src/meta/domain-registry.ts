@@ -18,6 +18,7 @@ import { register as cpaAuction } from '../domains/cpa_auction.js';
 import { register as trxpromo } from '../domains/trxpromo.js';
 import { register as calltracking } from '../domains/calltracking.js';
 import { register as msgDiscounts } from '../domains/messenger_discounts.js';
+import { register as webhook } from '../domains/webhook.js';
 import { register as meta } from '../domains/meta.js';
 
 /**
@@ -46,4 +47,5 @@ export const domains: readonly DomainRegister[] = [
   trxpromo,
   calltracking,
   msgDiscounts,
+  webhook,
 ];

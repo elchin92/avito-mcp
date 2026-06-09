@@ -1,5 +1,5 @@
 /**
- * `user` domain — maps to swaggers/Информация о пользователе.json
+ * `user` domain — maps to swaggers/user.json
  *
  * Endpoints (3):
  *   GET  /core/v1/accounts/self                    → getUserInfoSelf

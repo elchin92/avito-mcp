@@ -35,3 +35,8 @@ coverage/
 
 # OS
 Thumbs.db
+.remote.env
+webhook-events.jsonl
+*.jsonl
+deploy/Caddyfile
+AUDIT-*.md

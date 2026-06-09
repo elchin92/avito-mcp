@@ -45,19 +45,19 @@ beforeAll(() => {
 });
 
 describe('manifest snapshot', () => {
-  it('has stable counts_by_risk (v0.7.0: +3 meta tools — 145 total)', () => {
+  it('has stable counts_by_risk (v0.9.0: +3 webhook tools — 148 total)', () => {
     expect(manifest.counts_by_risk).toEqual({
       sensitive: 3,
-      read: 80, // +3 in v0.7.0: meta_health, meta_auth_status, meta_capabilities
-      write: 43,
+      read: 82, // +2 in v0.9.0: messenger_get_webhook_events, messenger_get_webhook_status
+      write: 44, // +1 in v0.9.0: messenger_register_webhook
       money: 9,
       public: 10,
       unknown: 0,
     });
   });
 
-  it('has total tool_count = 145', () => {
-    expect(manifest.tool_count).toBe(145);
+  it('has total tool_count = 148', () => {
+    expect(manifest.tool_count).toBe(148);
   });
 
   it('covers exactly the expected 19 domain prefixes', () => {

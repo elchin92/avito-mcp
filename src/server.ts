@@ -1,7 +1,4 @@
 #!/usr/bin/env node
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-
 import type { ToolContext } from './core/tool-factory.js';
 import { PACKAGE_NAME, VERSION } from './version.js';
 
@@ -12,7 +9,9 @@ function printHelp(): void {
       `Universal MCP server for the Avito API.\n` +
       `\n` +
       `Usage:\n` +
-      `  avito-mcp                  Start the MCP stdio server\n` +
+      `  avito-mcp                  Start the MCP stdio server (default)\n` +
+      `  avito-mcp --http           Start the remote Streamable HTTP server (OAuth 2.1 by default)\n` +
+      `  avito-mcp --both           Run stdio AND HTTP in one process\n` +
       `  avito-mcp --version        Print version and exit\n` +
       `  avito-mcp --help           Print this help and exit\n` +
       `  avito-mcp --health         Print health snapshot as JSON and exit\n` +
@@ -24,6 +23,7 @@ function printHelp(): void {
       `                             tool returns preview by default; agent can override with\n` +
       `                             dryRun: false)\n` +
       `  --no-confirmation          Same as AVITO_MCP_CONFIRMATION_MODE=off\n` +
+      `  --http | --both | --stdio  v0.9.0: same as AVITO_MCP_TRANSPORT=http|both|stdio\n` +
       `\n` +
       `Environment variables (see .env.example for the full list):\n` +
       `  Client_id, Client_secret, Profile_id   Required Avito OAuth credentials\n` +
@@ -47,6 +47,25 @@ function printHelp(): void {
       `  AVITO_SAFE_MODE         DEPRECATED: use AVITO_MCP_MODE=read_only instead\n` +
       `  LOG_LEVEL               pino log level (default: info)\n` +
       `\n` +
+      `Remote HTTP transport (v0.9.0 — only when AVITO_MCP_TRANSPORT=http|both):\n` +
+      `  AVITO_MCP_TRANSPORT             stdio (default) | http | both\n` +
+      `  AVITO_MCP_HTTP_HOST             bind address (default: 127.0.0.1 — front with a TLS proxy)\n` +
+      `  AVITO_MCP_HTTP_PORT             listen port (default: 3000)\n` +
+      `  AVITO_MCP_HTTP_PUBLIC_URL       public https URL for OAuth metadata, e.g. https://mcp.example.com\n` +
+      `  AVITO_MCP_HTTP_AUTH             oauth (default) | bearer | none\n` +
+      `  AVITO_MCP_OAUTH_OWNER_PASSWORD  required in oauth mode — gates the /authorize consent\n` +
+      `  AVITO_MCP_OAUTH_TOKEN_TTL_SEC   access-token TTL (default: 3600)\n` +
+      `  AVITO_MCP_HTTP_AUTH_TOKEN       bearer-mode shared secret(s), comma-separated\n` +
+      `  AVITO_MCP_HTTP_ALLOWED_HOSTS    CSV — DNS-rebinding protection (Host allowlist)\n` +
+      `  AVITO_MCP_HTTP_ALLOWED_ORIGINS  CSV — DNS-rebinding protection (Origin allowlist)\n` +
+      `\n` +
+      `Avito webhook receiver (v0.9.0 — runs even in stdio mode):\n` +
+      `  AVITO_MCP_WEBHOOK_SECRET        enables the receiver; secret URL path segment\n` +
+      `  AVITO_MCP_WEBHOOK_PUBLIC_URL    public base Avito POSTs to (default: HTTP public URL)\n` +
+      `  AVITO_MCP_WEBHOOK_PATH          mount path prefix (default: /avito/webhook)\n` +
+      `  AVITO_MCP_WEBHOOK_BUFFER        retained events ring-buffer size (default: 100)\n` +
+      `  AVITO_MCP_WEBHOOK_LOG_FILE      optional JSONL file to append every event to\n` +
+      `\n` +
       `Docs: https://github.com/elchin92/avito-mcp\n`,
   );
 }
@@ -69,6 +88,10 @@ function applyCliFlagsToEnv(argv: string[]): void {
   if (argv.includes('--guarded')) setIfMissing('AVITO_MCP_MODE', 'guarded');
   if (argv.includes('--dry-run')) setIfMissing('AVITO_MCP_DRY_RUN_DEFAULT', 'true');
   if (argv.includes('--no-confirmation')) setIfMissing('AVITO_MCP_CONFIRMATION_MODE', 'off');
+  // v0.9.0: transport selection sugar.
+  if (argv.includes('--http')) setIfMissing('AVITO_MCP_TRANSPORT', 'http');
+  if (argv.includes('--both')) setIfMissing('AVITO_MCP_TRANSPORT', 'both');
+  if (argv.includes('--stdio')) setIfMissing('AVITO_MCP_TRANSPORT', 'stdio');
 }
 
 /**
@@ -78,24 +101,8 @@ function applyCliFlagsToEnv(argv: string[]): void {
  */
 async function printHealthAndExit(): Promise<void> {
   const { config } = await import('./config.js');
-  const payload = {
-    ok: true,
-    name: PACKAGE_NAME,
-    version: VERSION,
-    timestamp: new Date().toISOString(),
-    safety: {
-      mode: config.mode,
-      confirmationMode: config.confirmationMode,
-      hardConfirmation: !!config.confirmationSecret,
-      dryRunDefault: config.dryRunDefault,
-      exposeAuthTools: config.exposeAuthTools,
-      allowToolsCount: config.allowTools.length,
-      denyToolsCount: config.denyTools.length,
-    },
-    credentialsConfigured: !!config.clientId && !!config.clientSecret,
-    baseUrl: config.baseUrl,
-  };
-  process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+  const { healthPayload } = await import('./build-server.js');
+  process.stdout.write(JSON.stringify(healthPayload(config), null, 2) + '\n');
 }
 
 async function startServer(): Promise<void> {
@@ -107,8 +114,8 @@ async function startServer(): Promise<void> {
     { domains },
     { PendingActionStore },
     { IdempotencyStore },
-    { registerResources },
-    { registerPrompts },
+    { WebhookStore },
+    { buildMcpServer },
   ] = await Promise.all([
     import('./config.js'),
     import('./logger.js'),
@@ -116,66 +123,46 @@ async function startServer(): Promise<void> {
     import('./meta/domain-registry.js'),
     import('./core/pending-actions.js'),
     import('./core/idempotency.js'),
-    import('./resources.js'),
-    import('./prompts.js'),
+    import('./core/webhook-store.js'),
+    import('./build-server.js'),
   ]);
 
-  // Server metadata — title/description/websiteUrl are MCP-2025-11-25 Implementation fields.
-  // Aware MCP clients (Inspector, Claude Desktop) render these in the connection picker.
-  const server = new McpServer(
-    {
-      name: PACKAGE_NAME,
-      title: 'Avito MCP',
-      version: VERSION,
-      description:
-        '145 tools for the Avito API: listings, messenger, orders, delivery, ' +
-        'promotion, autoload, analytics. With a safety policy (read_only / guarded / ' +
-        'full_access), a confirmation flow for money/public operations, and hard-confirmation via ' +
-        'AVITO_MCP_CONFIRMATION_SECRET.',
-      websiteUrl: 'https://github.com/elchin92/avito-mcp',
-    },
-    {
-      // Declare capabilities we explicitly support. Tools/resources/prompts are also
-      // auto-detected by the SDK from registrations, but logging is opt-in.
-      capabilities: {
-        logging: {},
-        resources: { subscribe: true, listChanged: true },
-        prompts: { listChanged: false },
-        tools: { listChanged: false },
-      },
-      instructions:
-        'Avito MCP — a server for the live (production) Avito API. Before any write/money/public ' +
-        'operation, always confirm the action with a human; in confirmation_mode=money_public ' +
-        '(default) the server returns a confirmation_id and requires a meta_confirm_action call. ' +
-        'Full reference on the safety modes is in the avito://docs/safety resource. The list of tools ' +
-        'with their risk classification is in avito://manifest. Pending actions are in ' +
-        'avito://state/pending-actions (you can subscribe via resources/subscribe).',
-    },
-  );
-
+  // Shared singletons. They back the stdio server AND every Streamable HTTP session,
+  // so the Avito client and token cache are never duplicated across sessions.
   const client = new AvitoClient(config);
   const pendingStore = new PendingActionStore(config.confirmationTtlSec * 1000);
   const idempotencyStore = new IdempotencyStore(config.idempotencyTtlSec * 1000);
-  const ctx: ToolContext = { client, config, pendingStore, idempotencyStore, server };
+  const webhookStore = config.webhook.enabled
+    ? new WebhookStore(config.webhook.bufferSize, config.webhook.logFile)
+    : undefined;
+  const baseCtx: ToolContext = { client, config, pendingStore, idempotencyStore, webhookStore };
 
   // v0.7.4: credentials are optional at startup. If absent, we still register the full
   // catalogue (tools/list works) but warn loudly — any API call will fail with CONFIG_ERROR
-  // until Client_id/Client_secret/Profile_id are set. Enables introspection by registry
-  // indexers / inspectors and `npx avito-mcp` previews.
+  // until Client_id/Client_secret/Profile_id are set.
   const credentialsConfigured = !!config.clientId && !!config.clientSecret && config.profileId !== undefined;
 
-  for (const register of domains) {
-    register(server, ctx);
+  const transportMode = config.http.transport;
+  const runStdio = transportMode === 'stdio' || transportMode === 'both';
+  const runHttpMcp = transportMode === 'http' || transportMode === 'both';
+
+  // ── stdio transport (default) ──────────────────────────────────────────────
+  if (runStdio) {
+    const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
+    const server = buildMcpServer(baseCtx);
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    // After connect: mirror selected pino events to the stdio client as logging notifications.
+    bindMcpLogger(server);
   }
-  registerResources(server, ctx);
-  registerPrompts(server, ctx);
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-
-  // After connect: pipe selected pino events to the MCP client as logging/message
-  // notifications. Pino keeps writing to stderr; MCP-clients now see them too.
-  bindMcpLogger(server);
+  // ── HTTP listener: remote MCP (Streamable HTTP) and/or the webhook receiver ──
+  let httpUrl: string | undefined;
+  if (runHttpMcp || config.webhook.enabled) {
+    const { startHttpServer } = await import('./http/app.js');
+    const handle = await startHttpServer(baseCtx, config);
+    httpUrl = handle.url;
+  }
 
   if (!credentialsConfigured) {
     logger.warn(
@@ -197,6 +184,10 @@ async function startServer(): Promise<void> {
       profileId: config.profileId,
       domains: domains.length,
       mode: config.mode,
+      transport: transportMode,
+      httpUrl,
+      httpAuth: runHttpMcp ? config.http.auth : undefined,
+      webhookEnabled: config.webhook.enabled,
       credentialsConfigured,
       allowToolsCount: config.allowTools.length,
       denyToolsCount: config.denyTools.length,

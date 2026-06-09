@@ -1,5 +1,5 @@
 /**
- * Domain `stock` — swaggers/Stock management.json (2 endpoints).
+ * Domain `stock` — swaggers/stock-management.json (2 endpoints).
  *
  * Quirks: the swagger operations have NO operationId — tool names were assigned semantically.
  *

@@ -1,5 +1,5 @@
 /**
- * `orders` domain — maps to swaggers/Управление заказами.json
+ * `orders` domain — maps to swaggers/orders.json
  *
  * 12 endpoints: fetching orders, status transitions, courier/postal/click-and-collect delivery, labels.
  *

@@ -1,0 +1,18 @@
+[Unit]
+Description=avito-mcp remote (HTTP MCP + OAuth 2.1 + Avito webhook)
+Documentation=https://github.com/elchin92/avito-mcp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/avito_mcp
+# Avito creds come from .env (loaded by the app); HTTP/OAuth/webhook from .remote.env.
+EnvironmentFile=/srv/avito_mcp/.remote.env
+ExecStart=/usr/bin/node /srv/avito_mcp/dist/server.js
+Restart=on-failure
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

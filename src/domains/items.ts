@@ -1,5 +1,5 @@
 /**
- * `items` domain — corresponds to swaggers/Объявления.json
+ * `items` domain — corresponds to swaggers/items.json
  *
  * 11 endpoints. The core valuable domain for an AI agent: reading listings, price, VAS, statistics.
  *

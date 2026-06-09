@@ -1,5 +1,5 @@
 /**
- * Domain `promotion` — swaggers/Продвижение.json (7 endpoints).
+ * Domain `promotion` — swaggers/promotion.json (7 endpoints).
  * BBIP = "big budget integrated promotion" — Avito's bundled promotion services.
  *
  * ⚠️ Write: create_bbip_order — a REAL PURCHASE of promotion that spends money from the balance.

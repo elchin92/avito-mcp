@@ -12,11 +12,11 @@
 [![Avito API snapshot](https://img.shields.io/badge/Avito_API_snapshot-2026--05--25-orange)](./swaggers)
 
 > **Дайте вашим AI-агентам руки и ноги в Avito.**
-> Локальный MCP-сервер, через который Claude, Cursor, Cline и любой другой AI-ассистент **делает реальную работу на Avito за вас** — отвечает клиентам, ведёт объявления, запускает продвижение, обрабатывает заказы, анализирует статистику. **138 Avito API tools** + **7 локальных meta-tools** = до **145 MCP tools** из **18 официальных API Avito**. Установка одной командой.
+> Локальный MCP-сервер, через который Claude, Cursor, Cline и любой другой AI-ассистент **делает реальную работу на Avito за вас** — отвечает клиентам, ведёт объявления, запускает продвижение, обрабатывает заказы, анализирует статистику. **141 Avito API tools** + **7 локальных meta-tools** = до **148 MCP tools** из **18 официальных API Avito**. Установка одной командой.
 
 🇬🇧 **[English version →](./README.md)**
 
-> **Новое в v0.8.0** — интернационализация: у каждого инструмента title, описание и параметры теперь на английском для международной аудитории, MCP-промпты двуязычные (EN + RU), комментарии в коде — на английском. Без изменений tools, схем и поведения. Полная история — в [CHANGELOG](./CHANGELOG.md).
+> **Новое в v0.9.0** — **удалённый MCP по HTTP** (Streamable HTTP, защита через OAuth 2.1) и **приёмник webhook Avito** (события чатов в реальном времени + 3 новых tools). stdio остаётся режимом по умолчанию. См. [Удалённый MCP](#удалённый-mcp-по-http-oauth-21-v090) · [Webhook](#приёмник-webhook-avito-v090) · полная история — в [CHANGELOG](./CHANGELOG.md).
 
 ---
 
@@ -27,7 +27,7 @@ Avito — крупнейший classifieds-маркетплейс России (
 `avito-mcp` отдаёт каждый публичный метод Avito API как инструмент, который ваш AI-агент может вызвать. Подключаете к любому MCP-клиенту — и агент ведёт вашу витрину на Avito автономно, по обычному диалогу.
 
 - 🔌 **Универсальный** — работает с 15+ MCP-клиентами (Claude Desktop, Cursor, Cline, Continue, Windsurf, Zed, ChatGPT и др.)
-- 🔒 **Локально** — stdio-транспорт, ключи никогда не покидают вашу машину
+- 🔒 **Локально по умолчанию** — stdio-транспорт, ключи никогда не покидают вашу машину (опционально — [удалённый HTTP-режим](#удалённый-mcp-по-http-oauth-21-v090) для командных/общих развёртываний)
 - 🤖 **Под автономию** — естественно стыкуется с multi-agent-фреймворками и cron-шедулерами для работы 24/7
 - ⚡ **Без установки** — `npx -y avito-mcp`, без git clone, без сборки, без Docker
 
@@ -79,19 +79,19 @@ stdio-транспорт оставляет credentials и ответы API на
 
 ---
 
-## Что включено — до 145 инструментов
+## Что включено — до 148 инструментов
 
 | Конфигурация | Видимо tools |
 |---|---|
-| По умолчанию (`AVITO_MCP_MODE=full_access`, без opt-in) | **141** |
-| + `AVITO_MCP_EXPOSE_AUTH_TOOLS=1` | 144 (+3 auth) |
-| + `AVITO_MCP_ALLOWED_UPLOAD_DIRS=…` | 142 (+1 upload) |
-| + Оба opt-in | **145** |
+| По умолчанию (`AVITO_MCP_MODE=full_access`, без opt-in) | **144** |
+| + `AVITO_MCP_EXPOSE_AUTH_TOOLS=1` | 147 (+3 auth) |
+| + `AVITO_MCP_ALLOWED_UPLOAD_DIRS=…` | 145 (+1 upload) |
+| + Оба opt-in | **148** |
 | `AVITO_MCP_CONFIRMATION_MODE=off` | −3 (скрывает meta_*_action) |
-| `AVITO_MCP_MODE=read_only` | ~80 (только `risk=read`) |
-| `AVITO_MCP_MODE=guarded` | ~123 (добавляет `write`, скрывает `money`/`public`) |
+| `AVITO_MCP_MODE=read_only` | ~82 (только `risk=read`) |
+| `AVITO_MCP_MODE=guarded` | ~125 (добавляет `write`, скрывает `money`/`public`) |
 
-138 — обёртки над эндпойнтами Avito API; 7 — локальные meta-tools: `meta_get_rate_limits`, три `meta_*_action` для confirmation flow (когда включён), плюс `meta_health`, `meta_auth_status`, `meta_capabilities` (v0.7.0). Полный реестр — в `dist/manifest.json` (`npm run generate:manifest`).
+141 — обёртки над эндпойнтами Avito API; 7 — локальные meta-tools: `meta_get_rate_limits`, три `meta_*_action` для confirmation flow (когда включён), плюс `meta_health`, `meta_auth_status`, `meta_capabilities` (v0.7.0). Avito-счётчик вырос на 3 в v0.9.0 — новые `messenger_get_webhook_events`, `messenger_get_webhook_status` и `messenger_register_webhook` (см. [Webhook](#приёмник-webhook-avito-v090)). Полный реестр — в `dist/manifest.json` (`npm run generate:manifest`).
 
 Каждый публичный endpoint из 18 OpenAPI-спецификаций Avito. Раскрывайте любую группу.
 
@@ -114,7 +114,7 @@ stdio-транспорт оставляет credentials и ответы API на
 </details>
 
 <details>
-<summary>💬 <b>Мессенджер</b> — 13 инструментов (messenger_*)</summary>
+<summary>💬 <b>Мессенджер</b> — 16 инструментов (messenger_*)</summary>
 
 - `messenger_get_chats_v2` — список чатов (фильтры: непрочитанные, item_ids, типы чатов)
 - `messenger_get_chat_by_id_v2` — детали одного чата
@@ -129,6 +129,9 @@ stdio-транспорт оставляет credentials и ответы API на
 - `messenger_post_blacklist_v2` ⚠️ — блокировка пользователей (с кодами причины)
 - `messenger_post_webhook_v3` ⚠️ — подписка на push (нужен публичный URL)
 - `messenger_post_webhook_unsubscribe` — отписка
+- `messenger_get_webhook_events` — забрать события встроенного [приёмника webhook](#приёмник-webhook-avito-v090) (v0.9.0)
+- `messenger_get_webhook_status` — статистика приёмника: хранится / всего принято / последнее событие (v0.9.0)
+- `messenger_register_webhook` ⚠️ — подписать настроенный публичный URL у Avito одним вызовом (v0.9.0)
 </details>
 
 <details>
@@ -220,9 +223,10 @@ stdio-транспорт оставляет credentials и ответы API на
 | `avito://state/config` | `application/json` | Снимок активного config — секреты redacted |
 | `avito://state/rate-limits` | `application/json` | Последние `X-RateLimit-*` по доменам Avito |
 | `avito://state/pending-actions` | `application/json` | Pending-confirmations — **subscribable**, шлёт `notifications/resources/updated` |
+| `avito://webhook/events` | `application/json` | Буфер событий [webhook](#приёмник-webhook-avito-v090) Avito — **subscribable** (v0.9.0) |
 | `avito://swaggers/{slug}` | `application/json` | По одному resource на каждый файл из `swaggers/` (с автодополнением через `complete`) |
 
-Подписавшись на `avito://state/pending-actions`, клиент видит каждое создание/подтверждение/отмену/истечение в реальном времени — идеально для UI с индикатором «жду подтверждения».
+Подписавшись на `avito://state/pending-actions`, клиент видит каждое создание/подтверждение/отмену/истечение в реальном времени — идеально для UI с индикатором «жду подтверждения». Подписка на `avito://webhook/events` уведомляет клиента в момент, когда Avito доставляет новое событие чата.
 
 ### Prompts
 
@@ -334,6 +338,173 @@ healthcheck:
   test: ["CMD", "avito-mcp", "--health"]
   interval: 30s
 ```
+
+---
+
+## Удалённый MCP по HTTP (OAuth 2.1) (v0.9.0)
+
+По умолчанию `avito-mcp` говорит по **stdio** — идеально для локального клиента. В v0.9.0 добавлен опциональный **удалённый** режим: отдавать те же 148 tools по сети как **Streamable HTTP** MCP-сервер, чтобы хостовый агент, команда или клиент с телефона подключались к одному общему инстансу. Доступ закрыт **OAuth 2.1** (authorization-code + PKCE + Dynamic Client Registration) с экраном согласия и участием человека.
+
+### Включение
+
+```bash
+AVITO_MCP_TRANSPORT=http            # stdio (default) | http | both   (CLI: --http)
+AVITO_MCP_HTTP_HOST=127.0.0.1       # Node всегда слушает loopback; TLS — задача прокси
+AVITO_MCP_HTTP_PORT=3000
+AVITO_MCP_HTTP_PUBLIC_URL=https://mcp.example.com   # ваш публичный TLS-домен, БЕЗ завершающего слэша
+AVITO_MCP_HTTP_AUTH=oauth           # oauth (default) | bearer | none
+AVITO_MCP_OAUTH_OWNER_PASSWORD=…    # ОБЯЗАТЕЛЬНО в режиме oauth — единственный, кто может выпустить токен
+# Client_id / Client_secret / Profile_id как обычно (Avito-доступы, от имени которых работает сервер)
+```
+
+`both` поднимает stdio **и** HTTP одновременно — удобно, когда один процесс обслуживает локального и удалённого клиента сразу.
+
+### Как работает OAuth-flow
+
+1. Клиент обращается к `/.well-known/oauth-protected-resource` на `/mcp`, находит authorization server и читает `/.well-known/oauth-authorization-server`.
+2. Клиент **сам регистрируется** через Dynamic Client Registration (`POST /register`) — без ручной настройки клиента.
+3. Запускает **authorization-code + PKCE**: открывает `/authorize` в браузере.
+4. **Человек подтверждает** на `/authorize`, вводя `AVITO_MCP_OAUTH_OWNER_PASSWORD`. Это и есть барьер — без owner-пароля токен не выпускается никогда.
+5. Клиент обменивает код на `/token` на bearer-токен (TTL `AVITO_MCP_OAUTH_TOKEN_TTL_SEC`, default 3600с), и этот токен защищает каждый запрос к `/mcp`.
+
+| Endpoint | Назначение |
+|---|---|
+| `/mcp` | Streamable HTTP MCP-транспорт (сами tools) |
+| `/.well-known/oauth-authorization-server` | Метаданные OAuth 2.1 AS |
+| `/.well-known/oauth-protected-resource` | Метаданные resource-server для `/mcp` |
+| `/authorize` | Экран согласия — человек вводит owner-пароль |
+| `/token` | Обмен authorization-code → bearer-токен |
+| `/register` | Dynamic Client Registration (DCR) |
+| `/healthz` | Liveness-проба (без auth) |
+
+### Все env-переменные HTTP / OAuth
+
+| Переменная | Default | Смысл |
+|---|---|---|
+| `AVITO_MCP_TRANSPORT` | `stdio` | `stdio` \| `http` \| `both` (CLI-флаг `--http`) |
+| `AVITO_MCP_HTTP_HOST` | `127.0.0.1` | Bind-адрес — держите loopback за прокси |
+| `AVITO_MCP_HTTP_PORT` | `3000` | Порт прослушивания |
+| `AVITO_MCP_HTTP_PUBLIC_URL` | — | Публичный TLS-базис для построения OAuth issuer / resource metadata. **Без завершающего слэша.** |
+| `AVITO_MCP_HTTP_AUTH` | `oauth` | `oauth` \| `bearer` \| `none` |
+| `AVITO_MCP_OAUTH_OWNER_PASSWORD` | — | **Обязательно в режиме `oauth`.** Закрывает `/authorize` — единственный секрет, выпускающий токен. |
+| `AVITO_MCP_OAUTH_TOKEN_TTL_SEC` | `3600` | Время жизни выпущенного bearer-токена |
+| `AVITO_MCP_OAUTH_STORE_FILE` | — | Опциональный файл для персиста токенов/клиентов между рестартами |
+| `AVITO_MCP_HTTP_AUTH_TOKEN` | — | Режим `bearer`: общий секрет(ы), через запятую |
+| `AVITO_MCP_HTTP_ALLOW_NO_AUTH` | `0` | Разрешить `auth=none` на не-loopback хосте (**не рекомендуется**) |
+| `AVITO_MCP_HTTP_ALLOWED_HOSTS` | — | CSV — защита от DNS-rebinding (допустимые значения `Host`) |
+| `AVITO_MCP_HTTP_ALLOWED_ORIGINS` | — | CSV — защита от DNS-rebinding (допустимые значения `Origin`) |
+
+> **Модель безопасности.** Node слушает `127.0.0.1` и говорит по обычному HTTP. **TLS терминирует reverse-proxy** (nginx / Caddy) на вашем домене, проксируя на `http://127.0.0.1:3000`. Никогда не выставляйте порт 3000 напрямую в интернет. `auth=none` на публичном хосте отклоняется, пока не задано `AVITO_MCP_HTTP_ALLOW_NO_AUTH=1`.
+
+### Сниппеты reverse-proxy (терминируют TLS для `https://mcp.example.com`)
+
+Оба проксируют MCP-endpoint, OAuth discovery/flow-эндпоинты и путь webhook, и **сохраняют заголовок `Host`** (OAuth-метаданные строятся из него).
+
+<details open>
+<summary><b>nginx</b></summary>
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name mcp.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/mcp.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mcp.example.com/privkey.pem;
+
+    # MCP-транспорт + OAuth (discovery, authorize, token, register) + приёмник webhook.
+    location ~ ^/(mcp|\.well-known/oauth-authorization-server|\.well-known/oauth-protected-resource|authorize|token|register|avito/webhook) {
+        proxy_pass         http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+
+        proxy_set_header   Host              $host;          # сохраняем Host — от него зависят OAuth-метаданные
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+
+        # Streamable HTTP держит долгоживущие ответы открытыми:
+        proxy_buffering    off;
+        proxy_read_timeout 3600s;
+    }
+}
+```
+</details>
+
+<details>
+<summary><b>Caddy</b></summary>
+
+```caddyfile
+mcp.example.com {
+    # Caddy сам получает и обновляет TLS-сертификат.
+    # Caddy по умолчанию сохраняет заголовок Host (header_up не нужен).
+    reverse_proxy /mcp* http://127.0.0.1:3000
+    reverse_proxy /.well-known/oauth-authorization-server http://127.0.0.1:3000
+    reverse_proxy /.well-known/oauth-protected-resource   http://127.0.0.1:3000
+    reverse_proxy /authorize* http://127.0.0.1:3000
+    reverse_proxy /token*     http://127.0.0.1:3000
+    reverse_proxy /register*  http://127.0.0.1:3000
+    reverse_proxy /avito/webhook* http://127.0.0.1:3000
+}
+```
+</details>
+
+### Проще: режим bearer
+
+Если вы контролируете оба конца и полный OAuth-танец не нужен — задайте `AVITO_MCP_HTTP_AUTH=bearer` и общий секрет:
+
+```bash
+AVITO_MCP_TRANSPORT=http
+AVITO_MCP_HTTP_PUBLIC_URL=https://mcp.example.com
+AVITO_MCP_HTTP_AUTH=bearer
+AVITO_MCP_HTTP_AUTH_TOKEN=long-random-secret,another-secret   # один или несколько, через запятую
+```
+
+Клиенты тогда шлют `Authorization: Bearer long-random-secret` на `/mcp`. Та же конфигурация reverse-proxy применима.
+
+---
+
+## Приёмник webhook Avito (v0.9.0)
+
+Поллинг `messenger_get_chats_v2` работает, но для **реакций в реальном времени** (ответить в момент, когда клиент написал) Avito может **пушить** события вам. В v0.9.0 встроен приёмник: укажите Avito секретный URL — и сервер буферизует каждое событие для вашего агента.
+
+Работает **даже в чистом stdio-режиме** — Avito нужен лишь публичный URL для POST'а; ваш MCP-клиент его не касается. (Если `AVITO_MCP_TRANSPORT=stdio` и задан webhook-секрет, сервер всё равно поднимает крошечный HTTP-listener только для приёмника.)
+
+### Включение
+
+```bash
+AVITO_MCP_WEBHOOK_SECRET=…                              # включает приёмник; становится секретным сегментом пути
+AVITO_MCP_WEBHOOK_PUBLIC_URL=https://mcp.example.com    # публичный базис, куда POST'ит Avito (default — HTTP public URL)
+# AVITO_MCP_WEBHOOK_PATH=/avito/webhook                 # default
+# AVITO_MCP_WEBHOOK_BUFFER=100                          # размер ring-буфера (событий в памяти)
+# AVITO_MCP_WEBHOOK_LOG_FILE=/var/log/avito-webhook.jsonl   # опциональный JSONL-аудитлог
+```
+
+Avito доставляет на:
+
+```
+POST {AVITO_MCP_WEBHOOK_PUBLIC_URL}{AVITO_MCP_WEBHOOK_PATH}/{AVITO_MCP_WEBHOOK_SECRET}
+  → 200 {"ok":true}      (отвечается заметно быстрее 2-секундного дедлайна Avito)
+```
+
+Секрет — часть пути, поэтому URL неугадываем; это и есть авторизация. Подпишите URL у Avito через кабинет или одним вызовом нового tool `messenger_register_webhook`.
+
+| Переменная | Default | Смысл |
+|---|---|---|
+| `AVITO_MCP_WEBHOOK_SECRET` | — | Включает приёмник; неугадываемый сегмент пути, куда бьёт Avito |
+| `AVITO_MCP_WEBHOOK_ENABLED` | `0` | Альтернативный тумблер (секрет + этот флаг, если нужен явный переключатель) |
+| `AVITO_MCP_WEBHOOK_PUBLIC_URL` | (HTTP public URL) | Публичный базис, куда POST'ит Avito |
+| `AVITO_MCP_WEBHOOK_PATH` | `/avito/webhook` | Префикс пути перед секретным сегментом |
+| `AVITO_MCP_WEBHOOK_BUFFER` | `100` | Размер in-memory ring-буфера |
+| `AVITO_MCP_WEBHOOK_LOG_FILE` | — | Опциональный JSONL — каждое сырое событие дописывается для аудита/реплея |
+
+### Чтение событий
+
+| Поверхность | Что даёт |
+|---|---|
+| `messenger_get_webhook_events` (tool, read) | Забрать буфер событий — фильтры `chat_id`, `since`, `limit` |
+| `messenger_get_webhook_status` (tool, read) | Статистика приёмника: хранится / всего принято / последнее событие / размер буфера |
+| `messenger_register_webhook` (tool, ⚠️ write) | Подписать настроенный публичный URL у Avito |
+| `avito://webhook/events` (resource, **subscribable**) | Те же события как MCP-resource; `resources/subscribe` для live-пуша в клиент |
+
+Типичный цикл: подписаться на `avito://webhook/events`, на каждый `notifications/resources/updated` прочитать новое событие, составить ответ и (после подтверждения) отправить через `messenger_post_send_message`.
 
 ---
 
@@ -565,13 +736,13 @@ Settings → MCP Servers → Add. Поля UI: name `avito`, command `npx`, args
 | 📊 Отчёты по недвижимости | [Avito Realty Reports API](https://developers.avito.ru/api-catalog/realty-reports/documentation) |
 | 🏠 Краткосрочная аренда (квартиры посуточно) | [Avito STR API](https://developers.avito.ru/api-catalog/str/documentation#ApiDescriptionBlock) |
 
-Также вне scope: `authorization_code` OAuth flow (нужен публичный redirect URI), приём webhook-уведомлений (нужен публичный URL), Avito sandbox (нет sandbox-credentials).
+Также вне scope: `authorization_code` OAuth flow (нужен публичный redirect URI) и Avito sandbox (нет sandbox-credentials). **Приём webhook-уведомлений** поддерживается с v0.9.0 — см. раздел [Webhook](#приёмник-webhook-avito-v090).
 
 ---
 
 ## Безопасность
 
-- **Только локальное stdio** — никаких прокси, remote-эндпоинтов, телеметрии.
+- **Локальное stdio по умолчанию** — никаких прокси, remote-эндпоинтов, телеметрии. Опциональный [удалённый HTTP-режим](#удалённый-mcp-по-http-oauth-21-v090) — opt-in (`AVITO_MCP_TRANSPORT=http`), слушает loopback и закрыт OAuth 2.1 (или bearer-секретом) за вашим собственным TLS-прокси.
 - Credentials живут в блоке `env` MCP-клиента или в локальном `.env`. Никуда не отправляются кроме `api.avito.ru`.
 - OAuth-токены кешируются в персональной директории (chmod 600):
   - Linux: `$XDG_STATE_HOME/avito-mcp/token.json` (≈ `~/.local/state/avito-mcp/token.json`)
@@ -579,14 +750,14 @@ Settings → MCP Servers → Add. Поля UI: name `avito`, command `npx`, args
   - Windows: `%APPDATA%\avito-mcp\token.json`
   - Изменить путь — через `AVITO_TOKEN_FILE`. Удалите файл — следующий запрос автоматически выпишет новый.
 - **Три слоя безопасности** (каждый opt-in через env vars; defaults сохраняют v0.1.x для тривиальных вызовов, но харднят всё destructive):
-  - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — фильтр на регистрации. Скрытые tools не появляются в `tools/list`. `read_only` ≈ 80 tools, `guarded` добавляет writes (~123), `full_access` — все 138 Avito + 7 meta (+ opt-in расширения).
+  - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — фильтр на регистрации. Скрытые tools не появляются в `tools/list`. `read_only` ≈ 82 tools, `guarded` добавляет writes (~125), `full_access` — все 141 Avito + 7 meta (+ opt-in расширения).
   - **`AVITO_MCP_ALLOW_TOOLS` / `AVITO_MCP_DENY_TOOLS`** — per-tool фильтр. Deny всегда побеждает allow.
   - **`AVITO_MCP_CONFIRMATION_MODE`** (`off` / `money_public` (default) / `all_destructive`) — runtime gate. Destructive tools возвращают `{requires_confirmation: true, confirmation_id: ...}`; агент должен вызвать `meta_confirm_action` чтобы выполнить. Pending хранится in-memory, с TTL (default 15 мин), одноразовый.
   - **`AVITO_MCP_EXPOSE_AUTH_TOOLS`** (default: `0`) — `auth_*` tools возвращают OAuth токены; помечены как `sensitive` и скрыты по default даже в `full_access`.
   - **`AVITO_MCP_ALLOWED_UPLOAD_DIRS`** — `messenger_upload_images` читает файлы с диска; без явного списка директорий tool вообще не регистрируется. Валидация пути через `realpath` (защита от symlink escape), allowlist расширений (jpg/jpeg/png/webp), лимит размера (`AVITO_MCP_MAX_UPLOAD_MB`, default 15), magic-byte sniff с cross-check на extension.
 - Каждый tool помечен одной из пяти категорий риска (`sensitive` / `read` / `write` / `money` / `public`), отдаётся клиенту как MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`) и как `_meta.risk`, плюс перечислен в [`dist/manifest.json`](./dist/manifest.json). Поведенческие MCP-клиенты предупредят перед деструктивным вызовом.
 - Готовые конфигурации в [`docs/safety.md`](./docs/safety.md) (analytics-only, customer-support с confirmation, listings-only, full admin) + честный разбор что есть и чего нет в confirmation flow (server-side two-step + audit layer, а НЕ криптографический human-approval).
-- **Все 138 Avito tools работают с production** — sandbox у Avito нет. Write-методы тратят деньги или видны клиентам. Безопасные read-only для первого знакомства: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
+- **Все 141 Avito tools работают с production** — sandbox у Avito нет. Write-методы тратят деньги или видны клиентам. Безопасные read-only для первого знакомства: `user_get_user_balance`, `items_get_items_info`, `messenger_get_chats_v2`, `meta_get_rate_limits`.
 - **Нашли уязвимость?** Приватный канал — [SECURITY.md](./SECURITY.md). Не открывайте публичный issue.
 
 ---
@@ -650,13 +821,13 @@ npx avito-mcp --help       # показать env-переменные и usage
 ## Архитектура (для контрибьюторов)
 
 ```
-swaggers/<имя>.json                 ← OpenAPI Avito (источник правды)
+swaggers/<name>.json                ← OpenAPI Avito (источник правды; файлы названы по-английски: messenger.json, items.json …)
         ↓
-src/domains/<имя>.ts                ← один файл = один swagger, ~10 строк на tool
+src/domains/<name>.ts               ← один файл = один swagger, ~10 строк на tool
         ↓
 src/meta/domain-registry.ts         ← одна строка регистрации
         ↓
-138 Avito + 7 local meta tools через stdio
+141 Avito + 7 local meta tools (stdio или удалённый HTTP)
 ```
 
 Сердце — `src/core/tool-factory.ts`: `defineTool(server, ctx, spec)` превращает декларативную spec в работающий MCP tool с HTTP, OAuth-токеном, retry, маппингом ошибок и автоподстановкой `Profile_id`. Никаких `fetch()` внутри handler'ов.

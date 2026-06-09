@@ -31,6 +31,60 @@ function defaultTokenFile(): string {
 export type SafetyMode = 'read_only' | 'guarded' | 'full_access';
 export type ConfirmationMode = 'off' | 'money_public' | 'all_destructive';
 
+// ───────────────────────── v0.9.0: HTTP transport + webhook ─────────────────────────
+
+/** Which MCP transport(s) to run. `both` = stdio + HTTP in one process. */
+export type TransportMode = 'stdio' | 'http' | 'both';
+/** Auth scheme guarding the remote `/mcp` endpoint. */
+export type HttpAuthMode = 'oauth' | 'bearer' | 'none';
+
+/**
+ * v0.9.0: configuration of the optional remote HTTP transport (Streamable HTTP).
+ * Inert unless `transport` is `http`/`both`. Security is enforced at HTTP-start
+ * time (config load stays permissive so stdio users are never blocked).
+ */
+export interface HttpConfig {
+  transport: TransportMode;
+  /** Bind address. Default 127.0.0.1 — put a TLS reverse-proxy in front for a domain. */
+  host: string;
+  port: number;
+  /** Public base URL (e.g. https://mcp.example.com) for OAuth issuer/resource metadata. No trailing slash. */
+  publicUrl: string;
+  auth: HttpAuthMode;
+  /** Bearer-mode shared secrets (AVITO_MCP_HTTP_AUTH_TOKEN, comma-separated). */
+  authTokens: string[];
+  /** Allow `auth=none` on a non-loopback host (otherwise fail-closed). */
+  allowNoAuth: boolean;
+  /** DNS-rebinding protection allowlists. Empty → derived from publicUrl + host. */
+  allowedHosts: string[];
+  allowedOrigins: string[];
+  /** OAuth owner password gating the /authorize consent step (oauth mode). */
+  oauthOwnerPassword?: string;
+  /** Access-token TTL in seconds (oauth mode). */
+  oauthTokenTtlSec: number;
+  /** Optional JSON file to persist OAuth clients/tokens across restarts. */
+  oauthStoreFile?: string;
+}
+
+/**
+ * v0.9.0: configuration of the Avito webhook receiver. Enabled when a secret is
+ * set (or AVITO_MCP_WEBHOOK_ENABLED is truthy). The receiver can run even in pure
+ * stdio mode — Avito needs a public URL, the MCP client does not.
+ */
+export interface WebhookConfig {
+  enabled: boolean;
+  /** Secret path segment: POST {path}/{secret}. Constant-time compared. */
+  secret?: string;
+  /** Public base URL Avito should POST to (defaults to http.publicUrl). No trailing slash. */
+  publicUrl: string;
+  /** Mount path prefix (the secret is appended). Default /avito/webhook. */
+  path: string;
+  /** Ring-buffer size of retained events. */
+  bufferSize: number;
+  /** Optional JSONL file to append every received event to (durability). */
+  logFile?: string;
+}
+
 /**
  * Parses a comma- or whitespace-separated list from env into a deduplicated array.
  * `"a, b , ,c"` → `["a", "b", "c"]`.
@@ -110,7 +164,66 @@ const ConfigSchema = z.object({
   tokenLockTimeoutMs: z.number().int().positive().default(30_000),
 });
 
-export type Config = z.infer<typeof ConfigSchema>;
+/** Strips a trailing slash so URLs concatenate predictably. */
+function stripTrailingSlash(u: string): string {
+  return u.endsWith('/') ? u.slice(0, -1) : u;
+}
+
+function resolveTransport(): TransportMode {
+  const raw = (process.env.AVITO_MCP_TRANSPORT ?? 'stdio').trim().toLowerCase();
+  if (raw === 'http' || raw === 'both' || raw === 'stdio') return raw;
+  return 'stdio';
+}
+
+function resolveHttpAuth(): HttpAuthMode {
+  const raw = (process.env.AVITO_MCP_HTTP_AUTH ?? 'oauth').trim().toLowerCase();
+  if (raw === 'oauth' || raw === 'bearer' || raw === 'none') return raw;
+  return 'oauth';
+}
+
+function buildHttpConfig(): HttpConfig {
+  const host = process.env.AVITO_MCP_HTTP_HOST?.trim() || '127.0.0.1';
+  const port = parsePositiveInt(process.env.AVITO_MCP_HTTP_PORT, 3000);
+  const publicUrl = stripTrailingSlash(
+    process.env.AVITO_MCP_HTTP_PUBLIC_URL?.trim() || `http://${host}:${port}`,
+  );
+  return {
+    transport: resolveTransport(),
+    host,
+    port,
+    publicUrl,
+    auth: resolveHttpAuth(),
+    authTokens: parseToolList(process.env.AVITO_MCP_HTTP_AUTH_TOKEN),
+    allowNoAuth: parseBool(process.env.AVITO_MCP_HTTP_ALLOW_NO_AUTH),
+    allowedHosts: parseToolList(process.env.AVITO_MCP_HTTP_ALLOWED_HOSTS),
+    allowedOrigins: parseToolList(process.env.AVITO_MCP_HTTP_ALLOWED_ORIGINS),
+    oauthOwnerPassword: process.env.AVITO_MCP_OAUTH_OWNER_PASSWORD || undefined,
+    oauthTokenTtlSec: parsePositiveInt(process.env.AVITO_MCP_OAUTH_TOKEN_TTL_SEC, 3600),
+    oauthStoreFile: process.env.AVITO_MCP_OAUTH_STORE_FILE || undefined,
+  };
+}
+
+function buildWebhookConfig(httpPublicUrl: string): WebhookConfig {
+  const secret = process.env.AVITO_MCP_WEBHOOK_SECRET?.trim() || undefined;
+  const enabled = parseBool(process.env.AVITO_MCP_WEBHOOK_ENABLED) || secret !== undefined;
+  const publicUrl = stripTrailingSlash(
+    process.env.AVITO_MCP_WEBHOOK_PUBLIC_URL?.trim() || httpPublicUrl,
+  );
+  const path = process.env.AVITO_MCP_WEBHOOK_PATH?.trim() || '/avito/webhook';
+  return {
+    enabled,
+    secret,
+    publicUrl,
+    path: stripTrailingSlash(path) || '/avito/webhook',
+    bufferSize: parsePositiveInt(process.env.AVITO_MCP_WEBHOOK_BUFFER, 100),
+    logFile: process.env.AVITO_MCP_WEBHOOK_LOG_FILE || undefined,
+  };
+}
+
+export type Config = z.infer<typeof ConfigSchema> & {
+  http: HttpConfig;
+  webhook: WebhookConfig;
+};
 
 function load(): Config {
   const raw = {
@@ -144,7 +257,13 @@ function load(): Config {
     );
     process.exit(1);
   }
-  return parsed.data;
+  // v0.9.0: HTTP + webhook config are computed in JS (cross-field defaults like
+  // publicUrl depending on host/port don't fit zod cleanly). They stay permissive
+  // here; the hard fail-closed checks (oauth needs an owner password, none needs a
+  // loopback host) run at HTTP-start time, so stdio users are never blocked.
+  const http = buildHttpConfig();
+  const webhook = buildWebhookConfig(http.publicUrl);
+  return { ...parsed.data, http, webhook };
 }
 
 export const config = load();

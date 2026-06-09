@@ -1,5 +1,5 @@
 /**
- * `tariffs` domain — swaggers/Тарифы.json (1 endpoint).
+ * `tariffs` domain — swaggers/tariffs.json (1 endpoint).
  * Read-only reference for tariffs in the Transport category.
  */
 import type { DomainRegister } from '../core/tool-factory.js';

@@ -1,5 +1,5 @@
 /**
- * `msg_discounts` domain — swaggers/Рассылка скидок и спецпредложений в мессенджере (beta-version).json
+ * `msg_discounts` domain — swaggers/messenger-discounts.json
  * (5 endpoints, BETA).
  *
  * Workflow:

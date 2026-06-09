@@ -1,5 +1,5 @@
 /**
- * Domain `auth` — corresponds to swaggers/Авторизация.json
+ * Domain `auth` — corresponds to swaggers/authorization.json
  *
  * All three tools work WITHOUT a Bearer token (this is auth itself) and send x-www-form-urlencoded.
  * Note the quirk: in swagger the three paths look like "/token", "/token‎", "/token‎‎"

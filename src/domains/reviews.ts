@@ -1,5 +1,5 @@
 /**
- * `reviews` domain — swaggers/Рейтинги и отзывы.json (4 endpoints).
+ * `reviews` domain — swaggers/reviews.json (4 endpoints).
  *
  * ⚠️ Write: create_review_answer, remove_review_answer — public actions (visible to customers).
  */

@@ -1,0 +1,11 @@
+# avito-mcp v0.9.0 — reverse proxy + automatic HTTPS for the remote MCP + webhook.
+# Caddy fetches a Let's Encrypt cert for mcp.example.com automatically (needs the
+# DNS A-record pointing here AND inbound TCP 80+443 reachable from the internet),
+# then proxies every path (/mcp, /.well-known/*, /authorize, /token, /register,
+# /avito/webhook/*, /healthz) to the Node server on localhost:3000. Caddy preserves
+# the Host header by default, which the OAuth metadata + DNS-rebinding checks rely on.
+
+mcp.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:3000
+}

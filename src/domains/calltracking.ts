@@ -1,5 +1,5 @@
 /**
- * Domain `calltracking` — swaggers/CallTracking[КТ].json (3 endpoints).
+ * Domain `calltracking` — swaggers/calltracking.json (3 endpoints).
  * Call tracking: retrieving information about calls and audio recordings.
  *
  * Quirks:

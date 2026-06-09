@@ -1,5 +1,5 @@
 /**
- * Domain `delivery` — swaggers/Доставка.json (31 endpoints, the largest one).
+ * Domain `delivery` — swaggers/delivery.json (31 endpoints, the largest one).
  *
  * This is a B2B partner logistics API (only for delivery-service partners).
  * You won't be able to call most of these methods from a regular account.
@@ -8,7 +8,7 @@
  *   - The `checkConfirmationCode` operationId collides with the same-named one in orders.json.
  *     Uniqueness is ensured via the domain prefix.
  *   - Complex nested bodies are described minimally via z.record(z.unknown()) — for full schemas
- *     see swaggers/Доставка.json (201 schema components).
+ *     see swaggers/delivery.json (201 schema components).
  *   - Most of the paths under /delivery-sandbox/ are intentionally test-environment endpoints
  *     for delivery-service partners; on a production account they return 403/404 for regular users.
  */
@@ -18,7 +18,7 @@ import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 
 /** Generic helper — a passthrough object with a swagger reference for a loosely typed body. */
 const opaque = (refToSwagger: string) =>
-  z.record(z.string(), z.unknown()).describe(`See ${refToSwagger} in swaggers/Доставка.json`);
+  z.record(z.string(), z.unknown()).describe(`See ${refToSwagger} in swaggers/delivery.json`);
 
 export const register: DomainRegister = (server, ctx) => {
   // ────────────────────────────── Announcements ──────────────────────────────

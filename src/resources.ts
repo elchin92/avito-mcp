@@ -47,6 +47,9 @@ const SWAGGERS_DIR = resolve(REPO_ROOT, 'swaggers');
 /** Public URI for clients to subscribe to pending-actions updates. */
 export const PENDING_ACTIONS_URI = 'avito://state/pending-actions';
 
+/** v0.9.0: public URI for clients to subscribe to received Avito webhook events. */
+export const WEBHOOK_EVENTS_URI = 'avito://webhook/events';
+
 /**
  * Removes from config the fields that must NEVER leak to the client:
  * client_id / client_secret / confirmation_secret / token_file path.
@@ -223,6 +226,33 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
     },
   );
 
+  // ─────────── avito://webhook/events ───────────
+  // v0.9.0: subscribable, like pending-actions. Emits resources/updated on every
+  // received Avito webhook delivery. When the receiver is disabled (no webhookStore)
+  // it still lists so clients can discover the capability — it just reports enabled:false.
+  server.registerResource(
+    'webhook-events',
+    WEBHOOK_EVENTS_URI,
+    {
+      title: 'Avito webhook events (live)',
+      description:
+        'Recently received Avito messenger webhook events (new chat messages). Subscribable: ' +
+        'resources/subscribe → notifications/resources/updated on each delivery. Requires the ' +
+        'webhook receiver to be enabled (AVITO_MCP_WEBHOOK_SECRET); otherwise reports enabled:false. ' +
+        'For filtered/paged access use the messenger_get_webhook_events tool.',
+      mimeType: 'application/json',
+    },
+    async (uri): Promise<ReadResourceResult> => {
+      const enabled = ctx.config.webhook.enabled;
+      return jsonResource(uri.toString(), {
+        enabled,
+        public_url: enabled ? ctx.config.webhook.publicUrl : null,
+        stats: ctx.webhookStore?.stats() ?? null,
+        events: ctx.webhookStore?.list({ limit: 50 }) ?? [],
+      });
+    },
+  );
+
   // The SDK McpServer does not register subscribe/unsubscribe automatically — we
   // declared the capability in server.ts, so the handlers must exist. We implement
   // it lightly: track a set of subscribers and, on a pending-actions change, notify only them.
@@ -242,6 +272,16 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
     if (!subscribers.has(PENDING_ACTIONS_URI)) return;
     server.server
       .sendResourceUpdated({ uri: PENDING_ACTIONS_URI })
+      .catch((err: unknown) => {
+        logger.debug({ err }, 'sendResourceUpdated failed');
+      });
+  });
+
+  // v0.9.0: same wiring for webhook events — notify subscribers on each delivery.
+  ctx.webhookStore?.onChange(() => {
+    if (!subscribers.has(WEBHOOK_EVENTS_URI)) return;
+    server.server
+      .sendResourceUpdated({ uri: WEBHOOK_EVENTS_URI })
       .catch((err: unknown) => {
         logger.debug({ err }, 'sendResourceUpdated failed');
       });
@@ -308,7 +348,7 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
   );
 
   logger.info(
-    { resourceCount: 5, swaggerCount: swaggerFiles.length },
+    { resourceCount: 6, swaggerCount: swaggerFiles.length },
     'MCP resources registered',
   );
 }

@@ -1,5 +1,5 @@
 /**
- * `hierarchy` domain — swaggers/Иерархия Аккаунтов.json (5 endpoints).
+ * `hierarchy` domain — swaggers/account-hierarchy.json (5 endpoints).
  * Management of employees and the assignment of listings to employees within the account hierarchy.
  *
  * ⚠️ Write: linkItemsV1 — changes the owner of listings (assignment to employees).

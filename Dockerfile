@@ -1,11 +1,26 @@
-# avito-mcp — container image for the stdio MCP server.
+# avito-mcp — container image for the MCP server (stdio by default, optional HTTP).
 #
 # Used by registry indexers (e.g. Glama) to start the server and run introspection
-# (tools/list) WITHOUT credentials — see v0.7.4. Also usable for self-hosting:
+# (tools/list) WITHOUT credentials — see v0.7.4. Also usable for self-hosting.
+#
+# stdio (default) — no ports needed; the client speaks over stdin/stdout:
 #   docker build -t avito-mcp .
 #   docker run --rm -i \
 #     -e Client_id=... -e Client_secret=... -e Profile_id=... \
 #     avito-mcp
+#
+# Remote MCP over HTTP (v0.9.0) — serve the tools over the network and publish
+# port 3000 (Streamable HTTP MCP + OAuth 2.1 + webhook receiver):
+#   docker run --rm \
+#     -e Client_id=... -e Client_secret=... -e Profile_id=... \
+#     -e AVITO_MCP_TRANSPORT=http \
+#     -e AVITO_MCP_HTTP_HOST=0.0.0.0 \
+#     -e AVITO_MCP_HTTP_PUBLIC_URL=https://mcp.example.com \
+#     -e AVITO_MCP_OAUTH_OWNER_PASSWORD=... \
+#     -p 3000:3000 \
+#     avito-mcp
+# In production keep AVITO_MCP_HTTP_HOST loopback and terminate TLS with a
+# reverse proxy (nginx/Caddy) in front — see the README "Remote MCP" section.
 #
 # Credentials are optional at startup: without them the server still serves
 # tools/list / resources / prompts; API calls fail with CONFIG_ERROR until set.
@@ -42,5 +57,9 @@ COPY --from=build /app/package.json ./package.json
 COPY swaggers ./swaggers
 COPY docs ./docs
 
-# stdio transport on stdin/stdout — no ports exposed.
+# Default transport is stdio (stdin/stdout) — no port needed. When run with
+# AVITO_MCP_TRANSPORT=http (or both) the server also listens on this port for the
+# Streamable HTTP MCP endpoint / OAuth flow / webhook receiver; publish it with
+# `-p 3000:3000`. Override the port via AVITO_MCP_HTTP_PORT.
+EXPOSE 3000
 ENTRYPOINT ["node", "dist/server.js"]

@@ -1,5 +1,5 @@
 /**
- * Domain `trxpromo` — swaggers/TrxPromo.json (3 endpoints).
+ * Domain `trxpromo` — swaggers/trxpromo.json (3 endpoints).
  * Transactional promotion (pay-per-result commission).
  *
  * Quirks: GET /trx-promo/1/commissions accepts a body — non-standard, but that's how Avito does it.
@@ -51,7 +51,7 @@ export const register: DomainRegister = (server, ctx) => {
           'Array of listings to promote. Each element: itemID (number, listing ID, required), ' +
             'commission (promotion fee in hundredths of a percent, 1500 = 15%; required), ' +
             'dateFrom (promotion start date "YYYY-MM-DD", required), ' +
-            'dateTo (end date "YYYY-MM-DD", optional — otherwise all available dates). See swaggers/TrxPromo.json.',
+            'dateTo (end date "YYYY-MM-DD", optional — otherwise all available dates). See swaggers/trxpromo.json.',
         ),
     },
     body: { contentType: 'application/json', fields: ['items'] },
