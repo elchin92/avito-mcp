@@ -45,11 +45,14 @@ beforeAll(() => {
 });
 
 describe('manifest snapshot', () => {
-  it('has stable counts_by_risk (v0.9.0: +3 webhook tools — 148 total)', () => {
+  it('has stable counts_by_risk (148 total)', () => {
     expect(manifest.counts_by_risk).toEqual({
       sensitive: 3,
-      read: 82, // +2 in v0.9.0: messenger_get_webhook_events, messenger_get_webhook_status
-      write: 44, // +1 in v0.9.0: messenger_register_webhook
+      // v1.0.1: read 82→80, write 44→46 — two delivery sandbox POSTs that record
+      // tracking events (delivery_tracking, delivery_sandbox_track_announcement)
+      // were misclassified as read; they mutate, so they are now write.
+      read: 80,
+      write: 46,
       money: 9,
       public: 10,
       unknown: 0,

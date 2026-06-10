@@ -141,11 +141,13 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_sandbox_track_announcement',
-    title: 'Delivery: track announcement [sandbox]',
-    risk: 'read',
+    title: 'Delivery: push announcement tracking event [sandbox]',
+    risk: 'write',
     description:
-      '[SANDBOX] Accepts a tracking event for an announcement from the delivery service in the test environment. Use it to ' +
-      'simulate the progress of an announcement (acceptance, delivery, cancellation). For delivery-service partners only.',
+      'WRITE (records state on Avito). [SANDBOX] Pushes one tracking event for an announcement from the delivery service — ' +
+      'use it to simulate an announcement progressing (ACCEPTANCE_DONE → RECEIVED → DELIVERED, or CANCELLED). One call records one ' +
+      'event (not idempotent — re-sending logs a duplicate). Returns an empty 200 on success. For delivery-service PARTNERS only. ' +
+      'This is the announcement-level analogue of delivery_tracking (which reports parcel-level status events).',
     method: 'POST',
     path: '/delivery-sandbox/announcements/track',
     domain: 'delivery',
@@ -223,11 +225,14 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_set_order_properties',
-    title: 'Delivery: parcel properties [sandbox]',
+    title: 'Delivery: set parcel properties [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Sends parcel delivery parameters to Avito (for example, the final delivery cost). On ' +
-      'a repeated submission the data is overwritten — it is important to send current values. For delivery-service partners only.',
+      'WRITE (overwrites state on Avito). [SANDBOX] Sets a parcel\'s delivery parameters on Avito — e.g. the final delivery cost. ' +
+      'Idempotent by overwrite: each call REPLACES the previous values, so always send the complete current set, not a delta. ' +
+      'Returns an empty 200 on success. For delivery-service PARTNERS only (not regular sellers). ' +
+      'Sibling tools: delivery_set_order_real_address sets the pickup address, delivery_tracking pushes a status event — ' +
+      'this one only sets cost/parameters.',
     method: 'POST',
     path: '/delivery-sandbox/order/properties',
     domain: 'delivery',
@@ -257,12 +262,15 @@ export const register: DomainRegister = (server, ctx) => {
 
   defineTool(server, ctx, {
     name: 'delivery_tracking',
-    title: 'Delivery: tracking event [sandbox]',
-    risk: 'read',
+    title: 'Delivery: push tracking event [sandbox]',
+    risk: 'write',
     description:
-      '[SANDBOX] Sends Avito parcel tracking information (a delivery status change) on behalf of the delivery service. ' +
-      'Requires compliance with the retry policy. For delivery-service partners only. Despite the "event" wording in the title, ' +
-      'the method records an event — it is a write, not a status read.',
+      'WRITE (records state on Avito). [SANDBOX] Pushes one parcel tracking event to Avito on behalf of the delivery service — ' +
+      'a single status transition (e.g. RECEIVED_AT_TRANSIT_TERMINAL → IN_TRANSIT). Use this to report movement as it happens; ' +
+      'one call records one event, and events accumulate into the parcel history (not idempotent — re-sending logs a duplicate). ' +
+      'Returns an empty 200 on success; a 4xx means the order/status pair was rejected. Comply with Avito\'s retry policy on 5xx. ' +
+      'For delivery-service PARTNERS only (not regular sellers). Sibling tools: delivery_set_order_properties sets cost/parameters, ' +
+      'delivery_change_parcels reschedules a parcel — this one only appends a status event.',
     method: 'POST',
     path: '/delivery-sandbox/order/tracking',
     domain: 'delivery',
@@ -389,9 +397,9 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Delivery: upload pickup points [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Uploads terminals (pickup points/parcel lockers) for a tariff. The system auto-approves changes: with ' +
-      'a high percentage of critical changes the upload is sent for manual review. For delivery-service partners only. ' +
-      'The body is an array of terminals directly.',
+      'WRITE (replaces the tariff\'s terminal set). [SANDBOX] Uploads terminals (pickup points / parcel lockers) for one tariff. ' +
+      'Auto-approves on accept (200); when a high share of the changes are critical the upload is queued for manual review instead. ' +
+      'For delivery-service PARTNERS only. The request body is the terminals array directly (the tool wraps it for you).',
     method: 'POST',
     path: '/delivery-sandbox/tariffs/{tariff_id}/terminals',
     domain: 'delivery',
@@ -433,8 +441,10 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Delivery: upload tariff [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX v2] Uploads a new tariff: lets the delivery service control direction availability, delivery cost, and delivery ' +
-      'terms. Limits: body up to 400MB, up to 1 million directions. For delivery-service partners only.',
+      'WRITE (creates/replaces a tariff). [SANDBOX v2] Uploads a tariff so the delivery service controls direction availability, ' +
+      'delivery cost and terms. Returns 200 on accept. Limits: body up to 400MB, up to 1 million directions. For delivery-service ' +
+      'PARTNERS only. Prefer this v2 over any v1 tariff endpoint. Pair with delivery_update_terms (term zones) and ' +
+      'delivery_add_terminals_sandbox (pickup points) to complete the tariff.',
     method: 'POST',
     path: '/delivery-sandbox/tariffsV2',
     domain: 'delivery',

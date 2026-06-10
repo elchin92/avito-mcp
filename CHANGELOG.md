@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-06-10
+
+**Risk-classification fix + tool-definition polish.** A Glama [TDQS](https://glama.ai/blog/2026-04-03-tool-definition-quality-score-tdqs) re-score surfaced one tool whose annotations contradicted its description; an audit of every `risk: 'read'` tool across all 17 domains found a second instance of the same bug, and both are fixed here. No tools added/removed/renamed; the manifest stays at 148. `tsc`, `eslint` and 200 tests pass.
+
+### Fixed
+
+- **Two delivery sandbox POSTs that record tracking events were misclassified as `read`** — `delivery_tracking` (`POST /delivery-sandbox/order/tracking`) and `delivery_sandbox_track_announcement` (`POST /delivery-sandbox/announcements/track`) both **append an event on Avito's side** (they mutate state) but carried `risk: 'read'`, which made the factory emit `readOnlyHint: true` — directly contradicting their own descriptions ("it is a write, not a status read"). An MCP client trusting `readOnlyHint` could call them believing they were side-effect-free. Both are now `risk: 'write'` (correct `readOnlyHint: false`). The remaining 15 domains' read-risk tools were audited and confirmed correct (POST-as-query analytics endpoints are legitimately `read`).
+- This shifts `counts_by_risk` in `dist/manifest.json` from `read: 82 / write: 44` to `read: 80 / write: 46`. The two tools are sandbox endpoints for delivery-service partners (no impact on regular sellers), but the fix means they are now correctly hidden under `AVITO_MCP_MODE=read_only` and reported as writes to clients.
+
+### Changed
+
+- **Tool-definition quality pass on the lowest-scoring tools** (Glama TDQS rubric): `delivery_tracking`, `delivery_sandbox_track_announcement`, `delivery_set_order_properties`, `delivery_add_terminals_sandbox` and `delivery_add_tariff_sandbox_v2` had their descriptions rewritten to front-load the WRITE/side-effect nature, state the return value and idempotency, and disambiguate each from its sibling tools. Pure metadata — no schema or behaviour change.
+
+### Compatibility
+
+- No tools added/removed/renamed; no env vars changed. The only behavioural delta is the corrected risk class on the two sandbox tracking tools (a bug fix). Safe to upgrade from 1.0.0 with no config changes.
+
 ## [1.0.0] - 2026-06-09
 
 **Security-hardening pass over the v0.9.0 surface + the 1.0 stability commitment.** A 33-finding multi-agent audit of the new remote-MCP / OAuth 2.1 / webhook code was run right after v0.9.0 shipped; every confirmed finding is fixed here, with 28 new tests pinning the fixes (172 → **200 passing**). With the surface audited and the public API stable since v0.7.x, this release declares **1.0**: tool names, env vars, resource URIs and the safety model are now covered by SemVer — breaking changes only with a major bump. `tsc`, `eslint` and the full suite pass.
