@@ -8,6 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue)](https://modelcontextprotocol.io)
+[![Glama score](https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/score.svg)](https://glama.ai/mcp/servers/elchin92/avito-mcp)
 [![GitHub stars](https://img.shields.io/github/stars/elchin92/avito-mcp?style=social)](https://github.com/elchin92/avito-mcp/stargazers)
 [![Avito API snapshot](https://img.shields.io/badge/Avito_API_snapshot-2026--05--25-orange)](./swaggers)
 
@@ -15,6 +16,8 @@
 > An MCP server that lets Claude, Cursor, Cline and any other AI assistant **do real work on Avito for you** — answer customers, manage listings, run promotions, fulfil orders, analyse stats. **141 Avito API tools** + **7 local/meta tools** = up to **148 MCP tools** across **18 official Avito APIs**. Runs locally over stdio or as a shared **remote MCP** over HTTP (OAuth 2.1), with a built-in **webhook receiver** for real-time chat events. One `npx` command to install.
 
 🇷🇺 **[Русская версия / Russian version →](./README.ru.md)**
+
+<a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
 > **New in v1.0.0** — security-hardening pass over the remote MCP / OAuth / webhook surface (33 audited findings fixed) and a [stability commitment](#versioning--stability) for the public API. Full history in the [CHANGELOG](./CHANGELOG.md).
 
