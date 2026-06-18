@@ -283,11 +283,25 @@ export function defineTool<I extends ZodRawShape>(
       try {
         const cached = ctx.idempotencyStore.lookup(idempotencyKey, spec.name, argsHash);
         if (cached) {
-          logger.info(
-            { tool: spec.name, idempotencyKey, ageMs: Date.now() - cached.createdAt },
-            'idempotent replay served from ledger',
-          );
-          return annotateReplay(cached.result);
+          // A remembered "requires_confirmation" payload goes STALE once its pending
+          // action is cancelled or expires (the pending TTL is shorter than the
+          // idempotency TTL). Replaying a dead confirmation_id would wedge the key —
+          // meta_confirm_action returns "not found" and the action could never run.
+          // Detect that, evict the stale entry, and fall through to create a fresh pending.
+          const sc = cached.result.structuredContent as Record<string, unknown> | undefined;
+          const stalePendingId =
+            sc?.requires_confirmation === true && typeof sc.confirmation_id === 'string'
+              ? (sc.confirmation_id as string)
+              : undefined;
+          if (stalePendingId !== undefined && !ctx.pendingStore.get(stalePendingId)) {
+            ctx.idempotencyStore.delete(idempotencyKey, spec.name);
+          } else {
+            logger.info(
+              { tool: spec.name, idempotencyKey, ageMs: Date.now() - cached.createdAt },
+              'idempotent replay served from ledger',
+            );
+            return annotateReplay(cached.result);
+          }
         }
       } catch (err) {
         if (err instanceof IdempotencyConflictError) {

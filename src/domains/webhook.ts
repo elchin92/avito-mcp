@@ -81,7 +81,7 @@ function assertAvitoReachableUrl(raw: string): void {
     throw new Error(
       `Webhook URL host '${host}' is not reachable from Avito (loopback/private address). ` +
         'Set AVITO_MCP_WEBHOOK_PUBLIC_URL (or AVITO_MCP_HTTP_PUBLIC_URL) to the public ' +
-        'HTTPS address of this server, or pass `url` explicitly.',
+        'HTTPS address of this server.',
     );
   }
   if (url.protocol !== 'https:') {

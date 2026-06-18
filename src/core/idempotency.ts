@@ -132,6 +132,15 @@ export class IdempotencyStore {
     return { entry: await promise, replay: false };
   }
 
+  /**
+   * Removes the entry for (toolName, key), if any. Used to evict a stale
+   * "requires_confirmation" replay once its pending action is cancelled/expired,
+   * so a fresh retry with the same key is not wedged on a dead confirmation_id.
+   */
+  delete(key: string, toolName: string): boolean {
+    return this.entries.delete(this.composeKey(toolName, key));
+  }
+
   size(): number {
     this.cleanupExpired();
     return this.entries.size;

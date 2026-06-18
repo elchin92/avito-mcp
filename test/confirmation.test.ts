@@ -241,6 +241,37 @@ describe('confirmation flow', () => {
     await rig.client.close();
   });
 
+  it('a cancelled pending does not wedge the idempotency key — retry creates a fresh, confirmable pending', async () => {
+    const rig = await makeRig('money_public');
+    cfg = rig.cfg;
+    const args = { item_id: 1, vas_id: 'highlight', idempotencyKey: 'wedge-key' };
+
+    const first = await rig.client.callTool({ name: 'money_tool', arguments: args });
+    const firstId = extractConfirmationId(parseText(first.content));
+    expect(rig.pendingStore.size()).toBe(1);
+
+    // Discard the pending action. The idempotency entry must NOT keep replaying the
+    // now-dead confirmation_id (the v1.0.3 stale-replay wedge).
+    await rig.client.callTool({ name: 'meta_cancel_action', arguments: { confirmation_id: firstId } });
+    expect(rig.pendingStore.size()).toBe(0);
+
+    // Retry with the SAME key → a FRESH pending, not a stale replay of the dead id.
+    const retry = await rig.client.callTool({ name: 'money_tool', arguments: args });
+    const retryId = extractConfirmationId(parseText(retry.content));
+    expect(retryId).not.toBe(firstId);
+    expect(rig.pendingStore.size()).toBe(1);
+
+    // The fresh pending confirms and executes end-to-end.
+    const confirmed = await rig.client.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: retryId },
+    });
+    expect(confirmed.isError).not.toBe(true);
+    expect(rig.fetchMock.mock.calls.length).toBeGreaterThan(0);
+    expect(rig.pendingStore.size()).toBe(0);
+    await rig.client.close();
+  });
+
   it('write tool does NOT require confirmation in money_public mode', async () => {
     const rig = await makeRig('money_public');
     cfg = rig.cfg;

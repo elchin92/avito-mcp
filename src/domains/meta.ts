@@ -392,6 +392,10 @@ export const register: DomainRegister = (server, ctx) => {
 
         const pending = ctx.pendingStore.get(id);
         if (!pending) {
+          // The pending action is gone (expired/confirmed/cancelled) — drop any
+          // lingering failed-attempt counter for this id so the map cannot grow
+          // unbounded across abandoned ids.
+          failedConfirmationAttempts.delete(id);
           return {
             isError: true,
             content: [
@@ -494,6 +498,9 @@ export const register: DomainRegister = (server, ctx) => {
       async (args): Promise<CallToolResult> => {
         const id = String(args.confirmation_id ?? '');
         const existed = ctx.pendingStore.delete(id);
+        // Cancelling discards the pending action — clear any failed-attempt counter
+        // so it does not outlive the action it tracked.
+        failedConfirmationAttempts.delete(id);
         return {
           content: [
             {

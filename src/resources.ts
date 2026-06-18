@@ -424,7 +424,7 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
   );
 
   logger.info(
-    { resourceCount: 6, swaggerCount: swaggerFiles.length },
+    { resourceCount: pendingActionsDecision.allowed ? 6 : 5, swaggerCount: swaggerFiles.length },
     'MCP resources registered',
   );
 }
