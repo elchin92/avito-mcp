@@ -71,8 +71,9 @@ function makeConfig(): Config {
   };
 }
 
-async function makeRig() {
+async function makeRig(configure: (cfg: Config) => void = () => {}) {
   const cfg = makeConfig();
+  configure(cfg);
   const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
   const webhookStore = new WebhookStore(cfg.webhook.bufferSize);
   const avito = new AvitoClient(cfg);
@@ -205,6 +206,56 @@ describe('MCP resources — listing & static reads', () => {
     expect(body2.pending[0].risk).toBe('public');
     // args / execute did not leak:
     expect(body2.pending[0].args).toBeUndefined();
+  });
+
+
+  it('hides pending-actions resource when meta_list_pending_actions is denied', async () => {
+    const { client, ctx, cfg } = await makeRig((config) => {
+      config.denyTools = ['meta_list_pending_actions'];
+    });
+    cleanup = async () => {
+      await client.close();
+      await fs.rm(cfg.tokenFile, { force: true });
+    };
+
+    ctx.pendingStore.create({
+      toolName: 'items_update_price',
+      risk: 'public',
+      summary: 'should not leak',
+      args: {},
+      execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+    });
+
+    const { resources } = await client.listResources();
+    expect(resources.map((r) => r.uri)).not.toContain(PENDING_ACTIONS_URI);
+    await expect(client.readResource({ uri: PENDING_ACTIONS_URI })).rejects.toThrow();
+  });
+
+  it('does not emit pending-actions updates when the listing policy is denied', async () => {
+    const { client, ctx, cfg } = await makeRig((config) => {
+      config.denyTools = ['meta_list_pending_actions'];
+    });
+    cleanup = async () => {
+      await client.close();
+      await fs.rm(cfg.tokenFile, { force: true });
+    };
+
+    const onUpdated = vi.fn();
+    client.setNotificationHandler(ResourceUpdatedNotificationSchema, async (notif) => {
+      onUpdated(notif.params.uri);
+    });
+
+    await client.subscribeResource({ uri: PENDING_ACTIONS_URI });
+    ctx.pendingStore.create({
+      toolName: 'items_update_price',
+      risk: 'public',
+      summary: 'should not notify',
+      args: {},
+      execute: async () => ({ content: [] }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(onUpdated).not.toHaveBeenCalledWith(PENDING_ACTIONS_URI);
   });
 
   it('emits notifications/resources/updated when pending-actions change', async () => {

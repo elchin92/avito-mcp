@@ -30,6 +30,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { logger } from './logger.js';
+import { evaluatePolicy } from './core/policy.js';
 import type { ToolContext } from './core/tool-factory.js';
 import { PACKAGE_NAME, VERSION } from './version.js';
 
@@ -142,6 +143,7 @@ function safeReadFile(p: string): string | null {
 }
 
 export function registerResources(server: McpServer, ctx: ToolContext): void {
+  const pendingActionsDecision = evaluatePolicy('meta_list_pending_actions', 'read', ctx.config);
   // ─────────── avito://docs/safety ───────────
   server.registerResource(
     'safety-docs',
@@ -237,36 +239,48 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
   );
 
   // ─────────── avito://state/pending-actions ───────────
-  // subscribable: when the pending-store changes, the server sends resources/updated.
-  server.registerResource(
-    'pending-actions',
-    PENDING_ACTIONS_URI,
-    {
-      title: 'Pending actions (live)',
-      description:
-        'Pending actions currently awaiting confirmation. Subscribable: a client can ' +
-        'subscribe via resources/subscribe and receive notifications/resources/updated ' +
-        'on every create/confirm/cancel/expire.',
-      mimeType: 'application/json',
-    },
-    async (uri): Promise<ReadResourceResult> => {
-      const items = ctx.pendingStore.list();
-      return jsonResource(uri.toString(), {
-        count: items.length,
-        confirmation_mode: ctx.config.confirmationMode,
-        confirmation_ttl_sec: ctx.config.confirmationTtlSec,
-        hard_confirmation: !!ctx.config.confirmationSecret,
-        pending: items.map((a) => ({
-          id: a.id,
-          tool: a.toolName,
-          risk: a.risk,
-          summary: a.summary,
-          created_at: new Date(a.createdAt).toISOString(),
-          expires_at: new Date(a.expiresAt).toISOString(),
-        })),
-      });
-    },
-  );
+  // Mirrors meta_list_pending_actions and must obey the same allow/deny policy,
+  // because it exposes the same bearer-like confirmation ids.
+  if (pendingActionsDecision.allowed) {
+    server.registerResource(
+      'pending-actions',
+      PENDING_ACTIONS_URI,
+      {
+        title: 'Pending actions (live)',
+        description:
+          'Pending actions currently awaiting confirmation. Subscribable: a client can ' +
+          'subscribe via resources/subscribe and receive notifications/resources/updated ' +
+          'on every create/confirm/cancel/expire.',
+        mimeType: 'application/json',
+      },
+      async (uri): Promise<ReadResourceResult> => {
+        const items = ctx.pendingStore.list();
+        return jsonResource(uri.toString(), {
+          count: items.length,
+          confirmation_mode: ctx.config.confirmationMode,
+          confirmation_ttl_sec: ctx.config.confirmationTtlSec,
+          hard_confirmation: !!ctx.config.confirmationSecret,
+          pending: items.map((a) => ({
+            id: a.id,
+            tool: a.toolName,
+            risk: a.risk,
+            summary: a.summary,
+            created_at: new Date(a.createdAt).toISOString(),
+            expires_at: new Date(a.expiresAt).toISOString(),
+          })),
+        });
+      },
+    );
+  } else {
+    logger.info(
+      {
+        resource: PENDING_ACTIONS_URI,
+        tool: 'meta_list_pending_actions',
+        reason: pendingActionsDecision.reason,
+      },
+      'resource hidden by policy',
+    );
+  }
 
   // ─────────── avito://webhook/events ───────────
   // v0.9.0: subscribable, like pending-actions. Emits resources/updated on every
@@ -300,6 +314,7 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
   // it lightly: track a set of subscribers and, on a pending-actions change, notify only them.
   const subscribers = new Set<string>();
   server.server.setRequestHandler(SubscribeRequestSchema, async (req) => {
+    if (req.params.uri === PENDING_ACTIONS_URI && !pendingActionsDecision.allowed) return {};
     subscribers.add(req.params.uri);
     return {};
   });
