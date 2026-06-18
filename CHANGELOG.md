@@ -3,6 +3,31 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-06-18
+
+**Security sweep.** An automated audit ("Codex Cyber") surfaced seven medium-severity issues across the destructive-operation, credential, webhook and binary surfaces; each was fixed in its own PR, then independently re-reviewed (adversarial multi-agent pass) before merge. The re-review found one real regression in a fix and a minor leak, both corrected here. Minor bump (not patch) because two fixes change behaviour: arbitrary webhook URL overrides are removed, and `AVITO_MCP_CONFIRMATION_SECRET` now requires ≥32 characters. `tsc`, `eslint` and 212 tests pass; the manifest stays at 148 tools with unchanged `counts_by_risk`.
+
+### Security (fixed)
+
+- **Cached-token introspection bypass** — `AvitoClient` now asserts all three credentials (`Client_id` + `Client_secret` + `Profile_id`) *before* reading any token, so a token persisted on disk can no longer authenticate Avito calls when the server is started without full credentials. The v0.7.4 introspection-without-credentials feature is preserved (the guard only fires on authenticated requests; `tools/list` / resources / prompts still work creds-free). (`src/core/client.ts`)
+- **Idempotency double-spend race** — concurrent destructive calls sharing one `idempotencyKey` could each create an independently-confirmable pending action (double charge on `money`/`public` tools). A new atomic `IdempotencyStore.runExclusive` coalesces them, and a duplicate pre-confirmation call now returns the same `confirmation_id` instead of a second pending action. (`src/core/idempotency.ts`, `src/core/tool-factory.ts`)
+- **Webhook-redirect exfiltration** — `messenger_register_webhook` now registers **only** the operator-configured receiver URL; an arbitrary `url` override (which could redirect all incoming customer chat events to an attacker host) is rejected. (`src/domains/webhook.ts`) **Behaviour change:** the `url` parameter is accepted only when it equals the configured receiver URL.
+- **Pending-actions resource policy gap** — the `avito://state/pending-actions` MCP resource is now gated by the same allow/deny policy as the `meta_list_pending_actions` tool, so it cannot leak confirmation ids when that tool is denied. (`src/resources.ts`)
+- **Oversized binary responses without `Content-Length`** — binary bodies are now read as a stream with a running byte cap (`AVITO_MCP_MAX_BINARY_MB`), so a response that omits `Content-Length` can no longer blow past the limit; the declared-length pre-check is kept. (`src/core/client.ts`)
+- **Hard-confirmation hardening** — `meta_confirm_action` secret checks are tightened (constant-time compare; 5 wrong/missing attempts delete the pending action to blunt brute-forcing). `AVITO_MCP_CONFIRMATION_SECRET` must now be **≥32 characters** (the server refuses to start otherwise). (`src/domains/meta.ts`, `src/config.ts`) **Breaking:** a deployment using a shorter secret must lengthen it.
+- **Unconfirmed image uploads** — `messenger_upload_images` (a custom, non-`defineTool` handler) now also routes through the confirmation flow in `all_destructive` mode, closing a gap where it executed immediately. (`src/domains/messenger.ts`)
+
+### Fixed (review findings on the above)
+
+- **Stale-replay wedge** introduced by the idempotency change: a remembered `requires_confirmation` payload was never evicted when its pending action was cancelled or expired, so (because the pending TTL is shorter than the idempotency TTL) a retry with the same key replayed a dead `confirmation_id` for up to ~45 min. The ledger entry is now evicted on lookup when its pending action is gone, so the retry creates a fresh, confirmable pending action. Regression test added. (`src/core/idempotency.ts`, `src/core/tool-factory.ts`, `test/confirmation.test.ts`)
+- **Failed-attempt counter leak**: the per-id confirmation-attempt counter is now cleared on `meta_cancel_action` and on a confirm against a missing pending, so the lockout map cannot grow unbounded. (`src/domains/meta.ts`)
+- Dropped a now-misleading "or pass `url` explicitly" hint from the webhook reachability error, and made the `resourcesCount` startup log accurate when the pending-actions resource is hidden. (`src/domains/webhook.ts`, `src/resources.ts`)
+
+### Compatibility
+
+- No tools added/removed/renamed; manifest stays at 148 tools, `counts_by_risk` unchanged (read:80/write:46/money:9/public:10/sensitive:3).
+- **Two intentional behaviour changes:** (1) `messenger_register_webhook` no longer accepts an arbitrary `url` override (security); (2) `AVITO_MCP_CONFIRMATION_SECRET` must be ≥32 chars or the server won't start. The credential guard's `Profile_id` requirement matches the already-documented contract (every authenticated call already needed all three creds).
+
 ## [1.0.3] - 2026-06-18
 
 **Tool-definition polish on the lowest-scoring tools (Glama TDQS).** After v1.0.2 the server reached a 4.5/5 TDQS average (grade A); this release lifts the bottom tier — the tools that drag the score via the 40%-weighted minimum. Pure metadata: no tools added/removed/renamed, no schema or behaviour change; manifest stays at 148 and `counts_by_risk` is unchanged. `tsc`, `eslint` and 200 tests pass.

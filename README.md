@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![CI](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-200_passing-brightgreen)](./test)
+[![Tests](https://img.shields.io/badge/tests-212_passing-brightgreen)](./test)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **New in v1.0.0** — security-hardening pass over the remote MCP / OAuth / webhook surface (33 audited findings fixed) and a [stability commitment](#versioning--stability) for the public API. Full history in the [CHANGELOG](./CHANGELOG.md).
+> **New in v1.1.0** — a security sweep of 7 audit-found fixes: atomic idempotency (no double-spend race), credential-bypass closed, webhook-redirect exfiltration locked down, oversized-response streaming, hardened hard-confirmation, and confirmation-gated image uploads. Full history in the [CHANGELOG](./CHANGELOG.md).
 
 ---
 

@@ -117,7 +117,7 @@ Both calls go through the same MCP transport. There's no out-of-band proof that 
 To turn the confirmation flow into something closer to a real human gate, pair it with one of:
 
 - **An MCP client that requires per-tool-call user approval** (Claude Desktop and Cursor both do this for unfamiliar tools). The agent literally cannot dispatch `meta_confirm_action` without the user clicking allow.
-- **`AVITO_MCP_CONFIRMATION_SECRET`** (shipped in v0.5.0) — when set, `meta_confirm_action` requires the matching `confirmation_secret` argument. The agent never sees the secret; only the human can type it. This converts soft-confirmation into hard-confirmation. See `.env.example` for setup.
+- **`AVITO_MCP_CONFIRMATION_SECRET`** (shipped in v0.5.0; hardened in v1.1.0) — when set, `meta_confirm_action` requires the matching `confirmation_secret` argument, compared in constant time. The agent never sees the secret; only the human can type it. This converts soft-confirmation into hard-confirmation. As of v1.1.0 the secret **must be at least 32 characters** (the server refuses to start otherwise), and **5 wrong/missing attempts delete the pending action** to blunt brute-forcing. See `.env.example` for setup (`openssl rand -base64 32`).
 
 For the use cases this server is designed for (humans-in-the-loop using Claude Desktop / Cursor for Avito), the confirmation flow is the right layer.
 
