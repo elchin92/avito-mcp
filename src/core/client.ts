@@ -170,6 +170,7 @@ export class AvitoClient {
     };
 
     if (opts.auth !== false) {
+      this.assertCredentialsConfigured();
       const token = await this.tokenStore.getToken();
       headers.Authorization = `Bearer ${token}`;
     }
@@ -200,6 +201,12 @@ export class AvitoClient {
     throw new Error(`Unsupported bodyContentType: ${contentType}`);
   }
 
+  private assertCredentialsConfigured(): void {
+    if (!this.config.clientId || !this.config.clientSecret || this.config.profileId === undefined) {
+      throw new MissingCredentialsError();
+    }
+  }
+
   /**
    * OAuth 2.0 client_credentials. The same handler backs the POST /token endpoint.
    * Done without an auth token (we don't have one yet), directly via fetch.
@@ -208,12 +215,10 @@ export class AvitoClient {
     accessToken: string;
     expiresIn: number;
   }> {
-    // v0.7.4: lazy credential enforcement. tools/list works without creds; the first
-    // tool call that needs a token lands here. If creds are absent, fail with a clear
-    // CONFIG_ERROR instead of POSTing empty client_id/secret to Avito.
-    if (!this.config.clientId || !this.config.clientSecret) {
-      throw new MissingCredentialsError();
-    }
+    // Defense-in-depth: buildHeadersAndBody() already checks this before reading any
+    // cached token, but keep the guard here so direct token refreshes and future callers
+    // cannot POST partial credentials to Avito.
+    this.assertCredentialsConfigured();
     const url = `${this.config.baseUrl.replace(/\/+$/, '')}/token`;
     const params = new URLSearchParams({
       grant_type: 'client_credentials',
