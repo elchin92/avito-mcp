@@ -70,4 +70,33 @@ describe('idempotency', () => {
     expect(list[0]).toMatchObject({ key: 'k', toolName: 't' });
     expect((list[0] as unknown as { result?: unknown }).result).toBeUndefined();
   });
+
+  it('runExclusive coalesces concurrent calls with the same key and args', async () => {
+    const store = new IdempotencyStore(60_000);
+    const h = hashArgs({ a: 1 });
+    let executions = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const first = store.runExclusive('k', 't', h, async () => {
+      executions += 1;
+      await barrier;
+      return resultOf('done');
+    });
+    const second = store.runExclusive('k', 't', h, async () => {
+      executions += 1;
+      return resultOf('duplicate');
+    });
+
+    expect(executions).toBe(1);
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    expect(executions).toBe(1);
+    expect(a.replay).toBe(false);
+    expect(b.replay).toBe(true);
+    expect((a.entry.result.content[0] as { text: string }).text).toBe('done');
+    expect((b.entry.result.content[0] as { text: string }).text).toBe('done');
+  });
 });

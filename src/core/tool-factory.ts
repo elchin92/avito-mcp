@@ -272,7 +272,7 @@ export function defineTool<I extends ZodRawShape>(
     // we check (toolName, key, hash(args)).
     //   - hit + matching args → return the cache marked idempotent_replay=true
     //   - hit + different args → return a structured error (conflict)
-    //   - miss → execute, then remember
+    //   - miss → reserve atomically before executing/creating a pending action
     const idempotencyKey =
       destructive && typeof args.idempotencyKey === 'string' && args.idempotencyKey.length > 0
         ? args.idempotencyKey
@@ -311,7 +311,7 @@ export function defineTool<I extends ZodRawShape>(
           return r;
         },
       });
-      return {
+      const pendingResult: CallToolResult = {
         content: [
           {
             type: 'text',
@@ -341,13 +341,29 @@ export function defineTool<I extends ZodRawShape>(
           expires_at: new Date(pending.expiresAt).toISOString(),
         },
       };
+      if (idempotencyKey && ctx.idempotencyStore && argsHash) {
+        ctx.idempotencyStore.remember(idempotencyKey, spec.name, argsHash, pendingResult);
+      }
+      return pendingResult;
     }
 
-    const result = await execute(cleanArgs);
     if (idempotencyKey && ctx.idempotencyStore && argsHash) {
-      ctx.idempotencyStore.remember(idempotencyKey, spec.name, argsHash, result);
+      try {
+        const { entry, replay } = await ctx.idempotencyStore.runExclusive(
+          idempotencyKey,
+          spec.name,
+          argsHash,
+          () => execute(cleanArgs),
+        );
+        return replay ? annotateReplay(entry.result) : entry.result;
+      } catch (err) {
+        if (err instanceof IdempotencyConflictError) {
+          return errorToMcpContent(err);
+        }
+        throw err;
+      }
     }
-    return result;
+    return execute(cleanArgs);
   };
 
   // The SDK types the callback via an internal BaseToolCallback with its own inferred CallToolResult,
