@@ -37,8 +37,9 @@ export const register: DomainRegister = (server, ctx) => {
     name: 'autoload_create_or_update_profile',
     title: 'Autoload: save profile (v1, deprecated)',
     risk: 'write',
+    destructiveHint: true,
     description:
-      'Creates or updates (upsert) a v1 autoload profile with a single URL feed. Changes settings on the Avito side; ' +
+      'Creates or updates (upsert) a v1 autoload profile with a single URL feed. Overwrites the existing profile settings on the Avito side; ' +
       'if no profile exists, it creates one. DEPRECATED: since 2024-12-23 the single upload_url has been replaced by the feeds_data array — ' +
       'use autoload_create_or_update_profile_v2 (supports multiple feeds). Prefer v2.',
     method: 'POST',
@@ -70,6 +71,7 @@ export const register: DomainRegister = (server, ctx) => {
     name: 'autoload_upload',
     title: '⚠️ Autoload: launch upload',
     risk: 'write',
+    destructiveHint: true,
     description:
       '⚠️ Immediately LAUNCHES an unscheduled upload of listings from the feed at the URL specified in the profile settings (autoload_create_or_update_profile_v2). ' +
       'Side effect: publishes/updates/activates listings on Avito; the publication limits from the settings do NOT apply to this upload — all listings from the file will be processed. ' +
@@ -172,8 +174,9 @@ export const register: DomainRegister = (server, ctx) => {
     name: 'autoload_create_or_update_profile_v2',
     title: 'Autoload: save profile',
     risk: 'write',
+    destructiveHint: true,
     description:
-      'Creates or updates (upsert) an autoload profile (v2, current version). Changes settings on the Avito side; if no profile exists, it creates one. ' +
+      'Creates or updates (upsert) an autoload profile (v2, current version). Overwrites the existing profile settings on the Avito side; if no profile exists, it creates one. ' +
       'Supports multiple feeds via feeds_data (unlike v1 with a single upload_url) — prefer this method. ' +
       'The uploads themselves run on the schedule, or manually via autoload_upload.',
     method: 'POST',

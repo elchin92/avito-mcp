@@ -474,7 +474,7 @@ export const register: DomainRegister = (server, ctx) => {
       },
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: true,
         openWorldHint: false,
       },

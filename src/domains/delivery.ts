@@ -144,7 +144,7 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Delivery: push announcement tracking event [sandbox]',
     risk: 'write',
     description:
-      'WRITE (records state on Avito). [SANDBOX] Pushes one tracking event for an announcement from the delivery service — ' +
+      '[SANDBOX] Appends one tracking event for an announcement from the delivery service; does not modify existing history — ' +
       'use it to simulate an announcement progressing (ACCEPTANCE_DONE → RECEIVED → DELIVERED, or CANCELLED). One call records one ' +
       'event (not idempotent — re-sending logs a duplicate). Returns an empty 200 on success. For delivery-service PARTNERS only. ' +
       'This is the announcement-level analogue of delivery_tracking (which reports parcel-level status events).',
@@ -167,6 +167,7 @@ export const register: DomainRegister = (server, ctx) => {
     name: 'delivery_custom_area_schedule',
     title: 'Delivery: zone schedule [sandbox]',
     risk: 'write',
+    destructiveHint: true,
     description:
       '[SANDBOX] Sets the working schedule of a delivery zone for a specific day that differs from the regular schedule ' +
       '(for example, holidays/weekends). Re-uploading overwrites the previous schedule for those dates. ' +
@@ -227,8 +228,9 @@ export const register: DomainRegister = (server, ctx) => {
     name: 'delivery_set_order_properties',
     title: 'Delivery: set parcel properties [sandbox]',
     risk: 'write',
+    destructiveHint: true,
     description:
-      'WRITE (overwrites state on Avito). [SANDBOX] Sets a parcel\'s delivery parameters on Avito — e.g. the final delivery cost. ' +
+      '[SANDBOX] Sets a parcel\'s delivery parameters on Avito — e.g. the final delivery cost. ' +
       'Idempotent by overwrite: each call REPLACES the previous values, so always send the complete current set, not a delta. ' +
       'Returns an empty 200 on success. For delivery-service PARTNERS only (not regular sellers). ' +
       'Sibling tools: delivery_set_order_real_address sets the pickup address, delivery_tracking pushes a status event — ' +
@@ -265,7 +267,7 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Delivery: push tracking event [sandbox]',
     risk: 'write',
     description:
-      'WRITE (records state on Avito). [SANDBOX] Pushes one parcel tracking event to Avito on behalf of the delivery service — ' +
+      '[SANDBOX] Appends one parcel tracking event to Avito on behalf of the delivery service; does not modify existing history — ' +
       'a single status transition (e.g. RECEIVED_AT_TRANSIT_TERMINAL → IN_TRANSIT). Use this to report movement as it happens; ' +
       'one call records one event, and events accumulate into the parcel history (not idempotent — re-sending logs a duplicate). ' +
       'Returns an empty 200 on success; a 4xx means the order/status pair was rejected. Comply with Avito\'s retry policy on 5xx. ' +
@@ -396,8 +398,9 @@ export const register: DomainRegister = (server, ctx) => {
     name: 'delivery_add_terminals_sandbox',
     title: 'Delivery: upload pickup points [sandbox]',
     risk: 'write',
+    destructiveHint: true,
     description:
-      'WRITE (replaces the tariff\'s terminal set). [SANDBOX] Uploads terminals (pickup points / parcel lockers) for one tariff. ' +
+      'Replaces the tariff\'s terminal set. [SANDBOX] Uploads terminals (pickup points / parcel lockers) for one tariff. ' +
       'Auto-approves on accept (200); when a high share of the changes are critical the upload is queued for manual review instead. ' +
       'For delivery-service PARTNERS only. The request body is the terminals array directly (the tool wraps it for you).',
     method: 'POST',
@@ -440,8 +443,9 @@ export const register: DomainRegister = (server, ctx) => {
     name: 'delivery_add_tariff_sandbox_v2',
     title: 'Delivery: upload tariff [sandbox]',
     risk: 'write',
+    destructiveHint: true,
     description:
-      'WRITE (creates/replaces a tariff). [SANDBOX v2] Uploads a tariff so the delivery service controls direction availability, ' +
+      'Creates or replaces a tariff. [SANDBOX v2] Uploads a tariff so the delivery service controls direction availability, ' +
       'delivery cost and terms. Returns 200 on accept. Limits: body up to 400MB, up to 1 million directions. For delivery-service ' +
       'PARTNERS only. Prefer this v2 over any v1 tariff endpoint. Pair with delivery_update_terms (term zones) and ' +
       'delivery_add_terminals_sandbox (pickup points) to complete the tariff.',

@@ -3,6 +3,25 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-06-18
+
+**Tool-definition consistency pass (annotation ↔ description).** A Glama [TDQS](https://glama.ai/blog/2026-04-03-tool-definition-quality-score-tdqs) re-score flagged that several tools' descriptions used destructive wording ("replaces the tariff's terminal set", "overwrites…") while their `destructiveHint` MCP annotation was `false` — a contradiction the scorer penalizes with 1/5 on the side-effects dimension. Ironically the v1.0.1 wording pass introduced some of these by prefixing delivery tools with `WRITE (replaces…)`. This release makes every tool's description and its `destructiveHint` hint tell the same story. Pure metadata: no tools added/removed/renamed, no schema or behaviour change; the manifest stays at 148 tools and `counts_by_risk` is unchanged. `tsc`, `eslint` and 200 tests pass.
+
+### Fixed
+
+- **`destructiveHint` now matches the described effect on every tool.** A sweep across all 18 domains aligned the annotation with the wording:
+  - Tools that genuinely **replace/overwrite existing state** now declare `destructiveHint: true`: `delivery_add_terminals_sandbox` (the tool Glama scored 1/5 — "replaces the tariff's terminal set"), `delivery_set_order_properties`, `delivery_add_tariff_sandbox_v2`, `delivery_custom_area_schedule`, `autoload_create_or_update_profile`, `autoload_create_or_update_profile_v2` (upsert overwrites profile settings), `autoload_upload` (re-publishes/updates live listings), and `meta_cancel_action`.
+  - Tools that only **append/record an event** keep `destructiveHint: false` and no longer use destructive-sounding wording: `delivery_tracking` and `delivery_sandbox_track_announcement` had their `WRITE (records state…)` prefix removed and now read "Appends one event; does not modify existing history"; `messenger_chat_read` reworded to make its additive, non-message-mutating nature explicit.
+- **`messenger_register_webhook` kept consistent with its sibling.** It subscribes the same `/messenger/v3/webhook` endpoint as `messenger_post_webhook_v3` (an additive subscription), so it stays `destructiveHint: false` with additive wording, rather than being mislabeled as a destructive "replace".
+
+### Changed
+
+- Removed the awkward `WRITE (…)` pseudo-prefixes added in v1.0.1; descriptions now lead with a plain accurate verb (Glama also scores conciseness).
+
+### Compatibility
+
+- No tools added/removed/renamed; no env vars or schemas changed. `destructiveHint` is a client-facing MCP hint only — it does not affect the confirmation flow (driven solely by `risk`), so runtime behaviour is identical to v1.0.1. Safe to upgrade with no config changes.
+
 ## [1.0.1] - 2026-06-10
 
 **Risk-classification fix + tool-definition polish.** A Glama [TDQS](https://glama.ai/blog/2026-04-03-tool-definition-quality-score-tdqs) re-score surfaced one tool whose annotations contradicted its description; an audit of every `risk: 'read'` tool across all 17 domains found a second instance of the same bug, and both are fixed here. No tools added/removed/renamed; the manifest stays at 148. `tsc`, `eslint` and 200 tests pass.

@@ -242,9 +242,11 @@ export const register: DomainRegister = (server, ctx) => {
     description:
       'Subscribes Avito to THIS server\'s configured webhook receiver URL so messenger events (new chat messages) start flowing. ' +
       'By default it registers the URL derived from the webhook config (AVITO_MCP_WEBHOOK_PUBLIC_URL + path + secret); ' +
-      'pass `url` to override. Changes account settings — Avito will POST events to the URL (requires a PUBLIC HTTPS address ' +
-      'reachable from the internet; localhost does not work). Pairs with messenger_get_webhook_events (read received events) ' +
-      'and messenger_get_webhook_status (receiver config). To unsubscribe, use messenger_post_webhook_unsubscribe.',
+      'pass `url` to override. Adds a webhook subscription (additive — it does not delete other subscriptions); Avito will then ' +
+      'POST events to the URL (requires a PUBLIC HTTPS address reachable from the internet; localhost does not work). ' +
+      'Same operation as messenger_post_webhook_v3, but auto-fills the URL from config. ' +
+      'Pairs with messenger_get_webhook_events (read received events) and messenger_get_webhook_status (receiver config). ' +
+      'To unsubscribe, use messenger_post_webhook_unsubscribe.',
     method: 'POST',
     path: '/messenger/v3/webhook',
     domain: 'messenger',

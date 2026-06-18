@@ -220,8 +220,8 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Mark chat as read',
     risk: 'write',
     description:
-      'Marks ALL unread messages of the specified chat as read and resets the unread counter. ' +
-      'Changes state on the Avito side, but sends NOTHING to the other party and is not visible to them. The "unread" status cannot be restored. ' +
+      'Marks the unread messages of the specified chat as read, recording a read receipt and clearing the unread counter. ' +
+      'Sends NOTHING to the other party and is not visible to them; does not modify or delete any message. ' +
       'Idempotent: calling it again on an already-read chat is safe. Requires chat_id (from messenger_get_chats_v2).',
     method: 'POST',
     path: '/messenger/v1/accounts/{user_id}/chats/{chat_id}/read',
