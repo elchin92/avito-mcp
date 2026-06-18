@@ -269,9 +269,11 @@ describe('confirmation flow', () => {
     });
     const id = extractConfirmationId(parseText(first.content));
     // Manually expire by reaching into the store (faster than real wait)
-    const action = (rig.pendingStore as unknown as {
-      actions: Map<string, { expiresAt: number }>;
-    }).actions.get(id)!;
+    const action = (
+      rig.pendingStore as unknown as {
+        actions: Map<string, { expiresAt: number }>;
+      }
+    ).actions.get(id)!;
     action.expiresAt = Date.now() - 1;
     const r = await rig.client.callTool({
       name: 'meta_confirm_action',
@@ -333,7 +335,9 @@ describe('hard-confirmation (AVITO_MCP_CONFIRMATION_SECRET)', () => {
   });
 
   it('confirm without secret is rejected and pending NOT deleted', async () => {
-    const rig = await makeRig('money_public', 900, { confirmationSecret: 'topsecret123' });
+    const rig = await makeRig('money_public', 900, {
+      confirmationSecret: 'topsecret123456789012345678901234',
+    });
     cfg = rig.cfg;
     const first = await rig.client.callTool({
       name: 'money_tool',
@@ -347,14 +351,16 @@ describe('hard-confirmation (AVITO_MCP_CONFIRMATION_SECRET)', () => {
       arguments: { confirmation_id: id },
     });
     expect(noSecret.isError).toBe(true);
-    expect(parseText(noSecret.content)).toMatch(/AVITO_MCP_CONFIRMATION_SECRET/);
+    expect(parseText(noSecret.content)).toMatch(/Bad or missing confirmation_secret/);
     // Pending action should still exist — bad secret doesn't burn it (allows retry).
     expect(rig.pendingStore.size()).toBe(1);
     await rig.client.close();
   });
 
   it('confirm with wrong secret is rejected, pending NOT deleted', async () => {
-    const rig = await makeRig('money_public', 900, { confirmationSecret: 'real-secret' });
+    const rig = await makeRig('money_public', 900, {
+      confirmationSecret: 'real-secret-123456789012345678901',
+    });
     cfg = rig.cfg;
     const first = await rig.client.callTool({
       name: 'money_tool',
@@ -371,7 +377,9 @@ describe('hard-confirmation (AVITO_MCP_CONFIRMATION_SECRET)', () => {
   });
 
   it('confirm with correct secret executes and burns pending', async () => {
-    const rig = await makeRig('money_public', 900, { confirmationSecret: 'a-strong-secret' });
+    const rig = await makeRig('money_public', 900, {
+      confirmationSecret: 'a-strong-secret-123456789012345678',
+    });
     cfg = rig.cfg;
     const first = await rig.client.callTool({
       name: 'money_tool',
@@ -381,7 +389,7 @@ describe('hard-confirmation (AVITO_MCP_CONFIRMATION_SECRET)', () => {
     const fetchBefore = rig.fetchMock.mock.calls.length;
     const r = await rig.client.callTool({
       name: 'meta_confirm_action',
-      arguments: { confirmation_id: id, confirmation_secret: 'a-strong-secret' },
+      arguments: { confirmation_id: id, confirmation_secret: 'a-strong-secret-123456789012345678' },
     });
     expect(r.isError).not.toBe(true);
     expect(rig.fetchMock.mock.calls.length).toBeGreaterThan(fetchBefore);
@@ -389,8 +397,61 @@ describe('hard-confirmation (AVITO_MCP_CONFIRMATION_SECRET)', () => {
     await rig.client.close();
   });
 
+  it('checks pending id before secret to avoid a global secret oracle', async () => {
+    const rig = await makeRig('money_public', 900, {
+      confirmationSecret: 'oracle-secret-123456789012345678',
+    });
+    cfg = rig.cfg;
+    const wrong = await rig.client.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: '0000000000000000', confirmation_secret: 'wrong-guess' },
+    });
+    const correct = await rig.client.callTool({
+      name: 'meta_confirm_action',
+      arguments: {
+        confirmation_id: '0000000000000000',
+        confirmation_secret: 'oracle-secret-123456789012345678',
+      },
+    });
+    expect(wrong.isError).toBe(true);
+    expect(correct.isError).toBe(true);
+    expect(parseText(wrong.content)).toEqual(parseText(correct.content));
+    expect(parseText(wrong.content)).toMatch(/not found/);
+    await rig.client.close();
+  });
+
+  it('deletes a pending action after too many bad secret attempts', async () => {
+    const rig = await makeRig('money_public', 900, {
+      confirmationSecret: 'lockout-secret-12345678901234567',
+    });
+    cfg = rig.cfg;
+    const first = await rig.client.callTool({
+      name: 'money_tool',
+      arguments: { item_id: 1, vas_id: 'x' },
+    });
+    const id = extractConfirmationId(parseText(first.content));
+    for (let i = 0; i < 4; i++) {
+      const r = await rig.client.callTool({
+        name: 'meta_confirm_action',
+        arguments: { confirmation_id: id, confirmation_secret: `wrong-${i}` },
+      });
+      expect(r.isError).toBe(true);
+      expect(rig.pendingStore.size()).toBe(1);
+    }
+    const locked = await rig.client.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: id, confirmation_secret: 'wrong-4' },
+    });
+    expect(locked.isError).toBe(true);
+    expect(parseText(locked.content)).toMatch(/Too many/);
+    expect(rig.pendingStore.size()).toBe(0);
+    await rig.client.close();
+  });
+
   it('rejects length-mismatch without timing leak (different-length secret)', async () => {
-    const rig = await makeRig('money_public', 900, { confirmationSecret: 'same-length-12' });
+    const rig = await makeRig('money_public', 900, {
+      confirmationSecret: 'same-length-secret-123456789012345',
+    });
     cfg = rig.cfg;
     const first = await rig.client.callTool({
       name: 'money_tool',
@@ -400,7 +461,7 @@ describe('hard-confirmation (AVITO_MCP_CONFIRMATION_SECRET)', () => {
     // Same length, different content
     const sameLen = await rig.client.callTool({
       name: 'meta_confirm_action',
-      arguments: { confirmation_id: id, confirmation_secret: 'WRONG-LEN12_X'.slice(0, 14) },
+      arguments: { confirmation_id: id, confirmation_secret: 'WRONG-length-secret-1234567890123' },
     });
     expect(sameLen.isError).toBe(true);
     // Different length

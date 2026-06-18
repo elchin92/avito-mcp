@@ -60,9 +60,7 @@ export const register: DomainRegister = (server, ctx) => {
         const snaps = ctx.client.rateLimiter.getStatus();
         if (snaps.length === 0) {
           return {
-            content: [
-              { type: 'text', text: 'No data: no requests to Avito have been made yet.' },
-            ],
+            content: [{ type: 'text', text: 'No data: no requests to Avito have been made yet.' }],
             structuredContent: { snapshots: [], count: 0 },
           };
         }
@@ -347,109 +345,124 @@ export const register: DomainRegister = (server, ctx) => {
   // ───────────────── meta_confirm_action ─────────────────
 
   const requireSecret = !!ctx.config.confirmationSecret;
-  if (confirmDecision.allowed) server.registerTool(
-    'meta_confirm_action',
-    {
-      title: '✓ Confirm a pending action',
-      description:
-        '⚠️ Executes a previously deferred action by its confirmation_id. ' +
-        'Use ONLY after explicit human confirmation — the flow is designed as a server-side ' +
-        'two-step guard against accidental one-shot execution, not as cryptographic protection ' +
-        'against an autonomous agent. Confirmation is single-use: the id is deleted after a successful call. ' +
-        (requireSecret
-          ? 'AVITO_MCP_CONFIRMATION_SECRET is set: a confirmation_secret parameter is additionally required ' +
-            '(compared constant-time). Without it the confirmation is rejected. This is hard-confirmation ' +
-            '— the secret is generated and kept by a human, and the agent cannot obtain it.'
-          : 'AVITO_MCP_CONFIRMATION_SECRET is not set — soft-confirmation is in effect. ' +
-            'Set the env variable to switch to hard-confirmation.'),
-      inputSchema: {
-        confirmation_id: z
-          .string()
-          .min(16)
-          .describe('ID of the pending action (returned in the confirmation_id field on the first tool call).'),
-        confirmation_secret: z
-          .string()
-          .optional()
-          .describe(
-            requireSecret
-              ? 'The required AVITO_MCP_CONFIRMATION_SECRET value (entered by a human).'
-              : 'Not used when AVITO_MCP_CONFIRMATION_SECRET is not set.',
-          ),
+  const failedConfirmationAttempts = new Map<string, number>();
+  const maxFailedConfirmationAttempts = 5;
+  if (confirmDecision.allowed)
+    server.registerTool(
+      'meta_confirm_action',
+      {
+        title: '✓ Confirm a pending action',
+        description:
+          '⚠️ Executes a previously deferred action by its confirmation_id. ' +
+          'Use ONLY after explicit human confirmation — the flow is designed as a server-side ' +
+          'two-step guard against accidental one-shot execution, not as cryptographic protection ' +
+          'against an autonomous agent. Confirmation is single-use: the id is deleted after a successful call. ' +
+          (requireSecret
+            ? 'AVITO_MCP_CONFIRMATION_SECRET is set: a confirmation_secret parameter is additionally required ' +
+              '(compared constant-time). Without it the confirmation is rejected. This is hard-confirmation ' +
+              '— the secret is generated and kept by a human, and the agent cannot obtain it.'
+            : 'AVITO_MCP_CONFIRMATION_SECRET is not set — soft-confirmation is in effect. ' +
+              'Set the env variable to switch to hard-confirmation.'),
+        inputSchema: {
+          confirmation_id: z
+            .string()
+            .min(16)
+            .describe(
+              'ID of the pending action (returned in the confirmation_id field on the first tool call).',
+            ),
+          confirmation_secret: z
+            .string()
+            .optional()
+            .describe(
+              requireSecret
+                ? 'The required AVITO_MCP_CONFIRMATION_SECRET value (entered by a human).'
+                : 'Not used when AVITO_MCP_CONFIRMATION_SECRET is not set.',
+            ),
+        },
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
+        _meta: { risk: 'write', environment: 'local' },
       },
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-      _meta: { risk: 'write', environment: 'local' },
-    },
-    async (args): Promise<CallToolResult> => {
-      const id = String(args.confirmation_id ?? '');
+      async (args): Promise<CallToolResult> => {
+        const id = String(args.confirmation_id ?? '');
 
-      // Hard-confirmation: verify the secret BEFORE any other action.
-      if (requireSecret) {
-        const provided = typeof args.confirmation_secret === 'string' ? args.confirmation_secret : '';
-        if (!provided || !secretsMatch(provided, ctx.config.confirmationSecret!)) {
-          logger.warn(
-            { confirmation_id: id, hasSecret: !!provided },
-            'confirmation rejected: bad or missing confirmation_secret',
-          );
+        const pending = ctx.pendingStore.get(id);
+        if (!pending) {
           return {
             isError: true,
             content: [
               {
                 type: 'text',
-                text:
-                  'Bad or missing confirmation_secret. AVITO_MCP_CONFIRMATION_SECRET is configured — ' +
-                  'every confirmation requires the human-typed secret. Pending action is NOT deleted by this rejection; ' +
-                  'retry with the correct secret before the TTL expires, or call meta_cancel_action to discard it.',
+                text: `Confirmation '${id}' not found. Possible causes: invalid id, expired TTL (${ctx.config.confirmationTtlSec}s), or already confirmed or cancelled.`,
               },
             ],
           };
         }
-      }
 
-      const pending = ctx.pendingStore.get(id);
-      if (!pending) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text',
-              text: `Confirmation '${id}' not found. Possible causes: invalid id, expired TTL (${ctx.config.confirmationTtlSec}s), or already confirmed or cancelled.`,
-            },
-          ],
-        };
-      }
-      // Re-evaluate policy — the user may have changed the config between create and confirm.
-      const decision = evaluatePolicy(pending.toolName, pending.risk, ctx.config);
-      if (!decision.allowed) {
+        // Hard-confirmation: only check the reusable secret after a valid pending id
+        // exists. This avoids turning arbitrary/nonexistent confirmation_id values
+        // into an oracle for testing global secret guesses.
+        if (requireSecret) {
+          const provided =
+            typeof args.confirmation_secret === 'string' ? args.confirmation_secret : '';
+          if (!provided || !secretsMatch(provided, ctx.config.confirmationSecret!)) {
+            const failedAttempts = (failedConfirmationAttempts.get(id) ?? 0) + 1;
+            failedConfirmationAttempts.set(id, failedAttempts);
+            const locked = failedAttempts >= maxFailedConfirmationAttempts;
+            if (locked) {
+              ctx.pendingStore.delete(id);
+              failedConfirmationAttempts.delete(id);
+            }
+            logger.warn(
+              { confirmation_id: id, hasSecret: !!provided, failedAttempts, locked },
+              'confirmation rejected: bad or missing confirmation_secret',
+            );
+            return {
+              isError: true,
+              content: [
+                {
+                  type: 'text',
+                  text: locked
+                    ? 'Confirmation rejected. Too many bad or missing confirmation_secret attempts; pending action deleted.'
+                    : 'Confirmation rejected. Bad or missing confirmation_secret. Pending action is NOT deleted by this rejection; retry with the correct secret before the TTL expires, or call meta_cancel_action to discard it.',
+                },
+              ],
+            };
+          }
+          failedConfirmationAttempts.delete(id);
+        }
+        // Re-evaluate policy — the user may have changed the config between create and confirm.
+        const decision = evaluatePolicy(pending.toolName, pending.risk, ctx.config);
+        if (!decision.allowed) {
+          ctx.pendingStore.delete(id);
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: `Tool '${pending.toolName}' is no longer allowed by policy: ${decision.reason}. Pending action deleted.`,
+              },
+            ],
+          };
+        }
+        // One-time use: delete BEFORE executing, so a repeated confirm cannot succeed even on a race.
         ctx.pendingStore.delete(id);
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text',
-              text: `Tool '${pending.toolName}' is no longer allowed by policy: ${decision.reason}. Pending action deleted.`,
-            },
-          ],
-        };
-      }
-      // One-time use: delete BEFORE executing, so a repeated confirm cannot succeed even on a race.
-      ctx.pendingStore.delete(id);
-      logger.info(
-        {
-          tool: pending.toolName,
-          risk: pending.risk,
-          confirmation_id: id,
-          hardConfirmation: requireSecret,
-        },
-        'pending action confirmed and executing',
-      );
-      return pending.execute();
-    },
-  );
+        logger.info(
+          {
+            tool: pending.toolName,
+            risk: pending.risk,
+            confirmation_id: id,
+            hardConfirmation: requireSecret,
+          },
+          'pending action confirmed and executing',
+        );
+        return pending.execute();
+      },
+    );
 
   if (!confirmDecision.allowed) {
     logger.info(
@@ -460,42 +473,40 @@ export const register: DomainRegister = (server, ctx) => {
 
   // ───────────────── meta_cancel_action ─────────────────
 
-  if (cancelDecision.allowed) server.registerTool(
-    'meta_cancel_action',
-    {
-      title: '✗ Cancel a pending action',
-      description:
-        'Cancels a previously deferred action. After cancellation the confirmation_id is no longer valid.',
-      inputSchema: {
-        confirmation_id: z
-          .string()
-          .min(16)
-          .describe('ID of the pending action to cancel.'),
+  if (cancelDecision.allowed)
+    server.registerTool(
+      'meta_cancel_action',
+      {
+        title: '✗ Cancel a pending action',
+        description:
+          'Cancels a previously deferred action. After cancellation the confirmation_id is no longer valid.',
+        inputSchema: {
+          confirmation_id: z.string().min(16).describe('ID of the pending action to cancel.'),
+        },
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        _meta: { risk: 'write', environment: 'local' },
       },
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false,
+      async (args): Promise<CallToolResult> => {
+        const id = String(args.confirmation_id ?? '');
+        const existed = ctx.pendingStore.delete(id);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: existed
+                ? `Pending action '${id}' cancelled.`
+                : `Pending action '${id}' not found (it may have already expired, been confirmed, or been cancelled).`,
+            },
+          ],
+          structuredContent: { confirmation_id: id, cancelled: existed },
+        };
       },
-      _meta: { risk: 'write', environment: 'local' },
-    },
-    async (args): Promise<CallToolResult> => {
-      const id = String(args.confirmation_id ?? '');
-      const existed = ctx.pendingStore.delete(id);
-      return {
-        content: [
-          {
-            type: 'text',
-            text: existed
-              ? `Pending action '${id}' cancelled.`
-              : `Pending action '${id}' not found (it may have already expired, been confirmed, or been cancelled).`,
-          },
-        ],
-        structuredContent: { confirmation_id: id, cancelled: existed },
-      };
-    },
-  );
+    );
 
   if (!cancelDecision.allowed) {
     logger.info(
@@ -506,62 +517,67 @@ export const register: DomainRegister = (server, ctx) => {
 
   // ───────────────── meta_list_pending_actions ─────────────────
 
-  if (listDecision.allowed) server.registerTool(
-    'meta_list_pending_actions',
-    {
-      title: 'Pending actions: list',
-      description:
-        'Lists the current pending actions awaiting confirmation. Args are not shown — ' +
-        'only tool name, risk, a brief summary, and the creation and expiration times. ' +
-        'Use it to diagnose "what did I just ask to confirm".',
-      inputSchema: {},
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-      _meta: { risk: 'read', environment: 'local' },
-    },
-    async (): Promise<CallToolResult> => {
-      const items = ctx.pendingStore.list();
-      if (items.length === 0) {
-        return {
-          content: [{ type: 'text', text: 'No pending actions.' }],
-          structuredContent: { pending: [], count: 0, confirmation_mode: ctx.config.confirmationMode },
-        };
-      }
-      const view = items.map((a) => ({
-        id: a.id,
-        tool: a.toolName,
-        risk: a.risk,
-        summary: a.summary,
-        created_at: new Date(a.createdAt).toISOString(),
-        expires_at: new Date(a.expiresAt).toISOString(),
-        // Not: args, because they may contain item_id, message_id, prices, etc. in an undesirable amount
-        // Not: execute, because it is a closure
-      }));
-      const requiresHint =
-        `\n\nConfirmation mode = ${ctx.config.confirmationMode}. ` +
-        `Require confirmation in this mode: ` +
-        (requiresConfirmation('money', ctx.config) ? 'money ' : '') +
-        (requiresConfirmation('public', ctx.config) ? 'public ' : '') +
-        (requiresConfirmation('write', ctx.config) ? 'write ' : '');
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(view, null, 2) + requiresHint,
-          },
-        ],
-        structuredContent: {
-          pending: view,
-          count: view.length,
-          confirmation_mode: ctx.config.confirmationMode,
+  if (listDecision.allowed)
+    server.registerTool(
+      'meta_list_pending_actions',
+      {
+        title: 'Pending actions: list',
+        description:
+          'Lists the current pending actions awaiting confirmation. Args are not shown — ' +
+          'only tool name, risk, a brief summary, and the creation and expiration times. ' +
+          'Use it to diagnose "what did I just ask to confirm".',
+        inputSchema: {},
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
         },
-      };
-    },
-  );
+        _meta: { risk: 'read', environment: 'local' },
+      },
+      async (): Promise<CallToolResult> => {
+        const items = ctx.pendingStore.list();
+        if (items.length === 0) {
+          return {
+            content: [{ type: 'text', text: 'No pending actions.' }],
+            structuredContent: {
+              pending: [],
+              count: 0,
+              confirmation_mode: ctx.config.confirmationMode,
+            },
+          };
+        }
+        const view = items.map((a) => ({
+          id: a.id,
+          tool: a.toolName,
+          risk: a.risk,
+          summary: a.summary,
+          created_at: new Date(a.createdAt).toISOString(),
+          expires_at: new Date(a.expiresAt).toISOString(),
+          // Not: args, because they may contain item_id, message_id, prices, etc. in an undesirable amount
+          // Not: execute, because it is a closure
+        }));
+        const requiresHint =
+          `\n\nConfirmation mode = ${ctx.config.confirmationMode}. ` +
+          `Require confirmation in this mode: ` +
+          (requiresConfirmation('money', ctx.config) ? 'money ' : '') +
+          (requiresConfirmation('public', ctx.config) ? 'public ' : '') +
+          (requiresConfirmation('write', ctx.config) ? 'write ' : '');
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(view, null, 2) + requiresHint,
+            },
+          ],
+          structuredContent: {
+            pending: view,
+            count: view.length,
+            confirmation_mode: ctx.config.confirmationMode,
+          },
+        };
+      },
+    );
   if (!listDecision.allowed) {
     logger.info(
       { tool: 'meta_list_pending_actions', risk: 'read', reason: listDecision.reason },
