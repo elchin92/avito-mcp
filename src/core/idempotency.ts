@@ -27,6 +27,12 @@ export interface IdempotencyEntry {
   result: CallToolResult;
 }
 
+interface IdempotencyReservation {
+  argsHash: string;
+  expiresAt: number;
+  promise: Promise<IdempotencyEntry>;
+}
+
 export class IdempotencyConflictError extends Error {
   constructor(key: string, toolName: string) {
     super(
@@ -39,6 +45,7 @@ export class IdempotencyConflictError extends Error {
 
 export class IdempotencyStore {
   private entries = new Map<string, IdempotencyEntry>();
+  private reservations = new Map<string, IdempotencyReservation>();
 
   constructor(private readonly ttlMs: number) {}
 
@@ -77,7 +84,52 @@ export class IdempotencyStore {
       result,
     };
     this.entries.set(this.composeKey(toolName, key), entry);
+    this.reservations.delete(this.composeKey(toolName, key));
     return entry;
+  }
+
+  /**
+   * Atomically runs the operation for a new (toolName, key), or waits for the
+   * already in-flight operation with the same args. This closes the lookup →
+   * execute → remember race for concurrent destructive calls in one process.
+   */
+  async runExclusive(
+    key: string,
+    toolName: string,
+    argsHash: string,
+    execute: () => Promise<CallToolResult>,
+  ): Promise<{ entry: IdempotencyEntry; replay: boolean }> {
+    const composed = this.composeKey(toolName, key);
+    this.cleanupExpired();
+
+    const cached = this.entries.get(composed);
+    if (cached) {
+      if (cached.argsHash !== argsHash) throw new IdempotencyConflictError(key, toolName);
+      return { entry: cached, replay: true };
+    }
+
+    const existing = this.reservations.get(composed);
+    if (existing) {
+      if (existing.argsHash !== argsHash) throw new IdempotencyConflictError(key, toolName);
+      return { entry: await existing.promise, replay: true };
+    }
+
+    const now = Date.now();
+    const promise = (async () => {
+      try {
+        const result = await execute();
+        return this.remember(key, toolName, argsHash, result);
+      } catch (err) {
+        this.reservations.delete(composed);
+        throw err;
+      }
+    })();
+    this.reservations.set(composed, {
+      argsHash,
+      expiresAt: now + this.ttlMs,
+      promise,
+    });
+    return { entry: await promise, replay: false };
   }
 
   size(): number {
@@ -99,6 +151,9 @@ export class IdempotencyStore {
     const now = Date.now();
     for (const [k, e] of this.entries) {
       if (e.expiresAt < now) this.entries.delete(k);
+    }
+    for (const [k, r] of this.reservations) {
+      if (r.expiresAt < now) this.reservations.delete(k);
     }
   }
 }

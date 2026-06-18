@@ -21,6 +21,7 @@ import { promises as fs } from 'node:fs';
 
 import { AvitoClient } from '../src/core/client.js';
 import { defineTool, type ToolContext } from '../src/core/tool-factory.js';
+import { IdempotencyStore } from '../src/core/idempotency.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import { register as registerMeta } from '../src/domains/meta.js';
 import type { Config, ConfirmationMode } from '../src/config.js';
@@ -91,7 +92,8 @@ async function makeRig(
     retry: { retry429BaseMs: 1, max429Retries: 0, retry5xxBackoffMs: 1, max5xxRetries: 0 },
   });
   const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
-  const ctx: ToolContext = { client, config: cfg, pendingStore };
+  const idempotencyStore = new IdempotencyStore(cfg.idempotencyTtlSec * 1000);
+  const ctx: ToolContext = { client, config: cfg, pendingStore, idempotencyStore };
 
   const server = new McpServer({ name: 'test', version: '0.0.0' });
   // Register one tool per risk and the meta confirmation tools.
@@ -169,6 +171,29 @@ describe('confirmation flow', () => {
     expect(payload.risk).toBe('money');
     expect(rig.fetchMock).not.toHaveBeenCalled();
     expect(rig.pendingStore.size()).toBe(1);
+    await rig.client.close();
+  });
+
+  it('reuses the same pending action for duplicate idempotency keys before confirmation', async () => {
+    const rig = await makeRig('money_public');
+    cfg = rig.cfg;
+    const args = { item_id: 1, vas_id: 'highlight', idempotencyKey: 'same-confirm-key' };
+    const first = await rig.client.callTool({ name: 'money_tool', arguments: args });
+    const second = await rig.client.callTool({ name: 'money_tool', arguments: args });
+    const firstId = extractConfirmationId(parseText(first.content));
+    const secondId = extractConfirmationId(parseText(second.content));
+
+    expect(secondId).toBe(firstId);
+    expect(rig.pendingStore.size()).toBe(1);
+    expect(rig.fetchMock).not.toHaveBeenCalled();
+
+    const confirmed = await rig.client.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: firstId },
+    });
+    expect(confirmed.isError).not.toBe(true);
+    expect(rig.fetchMock.mock.calls.length).toBeGreaterThan(0);
+    expect(rig.pendingStore.size()).toBe(0);
     await rig.client.close();
   });
 
