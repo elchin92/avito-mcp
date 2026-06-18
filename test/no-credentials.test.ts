@@ -23,7 +23,7 @@ import { domains } from '../src/meta/domain-registry.js';
 import type { Config } from '../src/config.js';
 
 /** Config with NO credentials — clientId/clientSecret empty, profileId undefined. */
-function makeUnconfiguredConfig(): Config {
+function makeUnconfiguredConfig(overrides: Partial<Config> = {}): Config {
   return {
     clientId: '',
     clientSecret: '',
@@ -61,6 +61,7 @@ function makeUnconfiguredConfig(): Config {
       path: '/avito/webhook',
       bufferSize: 100,
     },
+    ...overrides,
   };
 }
 
@@ -128,6 +129,47 @@ describe('introspection without credentials', () => {
       error: { type: 'CONFIG_ERROR', retryable: false },
     });
     // Must NOT have attempted any network call (not even /token).
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('calling a tool without credentials ignores a valid cached token and returns CONFIG_ERROR', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const cfg = makeUnconfiguredConfig();
+    await fs.writeFile(
+      cfg.tokenFile,
+      JSON.stringify({
+        accessToken: 'CACHED-TOKEN-SHOULD-NOT-BE-USED-WITHOUT-CREDS',
+        expiresAt: Date.now() + 3_600_000,
+      }),
+    );
+    const { client } = await makeRig(cfg);
+    cleanup = async () => {
+      await client.close();
+      await fs.rm(cfg.tokenFile, { force: true });
+    };
+    const res = await client.callTool({ name: 'user_get_user_info_self', arguments: {} });
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent).toMatchObject({
+      error: { type: 'CONFIG_ERROR', retryable: false },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('calling a tool with client credentials but no profile id returns CONFIG_ERROR before token fetch', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const cfg = makeUnconfiguredConfig({ clientId: 'client-id', clientSecret: 'client-secret' });
+    const { client } = await makeRig(cfg);
+    cleanup = async () => {
+      await client.close();
+      await fs.rm(cfg.tokenFile, { force: true });
+    };
+    const res = await client.callTool({ name: 'user_get_user_info_self', arguments: {} });
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent).toMatchObject({
+      error: { type: 'CONFIG_ERROR', retryable: false },
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
