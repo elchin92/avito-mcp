@@ -23,6 +23,7 @@ import { AvitoClient } from '../src/core/client.js';
 import { defineTool, type ToolContext } from '../src/core/tool-factory.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import { register as registerMeta } from '../src/domains/meta.js';
+import { register as registerMessenger } from '../src/domains/messenger.js';
 import type { Config, ConfirmationMode } from '../src/config.js';
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
@@ -138,6 +139,49 @@ async function makeRig(
   return { server, client: client2, cfg, ctx, fetchMock, pendingStore };
 }
 
+async function makeUploadRig(confirmationMode: ConfirmationMode) {
+  const uploadDir = await fs.mkdtemp(join(tmpdir(), 'avito-upload-confirm-'));
+  const cfg = makeConfig({
+    confirmationMode,
+    allowedUploadDirs: [uploadDir],
+    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
+  });
+  const imagePath = join(uploadDir, 'one.png');
+  await fs.writeFile(
+    imagePath,
+    Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=', 'base64'),
+  );
+
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith('/token')) {
+      return new Response(
+        JSON.stringify({ access_token: 'tk', expires_in: 3600, token_type: 'bearer' }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ uploaded: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  const client = new AvitoClient(cfg, {
+    retry: { retry429BaseMs: 1, max429Retries: 0, retry5xxBackoffMs: 1, max5xxRetries: 0 },
+  });
+  const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
+  const ctx: ToolContext = { client, config: cfg, pendingStore };
+  const server = new McpServer({ name: 'test', version: '0.0.0' });
+  registerMessenger(server, ctx);
+  registerMeta(server, ctx);
+
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a);
+  const client2 = new Client({ name: 'test', version: '0.0.0' }, { capabilities: {} });
+  await client2.connect(b);
+  return { server, client: client2, cfg, ctx, fetchMock, pendingStore, uploadDir, imagePath };
+}
+
 function parseText(content: unknown): string {
   return (content as Array<{ type: string; text: string }>)[0]!.text;
 }
@@ -190,6 +234,35 @@ describe('confirmation flow', () => {
     expect(JSON.parse(parseText(r.content)).requires_confirmation).toBe(true);
     expect(rig.fetchMock).not.toHaveBeenCalled();
     await rig.client.close();
+  });
+
+
+  it('custom messenger_upload_images requires confirmation in all_destructive mode', async () => {
+    const rig = await makeUploadRig('all_destructive');
+    cfg = rig.cfg;
+
+    const first = await rig.client.callTool({
+      name: 'messenger_upload_images',
+      arguments: { paths: [rig.imagePath] },
+    });
+
+    const payload = JSON.parse(parseText(first.content));
+    expect(payload.requires_confirmation).toBe(true);
+    expect(payload.tool).toBe('messenger_upload_images');
+    expect(payload.risk).toBe('write');
+    expect(rig.fetchMock).not.toHaveBeenCalled();
+    expect(rig.pendingStore.size()).toBe(1);
+
+    const confirmed = await rig.client.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: payload.confirmation_id },
+    });
+    expect(confirmed.isError).not.toBe(true);
+    expect(parseText(confirmed.content)).toMatch(/status=200/);
+    expect(rig.fetchMock.mock.calls.length).toBeGreaterThan(0);
+
+    await rig.client.close();
+    await fs.rm(rig.uploadDir, { recursive: true, force: true });
   });
 
   it('confirmation_mode=off skips the gate entirely', async () => {

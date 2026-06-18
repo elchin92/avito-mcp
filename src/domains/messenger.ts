@@ -21,7 +21,7 @@ import { z } from 'zod';
 import { logger } from '../logger.js';
 import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 import { errorToMcpContent, MissingCredentialsError } from '../core/errors.js';
-import { evaluatePolicy } from '../core/policy.js';
+import { evaluatePolicy, requiresConfirmation } from '../core/policy.js';
 import { validateUpload, UploadGuardError } from '../core/upload-guard.js';
 
 export const register: DomainRegister = (server, ctx) => {
@@ -341,6 +341,113 @@ export const register: DomainRegister = (server, ctx) => {
     return;
   }
   const maxBytes = ctx.config.maxUploadMb * 1024 * 1024;
+  const executeUpload = async (args: Record<string, unknown>): Promise<CallToolResult> => {
+    try {
+      const userId = (args.user_id as number | undefined) ?? ctx.config.profileId;
+      if (userId === undefined) {
+        // v0.7.4: no user_id arg and no Profile_id configured → can't build the path.
+        throw new MissingCredentialsError(
+          'messenger_upload_images requires Profile_id (or an explicit user_id). ' +
+            'Set Profile_id env var or pass user_id.',
+        );
+      }
+      const paths = args.paths as string[];
+
+      // Validate ALL files before starting the upload — fail-fast.
+      const validated = [];
+      for (const p of paths) {
+        try {
+          validated.push(
+            await validateUpload(p, {
+              allowedDirs: ctx.config.allowedUploadDirs,
+              maxBytes,
+            }),
+          );
+        } catch (err) {
+          if (err instanceof UploadGuardError) {
+            return {
+              isError: true,
+              content: [{ type: 'text', text: err.message }],
+            };
+          }
+          throw err;
+        }
+      }
+
+      const form = new FormData();
+      for (const v of validated) {
+        const ab = v.data.buffer.slice(v.data.byteOffset, v.data.byteOffset + v.data.byteLength);
+        form.append('uploadfile[]', new Blob([ab as ArrayBuffer], { type: v.mime }), v.filename);
+      }
+
+      const response = await ctx.client.request({
+        method: 'POST',
+        path: '/messenger/v1/accounts/{user_id}/uploadImages',
+        pathParams: { user_id: userId },
+        body: form,
+        bodyContentType: 'multipart/form-data',
+        domain: 'messenger',
+      });
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `status=${response.status}\n${JSON.stringify(response.data, null, 2)}`,
+          },
+        ],
+      };
+    } catch (err) {
+      return errorToMcpContent(err);
+    }
+  };
+
+  const uploadHandler = async (rawArgs: Record<string, unknown>): Promise<CallToolResult> => {
+    const args = rawArgs ?? {};
+
+    if (requiresConfirmation('write', ctx.config)) {
+      const paths = Array.isArray(args.paths) ? args.paths : [];
+      const pending = ctx.pendingStore.create({
+        toolName: 'messenger_upload_images',
+        risk: 'write',
+        summary: `Upload ${paths.length} image(s) from local disk`,
+        args,
+        execute: () => executeUpload(args),
+      });
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                requires_confirmation: true,
+                confirmation_id: pending.id,
+                tool: 'messenger_upload_images',
+                risk: 'write',
+                summary: pending.summary,
+                expires_at: new Date(pending.expiresAt).toISOString(),
+                next_step:
+                  'Call meta_confirm_action with this confirmation_id ONLY after explicit human approval. ' +
+                  'Confirmation flow is a server-side two-step safety guard against accidental one-shot execution; ' +
+                  'it is not a cryptographic human-approval mechanism by itself.',
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+        structuredContent: {
+          requires_confirmation: true,
+          confirmation_id: pending.id,
+          tool: 'messenger_upload_images',
+          risk: 'write',
+          expires_at: new Date(pending.expiresAt).toISOString(),
+        },
+      };
+    }
+
+    return executeUpload(args);
+  };
+
   server.registerTool(
     'messenger_upload_images',
     {
@@ -376,64 +483,6 @@ export const register: DomainRegister = (server, ctx) => {
       },
       _meta: { risk: 'write', environment: 'prod', accessesLocalFiles: true },
     },
-    async (args): Promise<CallToolResult> => {
-      try {
-        const userId = (args.user_id as number | undefined) ?? ctx.config.profileId;
-        if (userId === undefined) {
-          // v0.7.4: no user_id arg and no Profile_id configured → can't build the path.
-          throw new MissingCredentialsError(
-            'messenger_upload_images requires Profile_id (or an explicit user_id). ' +
-              'Set Profile_id env var or pass user_id.',
-          );
-        }
-        const paths = args.paths as string[];
-
-        // Validate ALL files before starting the upload — fail-fast.
-        const validated = [];
-        for (const p of paths) {
-          try {
-            validated.push(
-              await validateUpload(p, {
-                allowedDirs: ctx.config.allowedUploadDirs,
-                maxBytes,
-              }),
-            );
-          } catch (err) {
-            if (err instanceof UploadGuardError) {
-              return {
-                isError: true,
-                content: [{ type: 'text', text: err.message }],
-              };
-            }
-            throw err;
-          }
-        }
-
-        const form = new FormData();
-        for (const v of validated) {
-          const ab = v.data.buffer.slice(v.data.byteOffset, v.data.byteOffset + v.data.byteLength);
-          form.append('uploadfile[]', new Blob([ab as ArrayBuffer], { type: v.mime }), v.filename);
-        }
-
-        const response = await ctx.client.request({
-          method: 'POST',
-          path: '/messenger/v1/accounts/{user_id}/uploadImages',
-          pathParams: { user_id: userId },
-          body: form,
-          bodyContentType: 'multipart/form-data',
-          domain: 'messenger',
-        });
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `status=${response.status}\n${JSON.stringify(response.data, null, 2)}`,
-            },
-          ],
-        };
-      } catch (err) {
-        return errorToMcpContent(err);
-      }
-    },
+    uploadHandler,
   );
 };
