@@ -55,7 +55,11 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
-function makeClient(overrides: Partial<Config> = {}): { client: AvitoClient; cfg: Config; fetchMock: ReturnType<typeof vi.fn> } {
+function makeClient(overrides: Partial<Config> = {}): {
+  client: AvitoClient;
+  cfg: Config;
+  fetchMock: ReturnType<typeof vi.fn>;
+} {
   const cfg = makeConfig(overrides);
   const fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
@@ -207,10 +211,11 @@ describe('AvitoClient — binary response handling', () => {
     expect(resp.data).toBeNull();
   });
 
-  it('v0.5.1: rejects oversized binary by Content-Length header (no read into memory)', async () => {
+  it('v0.5.1: rejects oversized binary by Content-Length header without reading the body', async () => {
     const rig = makeClient({ maxBinaryMb: 1 }); // 1 MB cap
     cfg = rig.cfg;
     let payloadFetched = false;
+    let bodyCanceled = false;
     rig.fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith('/token')) {
         return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), {
@@ -219,8 +224,16 @@ describe('AvitoClient — binary response handling', () => {
         });
       }
       payloadFetched = true;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(100));
+        },
+        cancel() {
+          bodyCanceled = true;
+        },
+      });
       // Server claims 5 MB (5*1024*1024) — client should reject by header alone.
-      return new Response(Buffer.alloc(100), {
+      return new Response(body, {
         status: 200,
         headers: {
           'content-type': 'application/pdf',
@@ -228,15 +241,18 @@ describe('AvitoClient — binary response handling', () => {
         },
       });
     });
-    await expect(
-      rig.client.request({ method: 'GET', path: '/huge.pdf' }),
-    ).rejects.toThrow(/Binary response too large/);
+    await expect(rig.client.request({ method: 'GET', path: '/huge.pdf' })).rejects.toThrow(
+      /Binary response too large/,
+    );
     expect(payloadFetched).toBe(true);
+    expect(bodyCanceled).toBe(true);
   });
 
-  it('v0.5.1: rejects oversized binary by actual size when Content-Length is absent', async () => {
+  it('v0.5.1: rejects oversized binary by actual size while streaming when Content-Length is absent', async () => {
     const rig = makeClient({ maxBinaryMb: 1 });
     cfg = rig.cfg;
+    let chunksRead = 0;
+    let bodyCanceled = false;
     rig.fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith('/token')) {
         return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), {
@@ -244,15 +260,26 @@ describe('AvitoClient — binary response handling', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      // No content-length header; server lies. Real payload is 2 MB.
-      return new Response(Buffer.alloc(2 * 1024 * 1024), {
+      const chunk = new Uint8Array(512 * 1024);
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          chunksRead += 1;
+          controller.enqueue(chunk);
+        },
+        cancel() {
+          bodyCanceled = true;
+        },
+      });
+      return new Response(body, {
         status: 200,
         headers: { 'content-type': 'application/pdf' }, // no content-length
       });
     });
-    await expect(
-      rig.client.request({ method: 'GET', path: '/huge.pdf' }),
-    ).rejects.toThrow(/Binary response too large/);
+    await expect(rig.client.request({ method: 'GET', path: '/huge.pdf' })).rejects.toThrow(
+      /Binary response too large/,
+    );
+    expect(chunksRead).toBeLessThan(5);
+    expect(bodyCanceled).toBe(true);
   });
 
   it('v0.5.1: accepts binary that fits under the limit', async () => {

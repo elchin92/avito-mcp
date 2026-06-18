@@ -1,7 +1,12 @@
 import { logger } from '../logger.js';
 import type { Config } from '../config.js';
 import { USER_AGENT } from '../version.js';
-import { AvitoApiError, AvitoTransportError, MissingCredentialsError, type RequestInfo } from './errors.js';
+import {
+  AvitoApiError,
+  AvitoTransportError,
+  MissingCredentialsError,
+  type RequestInfo,
+} from './errors.js';
 import { TokenStore } from './token-store.js';
 import { RateLimiter, sleep } from './rate-limiter.js';
 import { buildUrl, type Primitive, type QueryValue } from './url.js';
@@ -289,6 +294,45 @@ function isBinaryContent(ct: string): boolean {
   return true;
 }
 
+async function readBinaryBodyWithLimit(
+  resp: Response,
+  maxBinaryBytes: number,
+): Promise<ArrayBuffer> {
+  if (!resp.body) return new ArrayBuffer(0);
+
+  const reader = resp.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      total += value.byteLength;
+      if (total > maxBinaryBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error(
+          `Binary response too large: ${total} bytes > AVITO_MCP_MAX_BINARY_MB limit (${maxBinaryBytes} bytes). ` +
+            `Increase AVITO_MCP_MAX_BINARY_MB or fetch this file via direct HTTP (curl).`,
+        );
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out.buffer;
+}
+
 async function safeParseResponse<T>(
   resp: Response,
   maxBinaryBytes: number = 20 * 1024 * 1024,
@@ -300,21 +344,14 @@ async function safeParseResponse<T>(
     const cl = resp.headers.get('content-length');
     const declared = cl ? Number.parseInt(cl, 10) : NaN;
     if (Number.isFinite(declared) && declared > maxBinaryBytes) {
-      // drain the body so the socket does not hang
-      try { await resp.arrayBuffer(); } catch { /* ignore */ }
+      await resp.body?.cancel().catch(() => undefined);
       throw new Error(
         `Binary response too large: Content-Length=${declared} bytes > AVITO_MCP_MAX_BINARY_MB limit (${maxBinaryBytes} bytes). ` +
           `Increase AVITO_MCP_MAX_BINARY_MB or fetch this file via direct HTTP (curl).`,
       );
     }
-    const ab = await resp.arrayBuffer();
+    const ab = await readBinaryBodyWithLimit(resp, maxBinaryBytes);
     if (ab.byteLength === 0) return null;
-    if (ab.byteLength > maxBinaryBytes) {
-      throw new Error(
-        `Binary response too large: ${ab.byteLength} bytes > AVITO_MCP_MAX_BINARY_MB limit (${maxBinaryBytes} bytes). ` +
-          `Increase AVITO_MCP_MAX_BINARY_MB or fetch this file via direct HTTP (curl).`,
-      );
-    }
     return {
       __binary: true,
       mimeType: ct.split(';')[0]!.trim(),
