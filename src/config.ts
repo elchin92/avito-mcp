@@ -151,9 +151,7 @@ const ConfigSchema = z.object({
   profileId: z.coerce.number().int().positive('Profile_id must be a positive integer').optional(),
   baseUrl: z.string().url().default('https://api.avito.ru'),
   tokenFile: z.string().default(defaultTokenFile()),
-  logLevel: z
-    .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
-    .default('info'),
+  logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   mode: z.enum(['read_only', 'guarded', 'full_access']).default('full_access'),
   allowTools: z.array(z.string()).default([]),
   denyTools: z.array(z.string()).default([]),
@@ -162,7 +160,10 @@ const ConfigSchema = z.object({
   maxUploadMb: z.number().int().positive().default(15),
   confirmationMode: z.enum(['off', 'money_public', 'all_destructive']).default('money_public'),
   confirmationTtlSec: z.number().int().positive().default(900),
-  confirmationSecret: z.string().optional(),
+  confirmationSecret: z
+    .string()
+    .min(32, 'AVITO_MCP_CONFIRMATION_SECRET must be at least 32 characters')
+    .optional(),
   maxBinaryMb: z.number().int().positive().default(20),
   // v0.7.0 ───────────────────────────────────────────────────
   /** Default for `dryRun` parameter on write/money/public tools. */
@@ -258,7 +259,8 @@ function load(): Config {
     exposeAuthTools: parseBool(process.env.AVITO_MCP_EXPOSE_AUTH_TOOLS),
     allowedUploadDirs: parseToolList(process.env.AVITO_MCP_ALLOWED_UPLOAD_DIRS),
     maxUploadMb: parsePositiveInt(process.env.AVITO_MCP_MAX_UPLOAD_MB, 15),
-    confirmationMode: (process.env.AVITO_MCP_CONFIRMATION_MODE as ConfirmationMode | undefined) ?? 'money_public',
+    confirmationMode:
+      (process.env.AVITO_MCP_CONFIRMATION_MODE as ConfirmationMode | undefined) ?? 'money_public',
     confirmationTtlSec: parsePositiveInt(process.env.AVITO_MCP_CONFIRMATION_TTL_SEC, 900),
     confirmationSecret: process.env.AVITO_MCP_CONFIRMATION_SECRET,
     maxBinaryMb: parsePositiveInt(process.env.AVITO_MCP_MAX_BINARY_MB, 20),
@@ -270,7 +272,9 @@ function load(): Config {
 
   const parsed = ConfigSchema.safeParse(raw);
   if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`).join('\n');
+    const issues = parsed.error.issues
+      .map((i) => `  - ${i.path.join('.')}: ${i.message}`)
+      .join('\n');
     process.stderr.write(
       `Invalid .env (${envFile}):\n${issues}\n\nSee .env.example for the expected format.\n`,
     );
