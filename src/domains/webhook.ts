@@ -234,15 +234,15 @@ export const register: DomainRegister = (server, ctx) => {
 
   // Subscribes Avito to the configured receiver URL. Reuses the generic confirmation /
   // dry-run / idempotency machinery via defineTool. The default URL is computed from the
-  // webhook config; the agent may override it explicitly.
+  // webhook config; caller input may repeat that URL but must not redirect events elsewhere.
   defineTool(server, ctx, {
     name: 'messenger_register_webhook',
     title: '⚠️ Register webhook receiver',
     risk: 'write',
     description:
       'Subscribes Avito to THIS server\'s configured webhook receiver URL so messenger events (new chat messages) start flowing. ' +
-      'By default it registers the URL derived from the webhook config (AVITO_MCP_WEBHOOK_PUBLIC_URL + path + secret); ' +
-      'pass `url` to override. Adds a webhook subscription (additive — it does not delete other subscriptions); Avito will then ' +
+      'Registers only the URL derived from the webhook config (AVITO_MCP_WEBHOOK_PUBLIC_URL + path + secret). ' +
+      'Adds a webhook subscription (additive — it does not delete other subscriptions); Avito will then ' +
       'POST events to the URL (requires a PUBLIC HTTPS address reachable from the internet; localhost does not work). ' +
       'Same operation as messenger_post_webhook_v3, but auto-fills the URL from config. ' +
       'Pairs with messenger_get_webhook_events (read received events) and messenger_get_webhook_status (receiver config). ' +
@@ -256,28 +256,34 @@ export const register: DomainRegister = (server, ctx) => {
         .url()
         .optional()
         .describe(
-          'Optional override of the public HTTPS URL Avito should POST events to. ' +
-            'Omit to use the configured receiver URL (publicUrl + path + secret).',
+          'Optional explicit copy of the configured receiver URL Avito should POST events to. ' +
+            'For safety, it must equal publicUrl + path + secret; omit to auto-fill it.',
         ),
     },
     body: {
       contentType: 'application/json',
-      // Note: `url` is intentionally NOT pinned via `fields` so a user-supplied `url`
-      // input overrides the computed default (splitArgs merges { ...defaults, ...body }).
-      // defaults() must not throw on an unconfigured receiver — it runs even when the
-      // caller passes an explicit `url`; the requirement is enforced in transform(),
-      // which sees the merged body.
+      // The registration endpoint changes where Avito will send future messenger events.
+      // Never allow a caller-provided URL to redirect those events to an arbitrary host;
+      // it may only repeat the operator-configured receiver URL.
       defaults: (c) => {
         const w = c.config.webhook;
-        if (!w.enabled || !w.secret) return {};
+        if (!w.enabled || !w.secret) {
+          throw new Error(
+            'Webhook receiver is not configured: set AVITO_MCP_WEBHOOK_SECRET (and ' +
+              'AVITO_MCP_WEBHOOK_PUBLIC_URL for a public domain).',
+          );
+        }
         return { url: `${w.publicUrl}${w.path}/${w.secret}` };
       },
       transform: (body) => {
+        const expectedUrl = `${ctx.config.webhook.publicUrl}${ctx.config.webhook.path}/${ctx.config.webhook.secret}`;
         const url = typeof body.url === 'string' ? body.url : undefined;
         if (!url) {
+          throw new Error('Webhook receiver URL could not be computed from config.');
+        }
+        if (url !== expectedUrl) {
           throw new Error(
-            'Webhook receiver is not configured: set AVITO_MCP_WEBHOOK_SECRET (and ' +
-              'AVITO_MCP_WEBHOOK_PUBLIC_URL for a public domain), or pass `url` explicitly.',
+            'Webhook URL override must match the configured receiver URL; arbitrary webhook destinations are not allowed.',
           );
         }
         assertAvitoReachableUrl(url);

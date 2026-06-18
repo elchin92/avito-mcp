@@ -291,8 +291,7 @@ describe('messenger_register_webhook (v0.9.1 hardening)', () => {
     expect(text).toContain('not reachable from Avito');
   });
 
-  it('explicit url override works even when the receiver is NOT configured', async () => {
-    // Pre-0.9.1 this threw 'not configured' BEFORE the override was even merged.
+  it('rejects explicit url override when the receiver is NOT configured', async () => {
     const rig = await makeRig({
       webhook: makeWebhookConfig({ enabled: false, secret: undefined }),
     });
@@ -305,9 +304,40 @@ describe('messenger_register_webhook (v0.9.1 hardening)', () => {
       name: 'messenger_register_webhook',
       arguments: { dryRun: true, url: 'https://hooks.example.com/avito-events' },
     });
+    const text = JSON.stringify(r.content) + JSON.stringify(r.structuredContent ?? {});
+    expect(text).toContain('not configured');
+  });
+
+  it('rejects arbitrary explicit url overrides even when the receiver is configured', async () => {
+    const rig = await makeRig();
+    cleanup = async () => {
+      await rig.client.close();
+      await fs.rm(rig.cfg.tokenFile, { force: true });
+    };
+
+    const r = await rig.client.callTool({
+      name: 'messenger_register_webhook',
+      arguments: { dryRun: true, url: 'https://hooks.example.com/avito-events' },
+    });
+    const text = JSON.stringify(r.content) + JSON.stringify(r.structuredContent ?? {});
+    expect(text).toContain('arbitrary webhook destinations are not allowed');
+  });
+
+  it('accepts an explicit url only when it matches the configured receiver', async () => {
+    const rig = await makeRig();
+    cleanup = async () => {
+      await rig.client.close();
+      await fs.rm(rig.cfg.tokenFile, { force: true });
+    };
+
+    const expectedUrl = `https://mcp.example.com/avito/webhook/${WEBHOOK_SECRET}`;
+    const r = await rig.client.callTool({
+      name: 'messenger_register_webhook',
+      arguments: { dryRun: true, url: expectedUrl },
+    });
     expect(r.isError).not.toBe(true);
     const payload = parseStructured<Preview>(r as { structuredContent?: unknown });
-    expect(payload.request_preview.body.url).toBe('https://hooks.example.com/avito-events');
+    expect(payload.request_preview.body.url).toBe(expectedUrl);
   });
 
   it('errors clearly when unconfigured and no url is given', async () => {
