@@ -75,7 +75,8 @@ export const register: DomainRegister = (server, ctx) => {
     description:
       '⚠️ Immediately LAUNCHES an unscheduled upload of listings from the feed at the URL specified in the profile settings (autoload_create_or_update_profile_v2). ' +
       'Side effect: publishes/updates/activates listings on Avito; the publication limits from the settings do NOT apply to this upload — all listings from the file will be processed. ' +
-      'Limit: one upload per hour. No parameters. Returns only a launch confirmation; check the result later via autoload_get_last_completed_report_v3.',
+      'Limit: one upload per hour. Takes no business inputs — only the optional dryRun (preview without calling Avito) and idempotencyKey (duplicate protection). ' +
+      'Returns only a launch confirmation; poll the result later via autoload_get_last_completed_report_v3.',
     method: 'POST',
     path: '/autoload/v1/upload',
     domain: 'autoload',

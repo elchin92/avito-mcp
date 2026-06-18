@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-06-18
+
+**Tool-definition polish on the lowest-scoring tools (Glama TDQS).** After v1.0.2 the server reached a 4.5/5 TDQS average (grade A); this release lifts the bottom tier — the tools that drag the score via the 40%-weighted minimum. Pure metadata: no tools added/removed/renamed, no schema or behaviour change; manifest stays at 148 and `counts_by_risk` is unchanged. `tsc`, `eslint` and 200 tests pass.
+
+### Fixed
+
+- **`autoload_upload` no longer claims "No parameters".** It is a destructive tool, so the factory adds the optional `dryRun` / `idempotencyKey` controls — the old "No parameters" line contradicted the input schema and cost the tool points on three TDQS dimensions (it was the joint-lowest at 3.6/5). The description now states it takes no business inputs, only the standard `dryRun` (preview) and `idempotencyKey` (duplicate protection). Verified that the other "no parameters" tools are genuinely parameterless reads (no contradiction).
+
+### Changed
+
+- **Lower-tier delivery tools enriched** per the TDQS rubric (return values, when-to-use, and sibling disambiguation, kept concise): `delivery_change_parcels`, `delivery_prohibit_order_acceptance`, `delivery_v1_create_announcement`, `delivery_create_sandbox_parcel_v2`, `delivery_sandbox_cancel_parcel`, `delivery_set_order_real_address`, `delivery_v1_change_parcel`. Each now discloses its result, states it is for delivery-service partners (a regular account gets 403/404), and points at its bulk/single or sandbox/production sibling.
+
+### Compatibility
+
+- No tools added/removed/renamed; no env vars or schemas changed. Description text only — runtime behaviour identical to v1.0.2.
+
 ## [1.0.2] - 2026-06-18
 
 **Tool-definition consistency pass (annotation ↔ description).** A Glama [TDQS](https://glama.ai/blog/2026-04-03-tool-definition-quality-score-tdqs) re-score flagged that several tools' descriptions used destructive wording ("replaces the tariff's terminal set", "overwrites…") while their `destructiveHint` MCP annotation was `false` — a contradiction the scorer penalizes with 1/5 on the side-effects dimension. Ironically the v1.0.1 wording pass introduced some of these by prefixing delivery tools with `WRITE (replaces…)`. This release makes every tool's description and its `destructiveHint` hint tell the same story. Pure metadata: no tools added/removed/renamed, no schema or behaviour change; the manifest stays at 148 tools and `counts_by_risk` is unchanged. `tsc`, `eslint` and 200 tests pass.

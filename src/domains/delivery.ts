@@ -193,9 +193,9 @@ export const register: DomainRegister = (server, ctx) => {
     risk: 'write',
     destructiveHint: true,
     description:
-      '[SANDBOX] Cancels a test parcel on behalf of the receiver. The method is implemented on the delivery-service side — for ' +
-      'delivery-service partners only. Unlike delivery_v1_cancel_parcel ([SANDBOX v1] with an options field), this is the base contract ' +
-      'with an actor field.',
+      '[SANDBOX] Cancels a test parcel on behalf of the receiver (actor=receiver); returns a success status. Only parcels created via ' +
+      'delivery_create_sandbox_parcel_v2 can be cancelled. Implemented on the delivery-service side, for delivery-service PARTNERS only. ' +
+      'Unlike delivery_v1_cancel_parcel ([SANDBOX v1] with an options field), this is the base contract with an actor field.',
     method: 'POST',
     path: '/delivery-sandbox/cancelParcel',
     domain: 'delivery',
@@ -250,8 +250,9 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Delivery: actual address [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Sends Avito the actual pickup point for parcel acceptance/return — needed for agent and customer ' +
-      'returns. For delivery-service partners only.',
+      '[SANDBOX] Sends Avito the ACTUAL pickup point used for a parcel\'s acceptance/return — needed for agent and customer returns. ' +
+      'Returns an empty 200 on success. Sibling: delivery_set_order_properties sets cost/parameters; this one only sets the address. ' +
+      'For delivery-service PARTNERS only (not regular sellers).',
     method: 'POST',
     path: '/delivery-sandbox/order/realAddress',
     domain: 'delivery',
@@ -306,8 +307,9 @@ export const register: DomainRegister = (server, ctx) => {
     risk: 'write',
     destructiveHint: true,
     description:
-      '[SANDBOX] Prohibits accepting a parcel from the sender on the delivery-service side — the parcel will not be taken into processing. ' +
-      'The method is implemented on the delivery-service side, for delivery-service partners only. Used in the parcel cancellation flow.',
+      '[SANDBOX] Prohibits the delivery service from accepting a parcel from the sender — the parcel will not be taken into processing. ' +
+      'A step in the parcel-cancellation flow (pair with delivery_sandbox_cancel_parcel). Returns a success status. Implemented on the ' +
+      'delivery-service side, for delivery-service PARTNERS only (a regular seller account gets 403/404).',
     method: 'POST',
     path: '/delivery-sandbox/prohibitOrderAcceptance',
     domain: 'delivery',
@@ -537,9 +539,10 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Delivery: change parcel [sandbox v1]',
     risk: 'write',
     description:
-      '[SANDBOX v1] Creates a request to change the data of a single test parcel (for example, the receiver\'s full name/phone). ' +
-      'Available only in the Sandbox. Request status — via delivery_v1_get_change_parcel_info. Unlike ' +
-      'delivery_change_parcels (bulk processing), it changes a single parcel.',
+      '[SANDBOX v1] Creates a request to change ONE test parcel\'s data (e.g. the receiver\'s name/phone), per the type enum ' +
+      '(changeReceiver / prohibitParcelReceive / extendParcelStorage / prohibitParcelAcceptance). The call only QUEUES the request — ' +
+      'poll delivery_v1_get_change_parcel_info for the outcome. For bulk changes use delivery_change_parcels instead. ' +
+      'Sandbox-only, for delivery-service PARTNERS.',
     method: 'POST',
     path: '/delivery-sandbox/v1/changeParcel',
     domain: 'delivery',
@@ -559,9 +562,9 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Delivery: create announcement [sandbox v1]',
     risk: 'write',
     description:
-      '[SANDBOX v1] Starts the process of creating a test announcement; on success the response has a success status. Available ' +
-      'only in the Sandbox, for delivery-service partners. Unlike delivery_sandbox_create_announcement, this is the v1 contract ' +
-      'with a required options field.',
+      '[SANDBOX v1] Creates a test shipment announcement in the Sandbox (no real-world effect); returns a success status. ' +
+      'Use the base contract delivery_sandbox_create_announcement unless you specifically need this v1 shape — the only difference ' +
+      'is that v1 additionally requires the options field. Sandbox-only, for delivery-service PARTNERS.',
     method: 'POST',
     path: '/delivery-sandbox/v1/createAnnouncement',
     domain: 'delivery',
@@ -642,9 +645,10 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Delivery: create parcel [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX v2] Starts the process of creating a test parcel in the Sandbox. The created parcel is then used by ' +
-      'other v1 methods (getParcelInfo, getRegisteredParcelID, changeParcel, cancelParcel). Unlike ' +
-      'delivery_create_parcel ([3PL], production creation), this is a test environment with no consequences.',
+      '[SANDBOX v2] Creates a test parcel in the Sandbox (no real-world effect) and returns its parcelID — the entry point for the ' +
+      'sandbox parcel lifecycle: feed that id into delivery_v1_get_parcel_info, delivery_v1_get_registered_parcel_id, ' +
+      'delivery_v1_change_parcel and delivery_v1_cancel_parcel. Unlike delivery_create_parcel ([3PL] production creation), this has ' +
+      'no consequences. For delivery-service PARTNERS testing only.',
     method: 'POST',
     path: '/delivery-sandbox/v2/createParcel',
     domain: 'delivery',
@@ -685,9 +689,11 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Delivery: bulk update [sandbox]',
     risk: 'write',
     description:
-      '[SANDBOX] Sends the delivery service a batch of requests to update parcel properties on Avito\'s initiative ' +
-      '(a bulk operation). The delivery service returns the result for each request via delivery_change_parcel_result. ' +
-      'The method is implemented on the delivery-service side, for delivery-service partners only.',
+      '[SANDBOX] Queues a BATCH of parcel-property change requests on Avito\'s initiative (changeReceiver / extendParcelStorage / ' +
+      'prohibitParcelReceive / prohibitParcelAcceptance / changeReceiverTerminalOnConfirmed, per the type enum). Use it for bulk ' +
+      'changes; for a single parcel use delivery_v1_change_parcel. The call only QUEUES the requests — the delivery service reports ' +
+      'each outcome back via delivery_change_parcel_result. Implemented on the delivery-service side, for delivery-service PARTNERS ' +
+      'only (a regular seller account gets 403/404).',
     method: 'POST',
     path: '/sandbox/changeParcels',
     domain: 'delivery',
