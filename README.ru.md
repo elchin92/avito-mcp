@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **Новое в v1.1.0** — security-проход из 7 фиксов аудита: атомарная идемпотентность (без гонки double-spend), закрыт обход кредов, заблокирован redirect-эксфильтрация webhook, потоковое чтение крупных ответов, усилена hard-confirmation и подтверждение при загрузке изображений. Полная история — в [CHANGELOG](./CHANGELOG.md).
+> **Новое в v1.1.1** — security-патч зависимостей: закрыты транзитивные npm-audit advisories из [#21](https://github.com/elchin92/avito-mcp/issues/21) — `hono` (high) и `esbuild` (low, только dev); `npm audit` → 0. Только lockfile, без изменений кода. Полная история — в [CHANGELOG](./CHANGELOG.md).
 
 ---
 

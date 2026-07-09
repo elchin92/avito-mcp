@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **New in v1.1.0** — a security sweep of 7 audit-found fixes: atomic idempotency (no double-spend race), credential-bypass closed, webhook-redirect exfiltration locked down, oversized-response streaming, hardened hard-confirmation, and confirmation-gated image uploads. Full history in the [CHANGELOG](./CHANGELOG.md).
+> **New in v1.1.1** — dependency security patch: the transitive `hono` (high) and `esbuild` (low, dev-only) npm-audit advisories from [#21](https://github.com/elchin92/avito-mcp/issues/21) are cleared (`npm audit` → 0). Lockfile-only, no code change. Full history in the [CHANGELOG](./CHANGELOG.md).
 
 ---
 
