@@ -2,6 +2,7 @@
 import { createRequire } from 'node:module';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { isIP } from 'node:net';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 const [packageJson, baseEnv, remoteEnv, outputFile] = process.argv.slice(2);
 if (!packageJson || !baseEnv || !remoteEnv || !outputFile) {
@@ -41,6 +42,27 @@ for (const key of [
   delete merged[key];
 }
 [merged.Client_id, merged.Client_secret, merged.Profile_id] = credentials;
+
+const serviceStateDirectory = '/var/lib/avito-mcp';
+for (const key of [
+  'AVITO_TOKEN_FILE',
+  'AVITO_MCP_OAUTH_STORE_FILE',
+  'AVITO_MCP_WEBHOOK_LOG_FILE',
+]) {
+  const value = merged[key];
+  if (typeof value !== 'string' || value === '') continue;
+  const resolved = resolve(value);
+  const rel = relative(serviceStateDirectory, resolved);
+  if (
+    !isAbsolute(value) ||
+    rel === '' ||
+    rel === '..' ||
+    rel.startsWith(`..${sep}`) ||
+    isAbsolute(rel)
+  ) {
+    throw new Error(`${key} must be an absolute file path inside ${serviceStateDirectory}`);
+  }
+}
 
 const exactKeys = new Set([
   'Client_id',

@@ -52,6 +52,13 @@ describe('release and deployment hardening', () => {
     expect(installer).toContain('npm ci --prefix "$STAGING_DIR" --omit=dev');
     expect(installer).toContain('chmod -R a+rX,a-w "$STAGING_DIR"');
     expect(installer).not.toContain('chmod -R a-w "$STAGING_DIR"');
+    expect(installer).toContain('migrate_private_state avito-mcp "$STATE_DIR"');
+    expect(installer).toContain('/proc/self/mountinfo');
+    expect(installer).toContain('Unable to validate application state mounts');
+    expect(installer).toContain("stat -c '%d:%f:%h:%u:%g'");
+    expect(installer).toContain('validate_private_state "$user" "$state_dir" 0');
+    expect(installer).toContain('content is never rolled back or replaced');
+    expect(installer).toContain('systemctl stop avito-mcp.service');
     expect(installer).toContain('rollback_release');
     expect(installer).not.toContain('app_was_active -eq 1 &&');
     expect(installer).not.toContain('caddy_was_active -eq 1 &&');
@@ -73,6 +80,11 @@ describe('release and deployment hardening', () => {
     expect(ci).toContain('deploy-gate:');
     expect(ci).toContain('bash deploy/install-services.sh --start');
     expect(ci).toContain('invalid redeploy unexpectedly succeeded');
+    expect(ci).toContain('state symlink unexpectedly migrated');
+    expect(ci).toContain('state hardlink unexpectedly migrated');
+    expect(ci).toContain('unreachable readiness probe unexpectedly succeeded');
+    expect(ci).toContain('AVITO_MCP_OAUTH_STORE_FILE=/var/lib/avito-mcp/oauth-state.json');
+    expect(ci).toContain('AVITO_MCP_WEBHOOK_LOG_FILE=/var/lib/avito-mcp/webhook-events.jsonl');
     expect(ci).toContain('systemctl restart avito-mcp.service');
     expect(ci).toContain('sudo -u avito-mcp test -x /opt/avito-mcp/current');
     expect(ci).toContain('PROJECT_AUDIT\\.md');

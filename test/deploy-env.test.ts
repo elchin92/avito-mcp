@@ -38,7 +38,7 @@ describe('systemd deployment environment renderer', () => {
   it('parses dotenv syntax, allowlists runtime keys, and keeps remote overrides', async () => {
     const { result, output } = await render(
       'Client_id = "client id"\nClient_secret = "secret value"\nProfile_id = 123\nNPM_TOKEN=publish-canary\n',
-      'AVITO_MCP_TRANSPORT = http\nAVITO_MCP_HTTP_HOST=0.0.0.0\nAVITO_MCP_HTTP_PORT=3456\nLOG_LEVEL=warn\nNPM_CONFIG_USERCONFIG=/secret/npmrc\n',
+      'AVITO_MCP_TRANSPORT = http\nAVITO_MCP_HTTP_HOST=0.0.0.0\nAVITO_MCP_HTTP_PORT=3456\nLOG_LEVEL=warn\nAVITO_TOKEN_FILE=/var/lib/avito-mcp/token.json\nAVITO_MCP_OAUTH_STORE_FILE=/var/lib/avito-mcp/oauth.json\nAVITO_MCP_WEBHOOK_LOG_FILE=/var/lib/avito-mcp/webhook.jsonl\nNPM_CONFIG_USERCONFIG=/secret/npmrc\n',
     );
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toBe('http://127.0.0.1:3456');
@@ -50,10 +50,31 @@ describe('systemd deployment environment renderer', () => {
       Profile_id: '123',
       AVITO_MCP_TRANSPORT: 'http',
       LOG_LEVEL: 'warn',
+      AVITO_TOKEN_FILE: '/var/lib/avito-mcp/token.json',
+      AVITO_MCP_OAUTH_STORE_FILE: '/var/lib/avito-mcp/oauth.json',
+      AVITO_MCP_WEBHOOK_LOG_FILE: '/var/lib/avito-mcp/webhook.jsonl',
     });
     expect(raw).not.toContain('publish-canary');
     expect(raw).not.toContain('NPM_CONFIG_USERCONFIG');
     if (process.platform !== 'win32') expect((await fs.stat(output)).mode & 0o077).toBe(0);
+
+    for (const [key, value] of [
+      ['AVITO_TOKEN_FILE', '/tmp/outside-state'],
+      ['AVITO_MCP_OAUTH_STORE_FILE', 'relative-state.json'],
+      ['AVITO_MCP_WEBHOOK_LOG_FILE', '/var/lib/avito-mcp/../outside-state'],
+      ['AVITO_MCP_WEBHOOK_LOG_FILE', '/var/lib/avito-mcp'],
+    ]) {
+      await fs.rm(cleanupRoot!, { recursive: true, force: true });
+      cleanupRoot = undefined;
+      const invalid = await render(
+        'Client_id=id\nClient_secret=secret\nProfile_id=100\n',
+        `${key}=${value}\n`,
+      );
+      expect(invalid.result.status).not.toBe(0);
+      expect(invalid.result.stderr).toContain(
+        `${key} must be an absolute file path inside /var/lib/avito-mcp`,
+      );
+    }
   });
 
   it('fails closed instead of deploying without the full credential tuple', async () => {
