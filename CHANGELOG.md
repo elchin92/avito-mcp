@@ -5,7 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [1.2.0] - 2026-07-10
 
-**End-to-end audit remediation release.** A multi-agent review covered the token client, destructive-operation pipeline, OAuth 2.1/HTTP transport, webhook receiver, all bundled OpenAPI contracts, tests, packaging, CI, Docker and systemd deployment. The implementation was then cross-reviewed with deterministic race reproductions. The resulting suite has **330 tests** across 30 files; whole-source coverage is **82.32% statements / 72.79% branches / 83.59% functions / 85.04% lines**. The manifest remains 148 tools, with corrected risk totals: `read:80 / write:40 / money:9 / public:16 / sensitive:3`.
+**End-to-end audit remediation release.** A multi-agent review covered the token client, destructive-operation pipeline, OAuth 2.1/HTTP transport, webhook receiver, all bundled OpenAPI contracts, tests, packaging, CI, Docker and systemd deployment. The implementation was then cross-reviewed with deterministic race reproductions. The resulting suite has **331 tests** across 30 files; whole-source coverage is **82.32% statements / 72.79% branches / 83.59% functions / 85.04% lines**. The manifest remains 148 tools, with corrected risk totals: `read:80 / write:40 / money:9 / public:16 / sensitive:3`.
 
 ### Security
 
