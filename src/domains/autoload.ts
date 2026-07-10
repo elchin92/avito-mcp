@@ -16,6 +16,23 @@ import { z } from 'zod';
 
 import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 
+const ExportSchedule = z.array(
+  z.object({
+    rate: z.number().int().describe('Number of listings to upload during this period.'),
+    weekdays: z
+      .array(z.number().int().min(0).max(6))
+      .describe('Weekdays from 0 (Monday) through 6 (Sunday).'),
+    time_slots: z
+      .array(z.number().int().min(0).max(23))
+      .describe('Hourly Moscow-time slots from 0 through 23.'),
+  }),
+);
+
+const FeedData = z.object({
+  feed_name: z.string(),
+  feed_url: z.string().url(),
+});
+
 export const register: DomainRegister = (server, ctx) => {
   // ────────────────────────────── PROFILE (v1 deprecated) ──────────────────────────────
 
@@ -49,8 +66,7 @@ export const register: DomainRegister = (server, ctx) => {
       autoload_enabled: z.boolean().describe('Autoload status: true — enabled, false — disabled. Required.'),
       report_email: z.string().email().describe('Email address to which Avito will send upload reports. Required.'),
       upload_url: z.string().url().describe('URL of the XML/YML feed of listings for regular uploads. Must start with http or https. Required.'),
-      schedule: z
-        .record(z.string(), z.unknown())
+      schedule: ExportSchedule
         .describe(
           'Schedule of regular uploads (array of periods): each element = {rate: number of listings per period, weekdays: [0-6, where 0=Monday], time_slots: [0-23, where 0 = the 00:00-01:00 interval]}. Moscow time. Required. See the ExportSchedule schema in swagger autoload.json.',
         ),
@@ -70,7 +86,7 @@ export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'autoload_upload',
     title: '⚠️ Autoload: launch upload',
-    risk: 'write',
+    risk: 'public',
     destructiveHint: true,
     description:
       '⚠️ Immediately LAUNCHES an unscheduled upload of listings from the feed at the URL specified in the profile settings (autoload_create_or_update_profile_v2). ' +
@@ -187,12 +203,11 @@ export const register: DomainRegister = (server, ctx) => {
       autoload_enabled: z.boolean().describe('Autoload status: true — enabled, false — disabled. Required.'),
       report_email: z.string().email().describe('Email address to which Avito will send upload reports. Required.'),
       feeds_data: z
-        .array(z.record(z.string(), z.unknown()))
+        .array(FeedData)
         .describe(
           'Array of feeds (at least one). Each element = {feed_name: feed name for the report, feed_url: URL of the file with listings, starts with http/https}. Required. See the FeedsData schema in swagger autoload.json.',
         ),
-      schedule: z
-        .record(z.string(), z.unknown())
+      schedule: ExportSchedule
         .describe(
           'Schedule of regular uploads (array of periods): each element = {rate: number of listings per period, weekdays: [0-6, where 0=Monday], time_slots: [0-23, where 0 = the 00:00-01:00 interval]}. Moscow time. Required. See the ExportSchedule schema in swagger autoload.json.',
         ),

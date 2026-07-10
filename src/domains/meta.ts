@@ -10,10 +10,11 @@
  * which optionally attempts a ping via a client_credentials refresh).
  */
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 
 import { logger } from '../logger.js';
+import { hasConfiguredCredentials } from '../core/credentials.js';
 import { evaluatePolicy, requiresConfirmation } from '../core/policy.js';
 import type { DomainRegister } from '../core/tool-factory.js';
 import { PACKAGE_NAME, VERSION } from '../version.js';
@@ -27,6 +28,21 @@ function secretsMatch(provided: string, expected: string): boolean {
   const b = Buffer.from(expected, 'utf8');
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
+}
+
+function confirmationPrincipal(extra: {
+  authInfo?: { clientId?: string };
+  sessionId?: string;
+  requestInfo?: { headers?: Record<string, string | string[] | undefined> };
+}): string {
+  if (extra.authInfo?.clientId) return `oauth:${extra.authInfo.clientId}`;
+  const raw = extra.requestInfo?.headers?.authorization;
+  const authorization = Array.isArray(raw) ? raw[0] : raw;
+  const bearer = /^Bearer\s+(.+)$/i.exec(authorization ?? '')?.[1];
+  if (bearer) {
+    return `bearer:${createHash('sha256').update(bearer).digest('base64url')}`;
+  }
+  return `session:${extra.sessionId ?? 'local-stdio'}`;
 }
 
 export const register: DomainRegister = (server, ctx) => {
@@ -195,12 +211,9 @@ export const register: DomainRegister = (server, ctx) => {
         _meta: { risk: 'read', environment: 'local' },
       },
       async (args): Promise<CallToolResult> => {
-        const configured = !!ctx.config.clientId && !!ctx.config.clientSecret;
-        // tokenStore.cache is internal; we take the thin path: getToken() returns a string,
-        // but we must not expose it. So we only surface metadata via a private probe.
+        const configured = hasConfiguredCredentials(ctx.config);
         let probeOk: boolean | null = null;
         let lastError: string | null = null;
-        let expiresInSec: number | null = null;
         if (args.probe === true && configured) {
           try {
             await ctx.client.tokenStore.getToken();
@@ -210,24 +223,20 @@ export const register: DomainRegister = (server, ctx) => {
             lastError = err instanceof Error ? err.message : String(err);
           }
         }
-        // Read the file directly — we do NOT include the token itself in the output, only expiresAt.
-        try {
-          const fs = await import('node:fs/promises');
-          const raw = await fs.readFile(ctx.config.tokenFile, 'utf8');
-          const parsed = JSON.parse(raw) as { expiresAt?: number };
-          if (typeof parsed.expiresAt === 'number') {
-            expiresInSec = Math.max(0, Math.floor((parsed.expiresAt - Date.now()) / 1000));
-          }
-        } catch {
-          /* no file — the token has not been obtained yet */
-        }
+        // Account-bound metadata only. Legacy or foreign-account records are
+        // treated as absent, and the token/path never leave the process.
+        const metadata = await ctx.client.tokenStore.getMetadata();
+        const expiresInSec =
+          metadata.expiresAt === undefined
+            ? null
+            : Math.max(0, Math.floor((metadata.expiresAt - Date.now()) / 1000));
         const payload = {
           configured,
-          tokenPresent: expiresInSec !== null,
+          tokenPresent: metadata.present,
           expiresInSec,
           probeOk,
           lastError,
-          tokenFile: ctx.config.tokenFile,
+          tokenFile: '[redacted]',
         };
         return {
           content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
@@ -345,7 +354,6 @@ export const register: DomainRegister = (server, ctx) => {
   // ───────────────── meta_confirm_action ─────────────────
 
   const requireSecret = !!ctx.config.confirmationSecret;
-  const failedConfirmationAttempts = new Map<string, number>();
   const maxFailedConfirmationAttempts = 5;
   if (confirmDecision.allowed)
     server.registerTool(
@@ -387,15 +395,33 @@ export const register: DomainRegister = (server, ctx) => {
         },
         _meta: { risk: 'write', environment: 'local' },
       },
-      async (args): Promise<CallToolResult> => {
+      async (args, extra): Promise<CallToolResult> => {
         const id = String(args.confirmation_id ?? '');
+
+        if (requireSecret) {
+          const rate = ctx.pendingStore.checkConfirmationRateLimit(confirmationPrincipal(extra));
+          if (!rate.allowed) {
+            logger.warn(
+              { retryAfterMs: rate.retryAfterMs },
+              'confirmation rejected: principal rate limit reached',
+            );
+            return {
+              isError: true,
+              content: [
+                {
+                  type: 'text',
+                  text: 'Confirmation temporarily rate-limited after too many attempts. Retry later.',
+                },
+              ],
+              structuredContent: {
+                error: { kind: 'RATE_LIMITED', retry_after_ms: rate.retryAfterMs },
+              },
+            };
+          }
+        }
 
         const pending = ctx.pendingStore.get(id);
         if (!pending) {
-          // The pending action is gone (expired/confirmed/cancelled) — drop any
-          // lingering failed-attempt counter for this id so the map cannot grow
-          // unbounded across abandoned ids.
-          failedConfirmationAttempts.delete(id);
           return {
             isError: true,
             content: [
@@ -414,15 +440,28 @@ export const register: DomainRegister = (server, ctx) => {
           const provided =
             typeof args.confirmation_secret === 'string' ? args.confirmation_secret : '';
           if (!provided || !secretsMatch(provided, ctx.config.confirmationSecret!)) {
-            const failedAttempts = (failedConfirmationAttempts.get(id) ?? 0) + 1;
-            failedConfirmationAttempts.set(id, failedAttempts);
-            const locked = failedAttempts >= maxFailedConfirmationAttempts;
-            if (locked) {
-              ctx.pendingStore.delete(id);
-              failedConfirmationAttempts.delete(id);
+            const attempt = ctx.pendingStore.recordFailedConfirmation(
+              id,
+              maxFailedConfirmationAttempts,
+            );
+            if (!attempt.found) {
+              return {
+                isError: true,
+                content: [
+                  {
+                    type: 'text',
+                    text: `Confirmation '${id}' is no longer available.`,
+                  },
+                ],
+              };
             }
             logger.warn(
-              { confirmation_id: id, hasSecret: !!provided, failedAttempts, locked },
+              {
+                confirmation_id: id,
+                hasSecret: !!provided,
+                failedAttempts: attempt.failedAttempts,
+                locked: attempt.locked,
+              },
               'confirmation rejected: bad or missing confirmation_secret',
             );
             return {
@@ -430,14 +469,14 @@ export const register: DomainRegister = (server, ctx) => {
               content: [
                 {
                   type: 'text',
-                  text: locked
+                  text: attempt.locked
                     ? 'Confirmation rejected. Too many bad or missing confirmation_secret attempts; pending action deleted.'
                     : 'Confirmation rejected. Bad or missing confirmation_secret. Pending action is NOT deleted by this rejection; retry with the correct secret before the TTL expires, or call meta_cancel_action to discard it.',
                 },
               ],
             };
           }
-          failedConfirmationAttempts.delete(id);
+          ctx.pendingStore.resetConfirmationFailures(id);
         }
         // Re-evaluate policy — the user may have changed the config between create and confirm.
         const decision = evaluatePolicy(pending.toolName, pending.risk, ctx.config);
@@ -453,18 +492,37 @@ export const register: DomainRegister = (server, ctx) => {
             ],
           };
         }
-        // One-time use: delete BEFORE executing, so a repeated confirm cannot succeed even on a race.
-        ctx.pendingStore.delete(id);
+        // Atomically claim before execution. A concurrent session that passed
+        // the checks above must not execute the same pending mutation twice.
+        const claimed = ctx.pendingStore.take(id);
+        if (!claimed) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: `Confirmation '${id}' was already confirmed, cancelled, or expired.`,
+              },
+            ],
+          };
+        }
         logger.info(
           {
-            tool: pending.toolName,
-            risk: pending.risk,
+            tool: claimed.toolName,
+            risk: claimed.risk,
             confirmation_id: id,
             hardConfirmation: requireSecret,
           },
           'pending action confirmed and executing',
         );
-        return pending.execute();
+        try {
+          // claimed.execute() records the final idempotency result before it
+          // resolves. Keep the claim active until then so the original tool call
+          // cannot treat its confirmation id as stale and create a second action.
+          return await claimed.execute();
+        } finally {
+          ctx.pendingStore.complete(id);
+        }
       },
     );
 
@@ -498,9 +556,6 @@ export const register: DomainRegister = (server, ctx) => {
       async (args): Promise<CallToolResult> => {
         const id = String(args.confirmation_id ?? '');
         const existed = ctx.pendingStore.delete(id);
-        // Cancelling discards the pending action — clear any failed-attempt counter
-        // so it does not outlive the action it tracked.
-        failedConfirmationAttempts.delete(id);
         return {
           content: [
             {

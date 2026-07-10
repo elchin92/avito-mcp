@@ -37,6 +37,7 @@ export const register: DomainRegister = (server, ctx) => {
       itemIDs: z
         .array(z.number().int().positive())
         .min(1)
+        .max(200)
         .describe('List of Avito listing IDs (1 to 200 items) for which current bids and budgets are requested.'),
     },
     body: { contentType: 'application/json', fields: ['itemIDs'] },

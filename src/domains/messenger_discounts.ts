@@ -29,7 +29,7 @@ export const register: DomainRegister = (server, ctx) => {
     domain: 'special-offers',
     input: {
       itemIds: z
-        .array(z.number().int().positive())
+        .array(z.number().int().min(1))
         .min(1)
         .describe('List of listing IDs to check for campaign-service availability. At least one.'),
     },
@@ -49,7 +49,7 @@ export const register: DomainRegister = (server, ctx) => {
     domain: 'special-offers',
     input: {
       itemIds: z
-        .array(z.number().int().positive())
+        .array(z.number().int().min(1))
         .min(1)
         .describe('List of listing IDs selected for the campaign. At least one.'),
     },
@@ -69,7 +69,14 @@ export const register: DomainRegister = (server, ctx) => {
     domain: 'special-offers',
     input: {
       dispatches: z
-        .array(z.record(z.string(), z.unknown()))
+        .array(
+          z.object({
+            dispatchId: z.number().int().min(1),
+            recipientsCount: z.number().int().min(1),
+            offerSlug: z.string().min(1),
+            discountValue: z.number().int().nullable().optional(),
+          }),
+        )
         .optional()
         .describe(
           'List of campaigns to confirm; taken from the multi_create response. Each item contains dispatchId (campaign ID), recipientsCount (number of recipients), offerSlug (slug of the chosen offer), and optionally discountValue (final discount amount for offers of type discount).',
@@ -77,6 +84,8 @@ export const register: DomainRegister = (server, ctx) => {
       expiresAt: z
         .number()
         .int()
+        .min(1)
+        .nullable()
         .optional()
         .describe('Offer expiration date, Unix timestamp in seconds; within the min/max range from the multi_create response.'),
     },

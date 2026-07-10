@@ -5,13 +5,15 @@
  * Quirks: the `chatsByTime` operationId appears twice (v1 + v2). Names are unified
  * via the domain prefix + version (cpa_chats_by_time_v1 and cpa_chats_by_time_v2).
  *
- * ⚠️ Write: createComplaint(ByActionId) — files a complaint (irreversible).
+ * ⚠️ Public: createComplaint(ByActionId) — files an external complaint (irreversible).
  */
 import { z } from 'zod';
 
 import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 
 export const register: DomainRegister = (server, ctx) => {
+  const staticHeaders = { 'X-Source': ctx.config.cpaSource } as const;
+
   defineTool(server, ctx, {
     name: 'cpa_get_call',
     title: 'CPA: call recording (v1, deprecated)',
@@ -21,6 +23,7 @@ export const register: DomainRegister = (server, ctx) => {
     method: 'GET',
     path: '/cpa/v1/call/{call_id}',
     domain: 'cpa',
+    staticHeaders,
     input: {
       call_id: z.number().int().positive().describe('CPA call identifier (call_id), obtained from cpa_get_calls_by_time_v2 or from a chat/action.'),
     },
@@ -36,6 +39,7 @@ export const register: DomainRegister = (server, ctx) => {
     method: 'GET',
     path: '/cpa/v1/chatByActionId/{actionId}',
     domain: 'cpa',
+    staticHeaders,
     input: {
       actionId: z.number().int().positive().describe('CPA target-action identifier (chat actionId), obtained from cpa_chats_by_time_v2.'),
     },
@@ -51,9 +55,10 @@ export const register: DomainRegister = (server, ctx) => {
     method: 'POST',
     path: '/cpa/v1/chatsByTime',
     domain: 'cpa',
+    staticHeaders,
     input: {
       dateTimeFrom: z.string().describe('Moment from which to search chats by the date field, in RFC3339 format, e.g. "2021-01-02T15:04:05Z".'),
-      limit: z.number().int().min(1).max(1000).describe('Page size (number of chats). The API accepts no more than 100.'),
+      limit: z.number().int().min(1).max(100).describe('Page size (number of chats), no more than 100.'),
       offset: z.number().int().min(0).describe('Page offset (default 0). For performance, prefer passing the maximum startTime/date of a chat from the previous page.'),
     },
     body: { contentType: 'application/json', fields: ['dateTimeFrom', 'limit', 'offset'] },
@@ -62,13 +67,14 @@ export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'cpa_post_create_complaint',
     title: '⚠️ CPA: complaint about a call',
-    risk: 'write',
+    risk: 'public',
     destructiveHint: true,
     description:
-      '⚠️ Files a complaint about a CPA call by its callId (action record) — e.g. when disputing a charge for an off-target call. Irreversible record: a complaint cannot be withdrawn. Requires the callId of a specific call from a preceding call (cpa_get_calls_by_time_v2). To file complaints about both calls and chats by a single actionId, use cpa_create_complaint_by_action_id. Limit: 1 request/min.',
+      '⚠️ Files an external complaint with Avito about a CPA call by its callId (action record) — e.g. when disputing a charge for an off-target call. Irreversible record: a complaint cannot be withdrawn, so confirmation is required by default. Requires the callId of a specific call from a preceding call (cpa_get_calls_by_time_v2). To file complaints about both calls and chats by a single actionId, use cpa_create_complaint_by_action_id. Limit: 1 request/min.',
     method: 'POST',
     path: '/cpa/v1/createComplaint',
     domain: 'cpa',
+    staticHeaders,
     input: {
       callId: z.number().int().positive().describe('CPA call identifier (callId, int64) the complaint is filed against.'),
       message: z.string().min(1).describe('Complaint text — a description of the reason for disputing the target action.'),
@@ -79,13 +85,14 @@ export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'cpa_create_complaint_by_action_id',
     title: '⚠️ CPA: complaint by actionId',
-    risk: 'write',
+    risk: 'public',
     destructiveHint: true,
     description:
-      '⚠️ Files a complaint about a CPA target action (call or chat) by its actionId — to dispute a charge for an off-target action. Irreversible record: a complaint cannot be withdrawn. Requires the actionId from a preceding call (cpa_chats_by_time_v2 / cpa_get_calls_by_time_v2). Preferred over cpa_post_create_complaint, since it covers both calls and chats. Limit: 3 requests/min.',
+      '⚠️ Files an external complaint with Avito about a CPA target action (call or chat) by its actionId — to dispute a charge for an off-target action. Irreversible record: a complaint cannot be withdrawn, so confirmation is required by default. Requires the actionId from a preceding call (cpa_chats_by_time_v2 / cpa_get_calls_by_time_v2). Preferred over cpa_post_create_complaint, since it covers both calls and chats. Limit: 3 requests/min.',
     method: 'POST',
     path: '/cpa/v1/createComplaintByActionId',
     domain: 'cpa',
+    staticHeaders,
     input: {
       actionId: z.number().int().positive().describe('CPA target-action identifier (actionId of a call or chat, e.g. 123456789) the complaint is filed against.'),
       message: z.string().min(1).describe('Complaint text attached to the action, e.g. "this was not a contact exchange in the chat".'),
@@ -102,6 +109,7 @@ export const register: DomainRegister = (server, ctx) => {
     method: 'POST',
     path: '/cpa/v1/phonesInfoFromChats',
     domain: 'cpa',
+    staticHeaders,
     input: {
       dateTimeFrom: z.string().describe('Moment from which the search begins, in RFC3339 format, e.g. "2021-01-02T15:04:05Z".'),
       limit: z.number().int().min(1).max(1000).describe('Page size (number of records).'),
@@ -119,6 +127,7 @@ export const register: DomainRegister = (server, ctx) => {
     method: 'POST',
     path: '/cpa/v2/balanceInfo',
     domain: 'cpa',
+    staticHeaders,
     input: {},
     body: { contentType: 'application/json', defaults: {} },
   });
@@ -132,6 +141,7 @@ export const register: DomainRegister = (server, ctx) => {
     method: 'POST',
     path: '/cpa/v2/callById',
     domain: 'cpa',
+    staticHeaders,
     input: {
       callId: z.number().int().positive().describe('CPA call identifier (callId, int64), obtained from cpa_get_calls_by_time_v2.'),
     },
@@ -147,6 +157,7 @@ export const register: DomainRegister = (server, ctx) => {
     method: 'POST',
     path: '/cpa/v2/callsByTime',
     domain: 'cpa',
+    staticHeaders,
     input: {
       dateTimeFrom: z.string().describe('Moment from which to search calls by startTime, in RFC3339 format, e.g. "2021-01-02T15:04:05Z".'),
       limit: z.number().int().min(1).max(1000).describe('Page size (number of calls).'),
@@ -164,9 +175,10 @@ export const register: DomainRegister = (server, ctx) => {
     method: 'POST',
     path: '/cpa/v2/chatsByTime',
     domain: 'cpa',
+    staticHeaders,
     input: {
       dateTimeFrom: z.string().describe('Moment from which to search chats by the date field, in RFC3339 format, e.g. "2021-01-02T15:04:05Z".'),
-      limit: z.number().int().min(1).max(1000).describe('Page size (number of chats). The API accepts no more than 100.'),
+      limit: z.number().int().min(1).max(100).describe('Page size (number of chats), no more than 100.'),
       offset: z.number().int().min(0).describe('Page offset (default 0). For performance, prefer passing the maximum date of a chat from the previous page.'),
     },
     body: { contentType: 'application/json', fields: ['dateTimeFrom', 'limit', 'offset'] },
@@ -181,6 +193,7 @@ export const register: DomainRegister = (server, ctx) => {
     method: 'POST',
     path: '/cpa/v3/balanceInfo',
     domain: 'cpa',
+    staticHeaders,
     input: {},
     body: { contentType: 'application/json', defaults: {} },
   });

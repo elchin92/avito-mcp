@@ -1,4 +1,5 @@
 import pino from 'pino';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 /**
@@ -38,12 +39,25 @@ const SENSITIVE_KEYS = [
   'owner_password',
   'ownerPassword',
   'oauthOwnerPassword',
+  'confirmationSecret',
+  'confirmation_secret',
+  'authTokens',
+  'apiKey',
+  'api_key',
+  'cookie',
+  'set-cookie',
+  'tokenFile',
+  'filePath',
+  'storeFile',
+  'logFile',
+  'lockPath',
 ];
 
 const REDACT_PATHS = [
-  ...SENSITIVE_KEYS.map((k) => `*.${k}`),
-  ...SENSITIVE_KEYS.map((k) => `*.*.${k}`),
-  ...SENSITIVE_KEYS.map((k) => `*.*.*.${k}`),
+  ...SENSITIVE_KEYS,
+  ...Array.from({ length: 12 }, (_, depth) =>
+    SENSITIVE_KEYS.map((key) => `${'*.'.repeat(depth + 1)}${key}`),
+  ).flat(),
   'headers.Authorization',
   'headers.authorization',
   'err.response.headers.authorization',
@@ -56,14 +70,19 @@ const REDACT_PATHS = [
  * same sensitive-key set must be applied here before the payload leaves the
  * process.
  */
-const SENSITIVE_KEY_RE = /(authorization|secret|password|token|bearer)s?$/i;
+const SENSITIVE_KEY_RE =
+  /(authorization|secret|password|token|bearer|cookie|api[_-]?key)s?$/i;
+const SENSITIVE_KEY_SET = new Set(SENSITIVE_KEYS.map((key) => key.toLowerCase()));
 
 function censorSensitive(value: unknown, depth = 0): unknown {
-  if (depth > 6 || value === null || typeof value !== 'object') return value;
+  if (depth > 12 || value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map((v) => censorSensitive(v, depth + 1));
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[k] = SENSITIVE_KEY_RE.test(k) ? '[redacted]' : censorSensitive(v, depth + 1);
+    out[k] =
+      SENSITIVE_KEY_SET.has(k.toLowerCase()) || SENSITIVE_KEY_RE.test(k)
+        ? '[redacted]'
+        : censorSensitive(v, depth + 1);
   }
   return out;
 }
@@ -83,15 +102,26 @@ export const logger = pino(
   pino.destination(2),
 );
 
+interface McpLogBinding {
+  server: McpServer;
+  background: boolean;
+  active: boolean;
+}
+
+const mcpLogBindings = new Map<McpServer, McpLogBinding>();
+const mcpLogContext = new AsyncLocalStorage<McpServer>();
+let mcpMirrorInstalled = false;
+
 /** MCP logging severities (RFC-5424). Pino → MCP mapping. */
-const PINO_TO_MCP: Record<string, 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical'> = {
-  trace: 'debug',
-  debug: 'debug',
-  info: 'info',
-  warn: 'warning',
-  error: 'error',
-  fatal: 'critical',
-};
+const PINO_TO_MCP: Record<string, 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical'> =
+  {
+    trace: 'debug',
+    debug: 'debug',
+    info: 'info',
+    warn: 'warning',
+    error: 'error',
+    fatal: 'critical',
+  };
 
 interface PinoLogEvent {
   level: number;
@@ -109,7 +139,9 @@ interface PinoLogEvent {
  * (`logMethod`), but it is simpler to put a thin wrapper over the logger's level methods.
  * We keep it lazy: if the server is absent, we do not break.
  */
-export function bindMcpLogger(server: McpServer): void {
+function installMcpMirror(): void {
+  if (mcpMirrorInstalled) return;
+  mcpMirrorInstalled = true;
   const pinoLevels = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] as const;
   for (const lvl of pinoLevels) {
     const original = logger[lvl].bind(logger);
@@ -134,15 +166,53 @@ export function bindMcpLogger(server: McpServer): void {
         msg: msg ?? '',
         ...((censorSensitive(data) as Record<string, unknown> | undefined) ?? {}),
       };
-      server
-        .sendLoggingMessage({
-          level: PINO_TO_MCP[lvl] ?? 'info',
-          logger: 'avito-mcp',
-          data: payload,
-        })
-        .catch(() => {
-          // The client may not have declared the logging capability — that's fine, we don't break.
+      const message = {
+        level: PINO_TO_MCP[lvl] ?? 'info',
+        logger: 'avito-mcp',
+        data: payload,
+      } as const;
+      const contextualServer = mcpLogContext.getStore();
+      const contextualBinding = contextualServer ? mcpLogBindings.get(contextualServer) : undefined;
+      const targets = contextualServer
+        ? contextualBinding?.active
+          ? [contextualBinding]
+          : []
+        : [...mcpLogBindings.values()].filter((binding) => binding.active && binding.background);
+      for (const binding of targets) {
+        void binding.server.sendLoggingMessage(message).catch(() => {
+          // The client may not have enabled logging notifications. The sink
+          // remains registered until its transport/session teardown runs.
         });
+      }
     };
   }
+}
+
+/**
+ * Registers one connected MCP session as a log sink and returns its teardown.
+ * The global pino methods are wrapped exactly once, regardless of session count.
+ */
+export function bindMcpLogger(
+  server: McpServer,
+  options: { background?: boolean } = {},
+): () => void {
+  installMcpMirror();
+  const binding: McpLogBinding = {
+    server,
+    background: options.background ?? true,
+    active: true,
+  };
+  mcpLogBindings.set(server, binding);
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    binding.active = false;
+    if (mcpLogBindings.get(server) === binding) mcpLogBindings.delete(server);
+  };
+}
+
+/** Routes logs created by `operation` only to the owning MCP session. */
+export function runWithMcpLogger<T>(server: McpServer, operation: () => T): T {
+  return mcpLogContext.run(server, operation);
 }

@@ -47,7 +47,7 @@ export const register: DomainRegister = (server, ctx) => {
         .array(
           z.object({
             item_id: z.number().int().positive().describe('ID of the listing on the Avito website for which stock is being set. Required.'),
-            quantity: z.number().int().min(0).describe('New available quantity of the item; an integer from 0 to 999999. 0 means out of stock. Required.'),
+            quantity: z.number().int().min(0).max(999999).describe('New available quantity of the item; an integer from 0 to 999999. 0 means out of stock. Required.'),
             external_id: z
               .string()
               .optional()

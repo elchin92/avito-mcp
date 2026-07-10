@@ -17,7 +17,7 @@
  * ctx.config (for the config snapshot and secret filtering), ctx.pendingStore (for pending).
  */
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -31,7 +31,7 @@ import {
 
 import { logger } from './logger.js';
 import { evaluatePolicy } from './core/policy.js';
-import type { ToolContext } from './core/tool-factory.js';
+import type { ToolContext, ToolRisk } from './core/tool-factory.js';
 import { PACKAGE_NAME, VERSION } from './version.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -73,7 +73,8 @@ function redactSecretKeysDeep(value: unknown, depth = 0): unknown {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     if (SECRET_KEY_RE.test(k)) {
-      const empty = v === undefined || v === '' || v === null || (Array.isArray(v) && v.length === 0);
+      const empty =
+        v === undefined || v === '' || v === null || (Array.isArray(v) && v.length === 0);
       out[k] = empty ? null : '[redacted]';
     } else {
       out[k] = redactSecretKeysDeep(v, depth + 1);
@@ -83,7 +84,13 @@ function redactSecretKeysDeep(value: unknown, depth = 0): unknown {
 }
 
 function sanitizeConfig(cfg: Record<string, unknown>): Record<string, unknown> {
-  const REDACTED_KEYS = ['clientId', 'clientSecret', 'confirmationSecret', 'tokenFile'] as const;
+  const REDACTED_KEYS = [
+    'clientId',
+    'clientSecret',
+    'confirmationSecret',
+    'tokenFile',
+    'allowedUploadDirs',
+  ] as const;
   const mark = (v: unknown): string | null =>
     v === undefined || v === '' || v === null || (Array.isArray(v) && v.length === 0)
       ? null
@@ -118,6 +125,75 @@ function sanitizeConfig(cfg: Record<string, unknown>): Record<string, unknown> {
   return redactSecretKeysDeep(out) as Record<string, unknown>;
 }
 
+interface ManifestTool {
+  name: string;
+  domain: string;
+  risk: ToolRisk | 'unknown';
+  [key: string]: unknown;
+}
+
+function liveManifest(raw: string, ctx: ToolContext): Record<string, unknown> {
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  const sourceTools = Array.isArray(parsed.tools) ? (parsed.tools as ManifestTool[]) : [];
+  const tools = sourceTools.filter((tool) => {
+    if (!tool || typeof tool.name !== 'string') return false;
+    if (tool.name === 'messenger_upload_images' && ctx.config.allowedUploadDirs.length === 0) {
+      return false;
+    }
+    if (
+      ctx.config.confirmationMode === 'off' &&
+      ['meta_confirm_action', 'meta_cancel_action', 'meta_list_pending_actions'].includes(tool.name)
+    ) {
+      return false;
+    }
+    const knownRisks = new Set<ToolRisk>(['sensitive', 'read', 'write', 'money', 'public']);
+    const risk: ToolRisk = knownRisks.has(tool.risk as ToolRisk)
+      ? (tool.risk as ToolRisk)
+      : 'write';
+    return evaluatePolicy(tool.name, risk, ctx.config).allowed;
+  });
+
+  const risks: Array<ToolRisk | 'unknown'> = [
+    'sensitive',
+    'read',
+    'write',
+    'money',
+    'public',
+    'unknown',
+  ];
+  const byRisk = Object.fromEntries(
+    risks.map((risk) => [
+      risk,
+      tools
+        .filter((tool) => tool.risk === risk)
+        .map((tool) => tool.name)
+        .sort(),
+    ]),
+  );
+  const domains = [...new Set(tools.map((tool) => tool.domain))].sort();
+  const byDomain = Object.fromEntries(
+    domains.map((domain) => [
+      domain,
+      tools
+        .filter((tool) => tool.domain === domain)
+        .map((tool) => tool.name)
+        .sort(),
+    ]),
+  );
+  return {
+    ...parsed,
+    catalogue_scope: 'active_policy',
+    tool_count: tools.length,
+    counts_by_risk: Object.fromEntries(risks.map((risk) => [risk, byRisk[risk]!.length])),
+    counts_by_domain: Object.fromEntries(
+      domains.map((domain) => [domain, byDomain[domain]!.length]),
+    ),
+    by_risk: byRisk,
+    by_domain: byDomain,
+    tools,
+  };
+}
+
 function jsonResource(uri: string, payload: unknown): ReadResourceResult {
   return {
     contents: [
@@ -144,6 +220,9 @@ function safeReadFile(p: string): string | null {
 
 export function registerResources(server: McpServer, ctx: ToolContext): void {
   const pendingActionsDecision = evaluatePolicy('meta_list_pending_actions', 'read', ctx.config);
+  const pendingActionsVisible =
+    ctx.config.confirmationMode !== 'off' && pendingActionsDecision.allowed;
+  const webhookEventsDecision = evaluatePolicy('messenger_get_webhook_events', 'read', ctx.config);
   // ─────────── avito://docs/safety ───────────
   server.registerResource(
     'safety-docs',
@@ -189,11 +268,16 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
           version: VERSION,
         });
       }
-      return {
-        contents: [
-          { uri: uri.toString(), mimeType: 'application/json', text: body },
-        ],
-      };
+      try {
+        return jsonResource(uri.toString(), liveManifest(body, ctx));
+      } catch (err) {
+        logger.warn({ err, manifest: MANIFEST }, 'failed to parse tools manifest');
+        return jsonResource(uri.toString(), {
+          error: 'manifest_invalid',
+          name: PACKAGE_NAME,
+          version: VERSION,
+        });
+      }
     },
   );
 
@@ -241,7 +325,7 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
   // ─────────── avito://state/pending-actions ───────────
   // Mirrors meta_list_pending_actions and must obey the same allow/deny policy,
   // because it exposes the same bearer-like confirmation ids.
-  if (pendingActionsDecision.allowed) {
+  if (pendingActionsVisible) {
     server.registerResource(
       'pending-actions',
       PENDING_ACTIONS_URI,
@@ -276,7 +360,12 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
       {
         resource: PENDING_ACTIONS_URI,
         tool: 'meta_list_pending_actions',
-        reason: pendingActionsDecision.reason,
+        reason:
+          ctx.config.confirmationMode === 'off'
+            ? 'AVITO_MCP_CONFIRMATION_MODE=off'
+            : pendingActionsDecision.allowed
+              ? 'resource unavailable'
+              : pendingActionsDecision.reason,
       },
       'resource hidden by policy',
     );
@@ -286,35 +375,48 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
   // v0.9.0: subscribable, like pending-actions. Emits resources/updated on every
   // received Avito webhook delivery. When the receiver is disabled (no webhookStore)
   // it still lists so clients can discover the capability — it just reports enabled:false.
-  server.registerResource(
-    'webhook-events',
-    WEBHOOK_EVENTS_URI,
-    {
-      title: 'Avito webhook events (live)',
-      description:
-        'Recently received Avito messenger webhook events (new chat messages). Subscribable: ' +
-        'resources/subscribe → notifications/resources/updated on each delivery. Requires the ' +
-        'webhook receiver to be enabled (AVITO_MCP_WEBHOOK_SECRET); otherwise reports enabled:false. ' +
-        'For filtered/paged access use the messenger_get_webhook_events tool.',
-      mimeType: 'application/json',
-    },
-    async (uri): Promise<ReadResourceResult> => {
-      const enabled = ctx.config.webhook.enabled;
-      return jsonResource(uri.toString(), {
-        enabled,
-        public_url: enabled ? ctx.config.webhook.publicUrl : null,
-        stats: ctx.webhookStore?.stats() ?? null,
-        events: ctx.webhookStore?.list({ limit: 50 }) ?? [],
-      });
-    },
-  );
+  if (webhookEventsDecision.allowed) {
+    server.registerResource(
+      'webhook-events',
+      WEBHOOK_EVENTS_URI,
+      {
+        title: 'Avito webhook events (live)',
+        description:
+          'Recently received Avito messenger webhook events (new chat messages). Subscribable: ' +
+          'resources/subscribe → notifications/resources/updated on each delivery. Requires the ' +
+          'webhook receiver to be enabled (AVITO_MCP_WEBHOOK_SECRET); otherwise reports enabled:false. ' +
+          'For filtered/paged access use the messenger_get_webhook_events tool.',
+        mimeType: 'application/json',
+      },
+      async (uri): Promise<ReadResourceResult> => {
+        const enabled = ctx.config.webhook.enabled;
+        return jsonResource(uri.toString(), {
+          enabled,
+          public_url: enabled ? ctx.config.webhook.publicUrl : null,
+          stats: ctx.webhookStore?.stats() ?? null,
+          events: ctx.webhookStore?.list({ limit: 50 }) ?? [],
+        });
+      },
+    );
+  } else {
+    logger.info(
+      {
+        resource: WEBHOOK_EVENTS_URI,
+        tool: 'messenger_get_webhook_events',
+        reason: webhookEventsDecision.reason,
+      },
+      'resource hidden by policy',
+    );
+  }
 
   // The SDK McpServer does not register subscribe/unsubscribe automatically — we
   // declared the capability in server.ts, so the handlers must exist. We implement
   // it lightly: track a set of subscribers and, on a pending-actions change, notify only them.
   const subscribers = new Set<string>();
   server.server.setRequestHandler(SubscribeRequestSchema, async (req) => {
-    if (req.params.uri === PENDING_ACTIONS_URI && !pendingActionsDecision.allowed) return {};
+    if (req.params.uri === PENDING_ACTIONS_URI && !pendingActionsVisible) return {};
+    if (req.params.uri === WEBHOOK_EVENTS_URI && !webhookEventsDecision.allowed) return {};
+    if (req.params.uri !== PENDING_ACTIONS_URI && req.params.uri !== WEBHOOK_EVENTS_URI) return {};
     subscribers.add(req.params.uri);
     return {};
   });
@@ -331,27 +433,25 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
   // down when this server closes — otherwise each session leaks two listeners
   // (and sendResourceUpdated calls against dead sessions) forever.
   const unsubscribers: Array<() => void> = [];
-  unsubscribers.push(
-    ctx.pendingStore.onChange(() => {
-      if (!subscribers.has(PENDING_ACTIONS_URI)) return;
-      server.server
-        .sendResourceUpdated({ uri: PENDING_ACTIONS_URI })
-        .catch((err: unknown) => {
+  if (pendingActionsVisible) {
+    unsubscribers.push(
+      ctx.pendingStore.onChange(() => {
+        if (!subscribers.has(PENDING_ACTIONS_URI)) return;
+        server.server.sendResourceUpdated({ uri: PENDING_ACTIONS_URI }).catch((err: unknown) => {
           logger.debug({ err }, 'sendResourceUpdated failed');
         });
-    }),
-  );
+      }),
+    );
+  }
 
   // v0.9.0: same wiring for webhook events — notify subscribers on each delivery.
-  if (ctx.webhookStore) {
+  if (ctx.webhookStore && webhookEventsDecision.allowed) {
     unsubscribers.push(
       ctx.webhookStore.onChange(() => {
         if (!subscribers.has(WEBHOOK_EVENTS_URI)) return;
-        server.server
-          .sendResourceUpdated({ uri: WEBHOOK_EVENTS_URI })
-          .catch((err: unknown) => {
-            logger.debug({ err }, 'sendResourceUpdated failed');
-          });
+        server.server.sendResourceUpdated({ uri: WEBHOOK_EVENTS_URI }).catch((err: unknown) => {
+          logger.debug({ err }, 'sendResourceUpdated failed');
+        });
       }),
     );
   }
@@ -402,13 +502,20 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
       const slugRaw = Array.isArray(variables.slug) ? variables.slug[0] : variables.slug;
       const slug = decodeURIComponent(String(slugRaw ?? ''));
       // Path-traversal protection: disallow '..', '/' and null bytes.
-      if (!slug || slug.includes('..') || slug.includes('/') || slug.includes('\0')) {
+      if (
+        !slug ||
+        slug.includes('..') ||
+        slug.includes('/') ||
+        slug.includes('\\') ||
+        slug.includes('\0')
+      ) {
         throw new Error(`Invalid swagger slug: ${slug}`);
       }
       const filename = `${slug}.json`;
       const full = join(SWAGGERS_DIR, filename);
       // Verify the resolved path does not escape the directory.
-      if (!resolve(full).startsWith(resolve(SWAGGERS_DIR) + '/')) {
+      const rel = relative(resolve(SWAGGERS_DIR), resolve(full));
+      if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
         throw new Error(`Swagger path escapes directory: ${slug}`);
       }
       const body = safeReadFile(full);
@@ -416,15 +523,16 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
         throw new Error(`Swagger '${slug}' not found. Available: ${swaggerFiles.join(', ')}`);
       }
       return {
-        contents: [
-          { uri: uri.toString(), mimeType: 'application/json', text: body },
-        ],
+        contents: [{ uri: uri.toString(), mimeType: 'application/json', text: body }],
       };
     },
   );
 
   logger.info(
-    { resourceCount: pendingActionsDecision.allowed ? 6 : 5, swaggerCount: swaggerFiles.length },
+    {
+      resourceCount: 4 + Number(pendingActionsVisible) + Number(webhookEventsDecision.allowed),
+      swaggerCount: swaggerFiles.length,
+    },
     'MCP resources registered',
   );
 }

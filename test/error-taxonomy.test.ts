@@ -55,7 +55,10 @@ describe('error taxonomy', () => {
   });
 
   it('transport error (network) → NETWORK_ERROR, retryable=true', () => {
-    const t = new AvitoTransportError({ method: 'GET', url: 'http://x' }, new Error('ECONNREFUSED'));
+    const t = new AvitoTransportError(
+      { method: 'GET', url: 'http://x' },
+      new Error('ECONNREFUSED'),
+    );
     expect(errorToMcpContent(t).structuredContent).toMatchObject({
       error: { type: 'NETWORK_ERROR', retryable: true },
     });
@@ -77,7 +80,7 @@ describe('error taxonomy', () => {
 
   it('text content is preserved for backwards-compat', () => {
     const res = errorToMcpContent(makeApiErr(429, { reason: 'slow down' }));
-    expect((res.content as Array<{ text: string }>)[0].text).toContain('429');
-    expect((res.content as Array<{ text: string }>)[0].text).toContain('slow down');
+    expect((res.content as Array<{ text: string }>)[0]!.text).toContain('429');
+    expect((res.content as Array<{ text: string }>)[0]!.text).toContain('slow down');
   });
 });

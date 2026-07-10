@@ -10,13 +10,14 @@
  * Three tools:
  *   - messenger_get_webhook_events  (read)  — list received events, newest-first.
  *   - messenger_get_webhook_status  (read)  — receiver config + ring-buffer stats.
- *   - messenger_register_webhook    (write) — subscribe Avito to the configured receiver URL.
+ *   - messenger_register_webhook  (public) — subscribe Avito to the configured receiver URL.
  *
  * The register function is NOT wired into domain-registry.ts here — the orchestrator does that.
  */
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
+import type { WebhookConfig } from '../config.js';
 import { logger } from '../logger.js';
 import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 import { evaluatePolicy } from '../core/policy.js';
@@ -53,18 +54,23 @@ function maskSecret(secret: string): string {
   return '•'.repeat(secret.length - 4) + secret.slice(-4);
 }
 
+/** Encodes an arbitrary random secret as exactly one URL path segment. */
+export function webhookSecretPathSegment(secret: string): string {
+  return encodeURIComponent(secret);
+}
+
 /**
  * Rejects URLs Avito's infrastructure can never deliver to: non-HTTPS schemes,
  * loopback/wildcard hosts and RFC 1918 private ranges. Registering such a URL
  * "succeeds" on the Avito side but silently delivers nothing — the worst
  * possible failure mode for a webhook subscription.
  */
-function assertAvitoReachableUrl(raw: string): void {
+export function assertAvitoReachableUrl(raw: string): void {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(`Webhook URL is not a valid URL: ${raw}`);
+    throw new Error('Webhook URL is not a valid URL.');
   }
   const host = url.hostname.toLowerCase();
   const isLoopback =
@@ -89,6 +95,56 @@ function assertAvitoReachableUrl(raw: string): void {
       `Webhook URL must be HTTPS (got ${url.protocol}//): Avito only delivers events to public HTTPS endpoints.`,
     );
   }
+}
+
+export function configuredWebhookReceiverUrl(config: WebhookConfig): string {
+  if (!config.enabled || !config.secret) {
+    throw new Error(
+      'Webhook receiver is not configured: set AVITO_MCP_WEBHOOK_SECRET (and ' +
+        'AVITO_MCP_WEBHOOK_PUBLIC_URL for a public domain).',
+    );
+  }
+  const url = `${config.publicUrl}${config.path}/${webhookSecretPathSegment(config.secret)}`;
+  assertAvitoReachableUrl(url);
+  return url;
+}
+
+export function assertConfiguredWebhookReceiverUrl(raw: string, config: WebhookConfig): void {
+  const expected = configuredWebhookReceiverUrl(config);
+  if (raw !== expected) {
+    throw new Error(
+      'Webhook URL must exactly match the configured receiver URL; arbitrary webhook ' +
+        'destinations are not allowed.',
+    );
+  }
+}
+
+export function configuredWebhookReceiverUrlSchema(config: WebhookConfig) {
+  return z
+    .string()
+    .url()
+    .superRefine((url, refinement) => {
+      try {
+        assertConfiguredWebhookReceiverUrl(url, config);
+      } catch (error) {
+        refinement.addIssue({
+          code: 'custom',
+          message:
+            error instanceof Error ? error.message : 'Webhook receiver URL validation failed.',
+        });
+      }
+    });
+}
+
+export function redactWebhookUrlPreview(preview: unknown): unknown {
+  if (!preview || typeof preview !== 'object') return preview;
+  const value = preview as Record<string, unknown>;
+  const body = value.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return preview;
+  return {
+    ...value,
+    body: { ...(body as Record<string, unknown>), url: '[redacted webhook URL]' },
+  };
 }
 
 export const register: DomainRegister = (server, ctx) => {
@@ -123,14 +179,18 @@ export const register: DomainRegister = (server, ctx) => {
           chat_id: z
             .string()
             .optional()
-            .describe('Filter to a single chat_id (as seen in the event payload). Omit for all chats.'),
+            .describe(
+              'Filter to a single chat_id (as seen in the event payload). Omit for all chats.',
+            ),
           limit: z
             .number()
             .int()
             .min(1)
             .max(100)
             .optional()
-            .describe('Maximum number of events to return (1–100). Omit to return all retained events.'),
+            .describe(
+              'Maximum number of events to return (1–100). Omit to return all retained events.',
+            ),
         },
         annotations: {
           readOnlyHint: true,
@@ -192,7 +252,7 @@ export const register: DomainRegister = (server, ctx) => {
       {
         title: 'Webhook receiver status',
         description:
-          'Returns the configuration and live stats of this server\'s Avito webhook RECEIVER: whether it is enabled, ' +
+          "Returns the configuration and live stats of this server's Avito webhook RECEIVER: whether it is enabled, " +
           'the public URL, the subscribe URL (with the secret masked), and ring-buffer counters (retained / total / last received). ' +
           'Does NOT call the Avito API. Use it to verify the receiver is set up before messenger_register_webhook, ' +
           'then read collected events with messenger_get_webhook_events.',
@@ -210,7 +270,9 @@ export const register: DomainRegister = (server, ctx) => {
         const publicUrl = w.enabled ? w.publicUrl : null;
         // Subscribe URL with the secret masked — never echo the real secret.
         const subscribeUrl =
-          w.enabled && w.secret ? `${w.publicUrl}${w.path}/${maskSecret(w.secret)}` : null;
+          w.enabled && w.secret
+            ? `${w.publicUrl}${w.path}/${maskSecret(webhookSecretPathSegment(w.secret))}`
+            : null;
         const hint = w.enabled
           ? 'Receiver is enabled. Subscribe Avito to the (unmasked) URL via messenger_register_webhook, ' +
             'then poll messenger_get_webhook_events.'
@@ -238,9 +300,9 @@ export const register: DomainRegister = (server, ctx) => {
   defineTool(server, ctx, {
     name: 'messenger_register_webhook',
     title: '⚠️ Register webhook receiver',
-    risk: 'write',
+    risk: 'public',
     description:
-      'Subscribes Avito to THIS server\'s configured webhook receiver URL so messenger events (new chat messages) start flowing. ' +
+      "Subscribes Avito to THIS server's configured webhook receiver URL so messenger events (new chat messages) start flowing. " +
       'Registers only the URL derived from the webhook config (AVITO_MCP_WEBHOOK_PUBLIC_URL + path + secret). ' +
       'Adds a webhook subscription (additive — it does not delete other subscriptions); Avito will then ' +
       'POST events to the URL (requires a PUBLIC HTTPS address reachable from the internet; localhost does not work). ' +
@@ -251,9 +313,7 @@ export const register: DomainRegister = (server, ctx) => {
     path: '/messenger/v3/webhook',
     domain: 'messenger',
     input: {
-      url: z
-        .string()
-        .url()
+      url: configuredWebhookReceiverUrlSchema(ctx.config.webhook)
         .optional()
         .describe(
           'Optional explicit copy of the configured receiver URL Avito should POST events to. ' +
@@ -266,29 +326,17 @@ export const register: DomainRegister = (server, ctx) => {
       // Never allow a caller-provided URL to redirect those events to an arbitrary host;
       // it may only repeat the operator-configured receiver URL.
       defaults: (c) => {
-        const w = c.config.webhook;
-        if (!w.enabled || !w.secret) {
-          throw new Error(
-            'Webhook receiver is not configured: set AVITO_MCP_WEBHOOK_SECRET (and ' +
-              'AVITO_MCP_WEBHOOK_PUBLIC_URL for a public domain).',
-          );
-        }
-        return { url: `${w.publicUrl}${w.path}/${w.secret}` };
+        return { url: configuredWebhookReceiverUrl(c.config.webhook) };
       },
       transform: (body) => {
-        const expectedUrl = `${ctx.config.webhook.publicUrl}${ctx.config.webhook.path}/${ctx.config.webhook.secret}`;
         const url = typeof body.url === 'string' ? body.url : undefined;
         if (!url) {
           throw new Error('Webhook receiver URL could not be computed from config.');
         }
-        if (url !== expectedUrl) {
-          throw new Error(
-            'Webhook URL override must match the configured receiver URL; arbitrary webhook destinations are not allowed.',
-          );
-        }
-        assertAvitoReachableUrl(url);
+        assertConfiguredWebhookReceiverUrl(url, ctx.config.webhook);
         return body;
       },
     },
+    redactDryRunPreview: redactWebhookUrlPreview,
   });
 };

@@ -33,6 +33,7 @@ function makeConfig(
     clientSecret: 'sec',
     profileId: 12345,
     baseUrl: 'https://api.test.example',
+    cpaSource: 'avito-mcp-test',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     mode: 'full_access',
@@ -57,6 +58,8 @@ function makeConfig(
       allowNoAuth: false,
       allowedHosts: [],
       allowedOrigins: [],
+      maxSessions: 100,
+      sessionIdleSec: 1800,
       oauthTokenTtlSec: 3600,
     },
     webhook: {

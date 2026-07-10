@@ -4,7 +4,8 @@
  *   - mcpAuthRouter (OAuth 2.1 AS+RS metadata, /authorize, /token, /register) at root
  *   - /mcp           → Streamable HTTP MCP, guarded per AVITO_MCP_HTTP_AUTH
  *   - {webhook.path}/:secret → Avito webhook receiver (runs even in pure stdio mode)
- *   - /healthz       → the same snapshot as `--health`
+ *   - /healthz       → minimal unauthenticated liveness/version response
+ *   - /readyz        → minimal readiness bit
  *
  * TLS is intentionally NOT handled here: bind 127.0.0.1 and terminate TLS at a
  * reverse proxy (nginx/Caddy) on the domain — see README. The fail-closed security
@@ -18,11 +19,12 @@ import type { Server as HttpServer } from 'node:http';
 
 import type { Config, HttpConfig } from '../config.js';
 import type { ToolContext } from '../core/tool-factory.js';
+import { hasConfiguredCredentials } from '../core/credentials.js';
 import { logger } from '../logger.js';
 import { PACKAGE_NAME, VERSION } from '../version.js';
 import { createOAuthSubsystem } from './oauth/index.js';
-import { createMcpHttpHandler } from './mcp-http.js';
-import { createWebhookRouter, secretsMatch } from './webhook.js';
+import { createMcpHttpHandler, resolveRebindingProtection } from './mcp-http.js';
+import { createWebhookRouter } from './webhook.js';
 
 export interface HttpServerHandle {
   url: string;
@@ -57,10 +59,43 @@ function bearerGuard(tokens: string[]): RequestHandler {
       next();
       return;
     }
-    res
-      .status(401)
-      .set('WWW-Authenticate', 'Bearer realm="avito-mcp"')
-      .json({ error: 'unauthorized', error_description: 'Valid AVITO_MCP_HTTP_AUTH_TOKEN bearer required.' });
+    res.status(401).set('WWW-Authenticate', 'Bearer realm="avito-mcp"').json({
+      error: 'unauthorized',
+      error_description: 'Valid AVITO_MCP_HTTP_AUTH_TOKEN bearer required.',
+    });
+  };
+}
+
+/** Protects OAuth/DCR and MCP routes, not just the SDK transport endpoint. */
+function rebindingGuard(config: HttpConfig): RequestHandler {
+  const protection = resolveRebindingProtection(config);
+  return (req, res, next) => {
+    let host: string | undefined;
+    try {
+      host = req.headers.host ? new URL(`http://${req.headers.host}`).host : undefined;
+    } catch {
+      host = undefined;
+    }
+    if (!host || !protection.allowedHosts.includes(host)) {
+      res.status(403).json({ error: 'forbidden', error_description: 'Invalid Host header' });
+      return;
+    }
+
+    const rawOrigin = req.headers.origin;
+    if (rawOrigin) {
+      let origin: string | undefined;
+      try {
+        const parsed = new URL(rawOrigin);
+        if (parsed.pathname === '/' && !parsed.search && !parsed.hash) origin = parsed.origin;
+      } catch {
+        origin = undefined;
+      }
+      if (!origin || !protection.allowedOrigins.includes(origin)) {
+        res.status(403).json({ error: 'forbidden', error_description: 'Invalid Origin header' });
+        return;
+      }
+    }
+    next();
   };
 }
 
@@ -68,23 +103,22 @@ function bearerGuard(tokens: string[]): RequestHandler {
  * Starts the Express listener. Throws (fail-closed) on an insecure remote config.
  * Only call when the HTTP MCP transport and/or the webhook receiver is enabled.
  */
-export async function startHttpServer(baseCtx: ToolContext, config: Config): Promise<HttpServerHandle> {
+export async function startHttpServer(
+  baseCtx: ToolContext,
+  config: Config,
+): Promise<HttpServerHandle> {
   const h: HttpConfig = config.http;
   const httpMcpEnabled = h.transport === 'http' || h.transport === 'both';
 
   const app = express();
+  let closing = false;
+  let oauthReady: (() => boolean) | undefined;
   app.disable('x-powered-by');
   // The documented remote setup is a local reverse proxy (nginx/Caddy) doing TLS.
   // Trust exactly that hop so req.ip (rate-limit keying, logs) is the real client
   // address — and ONLY loopback, so a spoofed X-Forwarded-For from a direct
   // connection is never believed.
   app.set('trust proxy', 'loopback');
-  // JSON for MCP/DCR; urlencoded for the OAuth /token request and the /authorize
-  // consent form (both are application/x-www-form-urlencoded). body-parser's _body
-  // guard makes this safe even where the SDK auth handlers also parse.
-  app.use(express.json({ limit: '4mb' }));
-  app.use(express.urlencoded({ extended: false, limit: '1mb' }));
-
   // ── health probe (always on) ───────────────────────────────────────────────
   // Deliberately minimal: this endpoint is reachable without auth, so it must
   // not describe the deployment (auth scheme, safety mode, URLs, credential
@@ -92,9 +126,25 @@ export async function startHttpServer(baseCtx: ToolContext, config: Config): Pro
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true, name: PACKAGE_NAME, version: VERSION });
   });
+  // Readiness deliberately exposes one bit only. Config has already been parsed
+  // if this handler exists; a persistent OAuth store proved its directory/lease
+  // at construction and reports false once durable shutdown starts.
+  app.get('/readyz', async (_req, res) => {
+    const apiReady =
+      !httpMcpEnabled ||
+      (hasConfiguredCredentials(config) && (await baseCtx.client.tokenStore.isStorageReady()));
+    const webhookReady = baseCtx.webhookStore?.isReady() ?? true;
+    const ready = !closing && apiReady && webhookReady && (oauthReady?.() ?? true);
+    res.status(ready ? 200 : 503).json({ ok: ready });
+  });
 
   // ── webhook receiver (independent of MCP transport) ─────────────────────────
   if (config.webhook.enabled && baseCtx.webhookStore) {
+    if (!config.webhook.secret || Buffer.byteLength(config.webhook.secret, 'utf8') < 32) {
+      throw new Error(
+        'AVITO_MCP_WEBHOOK_SECRET must contain at least 32 bytes from a cryptographically secure generator',
+      );
+    }
     app.use(createWebhookRouter(config.webhook, baseCtx.webhookStore));
     logger.info(
       { path: `${config.webhook.path}/<secret>`, publicUrl: config.webhook.publicUrl },
@@ -103,12 +153,13 @@ export async function startHttpServer(baseCtx: ToolContext, config: Config): Pro
   }
 
   // ── remote MCP over Streamable HTTP ─────────────────────────────────────────
-  const closers: Array<() => Promise<void>> = [];
+  const preServerClosers: Array<() => Promise<void>> = [];
+  const postServerClosers: Array<() => Promise<void>> = [];
+  if (baseCtx.webhookStore) postServerClosers.push(() => baseCtx.webhookStore!.flush());
   if (httpMcpEnabled) {
-    const mcp = createMcpHttpHandler(baseCtx, h);
-    closers.push(() => mcp.closeAll());
-
+    app.use(rebindingGuard(h));
     let guard: RequestHandler;
+    let closeOAuth: (() => Promise<void>) | undefined;
     if (h.auth === 'oauth') {
       if (!h.oauthOwnerPassword) {
         throw new Error(
@@ -119,10 +170,14 @@ export async function startHttpServer(baseCtx: ToolContext, config: Config): Pro
       const oauth = createOAuthSubsystem(h);
       app.use(oauth.router); // mcpAuthRouter must be mounted at the app root
       guard = oauth.requireAuth;
+      oauthReady = () => oauth.provider.isReady();
+      closeOAuth = () => oauth.close();
       logger.info({ publicUrl: h.publicUrl }, 'OAuth 2.1 authorization server mounted');
     } else if (h.auth === 'bearer') {
       if (h.authTokens.length === 0) {
-        throw new Error('AVITO_MCP_HTTP_AUTH=bearer requires AVITO_MCP_HTTP_AUTH_TOKEN (comma-separated allowed token[s]).');
+        throw new Error(
+          'AVITO_MCP_HTTP_AUTH=bearer requires AVITO_MCP_HTTP_AUTH_TOKEN (comma-separated allowed token[s]).',
+        );
       }
       guard = bearerGuard(h.authTokens);
       logger.warn('HTTP MCP using shared-secret bearer auth (AVITO_MCP_HTTP_AUTH=bearer)');
@@ -135,24 +190,33 @@ export async function startHttpServer(baseCtx: ToolContext, config: Config): Pro
         );
       }
       guard = (_req, _res, next) => next();
-      logger.warn({ host: h.host }, 'HTTP MCP running WITHOUT authentication (AVITO_MCP_HTTP_AUTH=none)');
+      logger.warn(
+        { host: h.host },
+        'HTTP MCP running WITHOUT authentication (AVITO_MCP_HTTP_AUTH=none)',
+      );
     }
 
-    app.all('/mcp', guard, mcp.handleRequest);
+    let mcp: ReturnType<typeof createMcpHttpHandler>;
+    try {
+      mcp = createMcpHttpHandler(baseCtx, h);
+    } catch (err) {
+      await closeOAuth?.().catch(() => undefined);
+      throw err;
+    }
+    preServerClosers.push(() => mcp.closeAll());
+    if (closeOAuth) postServerClosers.push(closeOAuth);
+    // Authenticate before parsing a potentially multi-megabyte MCP request.
+    app.all('/mcp', guard, express.json({ limit: '4mb' }), mcp.handleRequest);
   }
 
   // ── uniform 404 + error contract ─────────────────────────────────────────────
-  // Catch-all 404: byte-identical to the webhook route's wrong-secret answer, so
-  // a probe can't distinguish "receiver exists, wrong secret" from "no receiver
-  // here" (Express' default HTML 404 differs in content-type and headers).
+  // Catch-all 404 stays terse JSON. The mounted webhook route deliberately
+  // returns a uniform 200 for valid and invalid secret candidates.
   app.use((_req, res) => {
     res.status(404).json({ error: 'not found' });
   });
-  // Final error handler. Without one, Express answers a body-parse failure with
-  // its default HTML page — a full stack trace in development mode. Two contracts:
-  //   • a genuine Avito delivery (correct secret in the path) is ALWAYS answered
-  //     200 even if the body was malformed, so Avito never retries/disables us;
-  //   • everything else gets a terse JSON status with no internals.
+  // Final error handler. Webhook body failures are handled inside its router so
+  // this generic path never needs to inspect or compare a secret URL.
   const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     const status =
       typeof (err as { status?: unknown })?.status === 'number' &&
@@ -160,15 +224,6 @@ export async function startHttpServer(baseCtx: ToolContext, config: Config): Pro
       (err as { status: number }).status < 600
         ? (err as { status: number }).status
         : 500;
-    const w = config.webhook;
-    if (w.enabled && w.secret) {
-      const prefix = `${w.path}/`;
-      if (req.path.startsWith(prefix) && secretsMatch(req.path.slice(prefix.length), w.secret)) {
-        logger.warn({ err: (err as Error)?.message }, 'webhook delivery error (answered 200 anyway)');
-        if (!res.headersSent) res.status(200).json({ ok: true });
-        return;
-      }
-    }
     logger.warn({ err: (err as Error)?.message, path: req.path, status }, 'http request error');
     if (!res.headersSent) {
       res.status(status).json({ error: status === 400 ? 'bad_request' : 'error' });
@@ -179,8 +234,20 @@ export async function startHttpServer(baseCtx: ToolContext, config: Config): Pro
   app.use(errorHandler);
 
   const server = await new Promise<HttpServer>((resolve, reject) => {
-    const s = app.listen(h.port, h.host, () => resolve(s));
+    // Express 5 invokes the listen callback with an Error on bind failure.
+    // Ignoring that argument incorrectly resolves startup before the `error`
+    // event is observed.
+    const s = app.listen(h.port, h.host, (err?: Error) => (err ? reject(err) : resolve(s)));
     s.on('error', reject);
+  }).catch(async (err: unknown) => {
+    // A bind failure happens after MCP reapers and possibly an OAuth file lease
+    // have been created. Release both before propagating the startup error.
+    closing = true;
+    await Promise.allSettled([
+      ...preServerClosers.map((close) => close()),
+      ...postServerClosers.map((close) => close()),
+    ]);
+    throw err;
   });
 
   logger.info(
@@ -198,12 +265,43 @@ export async function startHttpServer(baseCtx: ToolContext, config: Config): Pro
   const address = server.address();
   const boundPort = typeof address === 'object' && address !== null ? address.port : h.port;
 
+  let closePromise: Promise<void> | undefined;
   return {
     url: `http://${h.host}:${boundPort}`,
     port: boundPort,
-    close: async () => {
-      for (const c of closers) await c().catch(() => undefined);
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+    close: () => {
+      if (closePromise) return closePromise;
+      closePromise = (async () => {
+        closing = true;
+        // Stop accepting new work first. The callback waits for existing HTTP
+        // requests, so close MCP transports next to release long-lived SSE.
+        const serverClosed = new Promise<void>((resolve, reject) => {
+          server.close((err) => (err ? reject(err) : resolve()));
+        });
+        let firstError: unknown;
+        for (const close of preServerClosers) {
+          try {
+            await close();
+          } catch (err) {
+            firstError ??= err;
+          }
+        }
+        try {
+          await serverClosed;
+        } catch (err) {
+          firstError ??= err;
+        }
+        // No OAuth request can mutate the store after serverClosed resolves.
+        for (const close of postServerClosers) {
+          try {
+            await close();
+          } catch (err) {
+            firstError ??= err;
+          }
+        }
+        if (firstError) throw firstError;
+      })();
+      return closePromise;
     },
   };
 }

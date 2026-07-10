@@ -11,6 +11,7 @@ import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 
 import { AvitoClient } from '../src/core/client.js';
+import { createTokenAccountFingerprint } from '../src/core/token-store.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import { IdempotencyStore } from '../src/core/idempotency.js';
 import { register as registerMeta } from '../src/domains/meta.js';
@@ -23,6 +24,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     clientSecret: 'sec',
     profileId: 12345,
     baseUrl: 'https://api.test.example',
+    cpaSource: 'avito-mcp-test',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     mode: 'full_access',
@@ -47,6 +49,8 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
       allowNoAuth: false,
       allowedHosts: [],
       allowedOrigins: [],
+      maxSessions: 100,
+      sessionIdleSec: 1800,
       oauthTokenTtlSec: 3600,
     },
     webhook: {
@@ -152,16 +156,22 @@ describe('meta_auth_status', () => {
     expect(sc.configured).toBe(true);
     expect(sc.tokenPresent).toBe(false);
     expect(sc.expiresInSec).toBeNull();
+    expect(sc.tokenFile).toBe('[redacted]');
     // probe defaulted to false → no refresh attempted, probeOk null
     expect(sc.probeOk).toBeNull();
   });
 
   it('reports tokenPresent=true with expiresInSec when token file exists', async () => {
     const cfg = makeConfig();
-    // Write a fake token file directly
+    // Write a valid account-bound token record directly.
     await fs.writeFile(
       cfg.tokenFile,
-      JSON.stringify({ accessToken: 'never-shown', expiresAt: Date.now() + 600_000 }),
+      JSON.stringify({
+        version: 1,
+        accountFingerprint: createTokenAccountFingerprint(cfg),
+        accessToken: 'never-shown',
+        expiresAt: Date.now() + 600_000,
+      }),
     );
     const { client } = await makeRig(cfg);
     cleanup = async () => {
@@ -176,5 +186,24 @@ describe('meta_auth_status', () => {
     // CRITICAL: actual token value MUST NOT appear in the output
     const json = JSON.stringify(sc);
     expect(json).not.toContain('never-shown');
+    expect(sc.tokenFile).toBe('[redacted]');
+  });
+
+  it('does not report a legacy or foreign-account token record as present', async () => {
+    const cfg = makeConfig();
+    await fs.writeFile(
+      cfg.tokenFile,
+      JSON.stringify({ accessToken: 'legacy-token', expiresAt: Date.now() + 600_000 }),
+    );
+    const { client } = await makeRig(cfg);
+    cleanup = async () => {
+      await client.close();
+      await fs.rm(cfg.tokenFile, { force: true });
+    };
+    const res = await client.callTool({ name: 'meta_auth_status', arguments: {} });
+    const sc = res.structuredContent as Record<string, unknown>;
+    expect(sc.tokenPresent).toBe(false);
+    expect(sc.expiresInSec).toBeNull();
+    expect(JSON.stringify(sc)).not.toContain('legacy-token');
   });
 });

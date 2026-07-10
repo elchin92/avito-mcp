@@ -33,6 +33,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     clientSecret: 'sec',
     profileId: 12345,
     baseUrl: 'https://api.test.example',
+    cpaSource: 'avito-mcp-test',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     mode: 'full_access',
@@ -58,6 +59,8 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
       allowNoAuth: false,
       allowedHosts: [],
       allowedOrigins: [],
+      maxSessions: 100,
+      sessionIdleSec: 1800,
       oauthTokenTtlSec: 3600,
     },
     webhook: {
@@ -141,9 +144,10 @@ async function makeRig(
   return { server, client: client2, cfg, ctx, fetchMock, pendingStore };
 }
 
-async function makeUploadRig(confirmationMode: ConfirmationMode) {
+async function makeUploadRig(confirmationMode: ConfirmationMode, extra: Partial<Config> = {}) {
   const uploadDir = await fs.mkdtemp(join(tmpdir(), 'avito-upload-confirm-'));
   const cfg = makeConfig({
+    ...extra,
     confirmationMode,
     allowedUploadDirs: [uploadDir],
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
@@ -151,7 +155,10 @@ async function makeUploadRig(confirmationMode: ConfirmationMode) {
   const imagePath = join(uploadDir, 'one.png');
   await fs.writeFile(
     imagePath,
-    Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=', 'base64'),
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+      'base64',
+    ),
   );
 
   const fetchMock = vi.fn(async (url: string) => {
@@ -172,7 +179,8 @@ async function makeUploadRig(confirmationMode: ConfirmationMode) {
     retry: { retry429BaseMs: 1, max429Retries: 0, retry5xxBackoffMs: 1, max5xxRetries: 0 },
   });
   const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
-  const ctx: ToolContext = { client, config: cfg, pendingStore };
+  const idempotencyStore = new IdempotencyStore(cfg.idempotencyTtlSec * 1000);
+  const ctx: ToolContext = { client, config: cfg, pendingStore, idempotencyStore };
   const server = new McpServer({ name: 'test', version: '0.0.0' });
   registerMessenger(server, ctx);
   registerMeta(server, ctx);
@@ -218,12 +226,14 @@ describe('confirmation flow', () => {
     await rig.client.close();
   });
 
-  it('reuses the same pending action for duplicate idempotency keys before confirmation', async () => {
+  it('coalesces concurrent pending creation for duplicate idempotency keys', async () => {
     const rig = await makeRig('money_public');
     cfg = rig.cfg;
     const args = { item_id: 1, vas_id: 'highlight', idempotencyKey: 'same-confirm-key' };
-    const first = await rig.client.callTool({ name: 'money_tool', arguments: args });
-    const second = await rig.client.callTool({ name: 'money_tool', arguments: args });
+    const [first, second] = await Promise.all([
+      rig.client.callTool({ name: 'money_tool', arguments: args }),
+      rig.client.callTool({ name: 'money_tool', arguments: args }),
+    ]);
     const firstId = extractConfirmationId(parseText(first.content));
     const secondId = extractConfirmationId(parseText(second.content));
 
@@ -241,6 +251,72 @@ describe('confirmation flow', () => {
     await rig.client.close();
   });
 
+  it('keeps an idempotency key reserved while its confirmed action is executing', async () => {
+    const rig = await makeRig('money_public', 900, { idempotencyTtlSec: 0.005 });
+    cfg = rig.cfg;
+    const args = { item_id: 1, vas_id: 'highlight', idempotencyKey: 'inflight-confirm-key' };
+    const first = await rig.client.callTool({ name: 'money_tool', arguments: args });
+    const confirmationId = extractConfirmationId(parseText(first.content));
+
+    // The ledger TTL is intentionally shorter than the pending TTL. Expiry must
+    // not reopen the slot while the confirmation is still waiting for approval.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const expiredButPending = await rig.client.callTool({ name: 'money_tool', arguments: args });
+    expect(extractConfirmationId(parseText(expiredButPending.content))).toBe(confirmationId);
+
+    let releaseOperation!: () => void;
+    const operationGate = new Promise<void>((resolve) => {
+      releaseOperation = resolve;
+    });
+    let markOperationStarted!: () => void;
+    const operationStarted = new Promise<void>((resolve) => {
+      markOperationStarted = resolve;
+    });
+    let operationCalls = 0;
+    rig.fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith('/token')) {
+        return new Response(
+          JSON.stringify({ access_token: 'tk', expires_in: 3600, token_type: 'bearer' }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      operationCalls += 1;
+      markOperationStarted();
+      await operationGate;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    const confirmation = rig.client.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: confirmationId },
+    });
+    await operationStarted;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // take() has removed the action from the confirmable list, but its lifecycle
+    // remains active until execution + the final idempotency remember complete.
+    expect(rig.pendingStore.size()).toBe(0);
+    expect(rig.pendingStore.isActive(confirmationId)).toBe(true);
+    const duringExecution = await rig.client.callTool({ name: 'money_tool', arguments: args });
+    expect(extractConfirmationId(parseText(duringExecution.content))).toBe(confirmationId);
+    expect(duringExecution.structuredContent).toMatchObject({ idempotent_replay: true });
+    expect(operationCalls).toBe(1);
+
+    releaseOperation();
+    const confirmed = await confirmation;
+    expect(confirmed.isError).not.toBe(true);
+    expect(rig.pendingStore.isActive(confirmationId)).toBe(false);
+
+    const completedReplay = await rig.client.callTool({ name: 'money_tool', arguments: args });
+    expect(parseText(completedReplay.content)).not.toContain('requires_confirmation');
+    expect(completedReplay.structuredContent).toMatchObject({ idempotent_replay: true });
+    expect(operationCalls).toBe(1);
+    await rig.client.close();
+  });
+
   it('a cancelled pending does not wedge the idempotency key — retry creates a fresh, confirmable pending', async () => {
     const rig = await makeRig('money_public');
     cfg = rig.cfg;
@@ -252,7 +328,10 @@ describe('confirmation flow', () => {
 
     // Discard the pending action. The idempotency entry must NOT keep replaying the
     // now-dead confirmation_id (the v1.0.3 stale-replay wedge).
-    await rig.client.callTool({ name: 'meta_cancel_action', arguments: { confirmation_id: firstId } });
+    await rig.client.callTool({
+      name: 'meta_cancel_action',
+      arguments: { confirmation_id: firstId },
+    });
     expect(rig.pendingStore.size()).toBe(0);
 
     // Retry with the SAME key → a FRESH pending, not a stale replay of the dead id.
@@ -292,7 +371,6 @@ describe('confirmation flow', () => {
     await rig.client.close();
   });
 
-
   it('custom messenger_upload_images requires confirmation in all_destructive mode', async () => {
     const rig = await makeUploadRig('all_destructive');
     cfg = rig.cfg;
@@ -317,6 +395,62 @@ describe('confirmation flow', () => {
     expect(parseText(confirmed.content)).toMatch(/status=200/);
     expect(rig.fetchMock.mock.calls.length).toBeGreaterThan(0);
 
+    await rig.client.close();
+    await fs.rm(rig.uploadDir, { recursive: true, force: true });
+  });
+
+  it('custom upload uses the common dry-run and idempotency pipeline', async () => {
+    const rig = await makeUploadRig('off');
+    cfg = rig.cfg;
+    const preview = await rig.client.callTool({
+      name: 'messenger_upload_images',
+      arguments: { paths: [rig.imagePath], dryRun: true },
+    });
+    expect(preview.isError).not.toBe(true);
+    expect(JSON.stringify(preview)).not.toContain(rig.uploadDir);
+    expect(preview.structuredContent).toMatchObject({
+      dryRun: true,
+      request_preview: { body: { file_count: 1, filenames: ['one.png'] } },
+    });
+    expect(rig.fetchMock).not.toHaveBeenCalled();
+
+    const args = {
+      paths: [rig.imagePath],
+      idempotencyKey: 'upload-idempotency-key',
+    };
+    const first = await rig.client.callTool({ name: 'messenger_upload_images', arguments: args });
+    const calls = rig.fetchMock.mock.calls.length;
+    const second = await rig.client.callTool({ name: 'messenger_upload_images', arguments: args });
+    expect(first.isError).not.toBe(true);
+    expect(second.structuredContent).toMatchObject({ idempotent_replay: true });
+    expect(rig.fetchMock).toHaveBeenCalledTimes(calls);
+    await rig.client.close();
+    await fs.rm(rig.uploadDir, { recursive: true, force: true });
+  });
+
+  it('rejects duplicate files and aggregate batches over maxUploadMb before HTTP', async () => {
+    const rig = await makeUploadRig('off', { maxUploadMb: 1 });
+    cfg = rig.cfg;
+    const duplicate = await rig.client.callTool({
+      name: 'messenger_upload_images',
+      arguments: { paths: [rig.imagePath, rig.imagePath] },
+    });
+    expect(duplicate.isError).toBe(true);
+    expect(JSON.stringify(duplicate)).toContain('duplicate_file');
+
+    const largeA = join(rig.uploadDir, 'large-a.png');
+    const largeB = join(rig.uploadDir, 'large-b.png');
+    const pngPrefix = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const payload = Buffer.concat([pngPrefix, Buffer.alloc(600 * 1024)]);
+    await fs.writeFile(largeA, payload);
+    await fs.writeFile(largeB, payload);
+    const aggregate = await rig.client.callTool({
+      name: 'messenger_upload_images',
+      arguments: { paths: [largeA, largeB] },
+    });
+    expect(aggregate.isError).toBe(true);
+    expect(JSON.stringify(aggregate)).toContain('batch_too_large');
+    expect(rig.fetchMock).not.toHaveBeenCalled();
     await rig.client.close();
     await fs.rm(rig.uploadDir, { recursive: true, force: true });
   });
@@ -574,6 +708,134 @@ describe('hard-confirmation (AVITO_MCP_CONFIRMATION_SECRET)', () => {
     expect(locked.isError).toBe(true);
     expect(parseText(locked.content)).toMatch(/Too many/);
     expect(rig.pendingStore.size()).toBe(0);
+    await rig.client.close();
+  });
+
+  it('shares the hard-confirmation lockout across MCP server sessions', async () => {
+    const rig = await makeRig('money_public', 900, {
+      confirmationSecret: 'shared-lockout-secret-1234567890123',
+    });
+    cfg = rig.cfg;
+
+    const secondServer = new McpServer({ name: 'second-session', version: '0.0.0' });
+    registerMeta(secondServer, rig.ctx);
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    await secondServer.connect(serverTransport);
+    const secondClient = new Client(
+      { name: 'second-session-client', version: '0.0.0' },
+      { capabilities: {} },
+    );
+    await secondClient.connect(clientTransport);
+
+    const first = await rig.client.callTool({
+      name: 'money_tool',
+      arguments: { item_id: 1, vas_id: 'x' },
+    });
+    const id = extractConfirmationId(parseText(first.content));
+    const clients = [rig.client, secondClient, rig.client, secondClient];
+    for (const [index, sessionClient] of clients.entries()) {
+      const rejected = await sessionClient.callTool({
+        name: 'meta_confirm_action',
+        arguments: { confirmation_id: id, confirmation_secret: `wrong-${index}` },
+      });
+      expect(rejected.isError).toBe(true);
+      expect(rig.pendingStore.size()).toBe(1);
+    }
+    const locked = await secondClient.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: id, confirmation_secret: 'wrong-final' },
+    });
+    expect(locked.isError).toBe(true);
+    expect(parseText(locked.content)).toMatch(/Too many/);
+    expect(rig.pendingStore.size()).toBe(0);
+
+    await secondClient.close();
+    await secondServer.close();
+    await rig.client.close();
+  });
+
+  it('shares hard-confirmation lockout attempts across MCP sessions', async () => {
+    const rig = await makeRig('money_public', 900, {
+      confirmationSecret: 'cross-session-secret-1234567890123',
+    });
+    cfg = rig.cfg;
+
+    const secondServer = new McpServer({ name: 'test-second', version: '0.0.0' });
+    registerMeta(secondServer, rig.ctx);
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    await secondServer.connect(serverTransport);
+    const secondClient = new Client(
+      { name: 'test-second', version: '0.0.0' },
+      { capabilities: {} },
+    );
+    await secondClient.connect(clientTransport);
+
+    const first = await rig.client.callTool({
+      name: 'money_tool',
+      arguments: { item_id: 1, vas_id: 'x' },
+    });
+    const id = extractConfirmationId(parseText(first.content));
+    for (let i = 0; i < 3; i++) {
+      await rig.client.callTool({
+        name: 'meta_confirm_action',
+        arguments: { confirmation_id: id, confirmation_secret: `first-${i}` },
+      });
+    }
+    expect(rig.pendingStore.size()).toBe(1);
+    await secondClient.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: id, confirmation_secret: 'second-0' },
+    });
+    const locked = await secondClient.callTool({
+      name: 'meta_confirm_action',
+      arguments: { confirmation_id: id, confirmation_secret: 'second-1' },
+    });
+    expect(locked.isError).toBe(true);
+    expect(parseText(locked.content)).toMatch(/Too many/);
+    expect(rig.pendingStore.size()).toBe(0);
+
+    await secondClient.close();
+    await secondServer.close();
+    await rig.client.close();
+  });
+
+  it('atomically executes a confirmation only once across concurrent sessions', async () => {
+    const secret = 'concurrent-secret-1234567890123456';
+    const rig = await makeRig('money_public', 900, { confirmationSecret: secret });
+    cfg = rig.cfg;
+
+    const secondServer = new McpServer({ name: 'test-concurrent', version: '0.0.0' });
+    registerMeta(secondServer, rig.ctx);
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    await secondServer.connect(serverTransport);
+    const secondClient = new Client(
+      { name: 'test-concurrent', version: '0.0.0' },
+      { capabilities: {} },
+    );
+    await secondClient.connect(clientTransport);
+
+    const first = await rig.client.callTool({
+      name: 'money_tool',
+      arguments: { item_id: 1, vas_id: 'x' },
+    });
+    const id = extractConfirmationId(parseText(first.content));
+    const results = await Promise.all([
+      rig.client.callTool({
+        name: 'meta_confirm_action',
+        arguments: { confirmation_id: id, confirmation_secret: secret },
+      }),
+      secondClient.callTool({
+        name: 'meta_confirm_action',
+        arguments: { confirmation_id: id, confirmation_secret: secret },
+      }),
+    ]);
+
+    expect(results.filter((result) => result.isError !== true)).toHaveLength(1);
+    expect(results.filter((result) => result.isError === true)).toHaveLength(1);
+    expect(rig.pendingStore.size()).toBe(0);
+
+    await secondClient.close();
+    await secondServer.close();
     await rig.client.close();
   });
 

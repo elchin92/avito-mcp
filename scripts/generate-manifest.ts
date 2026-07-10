@@ -14,7 +14,6 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { join as pathJoin } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 
@@ -24,38 +23,10 @@ import { PendingActionStore } from '../src/core/pending-actions.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config } from '../src/config.js';
 import { PACKAGE_NAME, VERSION } from '../src/version.js';
+import { domainOfToolName } from '../src/meta/tool-naming.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = join(here, '..', 'dist', 'manifest.json');
-
-const KNOWN_DOMAIN_PREFIXES = [
-  'auth',
-  'autoload',
-  'calltracking',
-  'cpa_auction',
-  'cpa_target',
-  'cpa',
-  'delivery',
-  'hierarchy',
-  'items',
-  'meta',
-  'messenger',
-  'msg_discounts',
-  'orders',
-  'promotion',
-  'reviews',
-  'stock',
-  'tariffs',
-  'trxpromo',
-  'user',
-];
-
-function domainOf(name: string): string {
-  for (const d of KNOWN_DOMAIN_PREFIXES) {
-    if (name === d || name.startsWith(`${d}_`)) return d;
-  }
-  return 'unknown';
-}
 
 function makeFakeConfig(): Config {
   return {
@@ -63,7 +34,8 @@ function makeFakeConfig(): Config {
     clientSecret: 'manifest-only',
     profileId: 1,
     baseUrl: 'https://api.avito.ru',
-    tokenFile: pathJoin(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
+    cpaSource: 'avito-mcp',
+    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     // Full surface: show every tool that could ever be exposed.
     mode: 'full_access',
@@ -149,7 +121,7 @@ async function main(): Promise<void> {
     };
     const risk = (meta.risk ?? 'unknown') as Risk;
     const environment = meta.environment ?? 'prod';
-    const dom = domainOf(t.name);
+    const dom = domainOfToolName(t.name);
     byRisk[risk].push(t.name);
     byDomain[dom] = byDomain[dom] ?? [];
     byDomain[dom].push(t.name);
@@ -171,10 +143,9 @@ async function main(): Promise<void> {
   flat.sort((a, b) => (a.name < b.name ? -1 : 1));
 
   const manifest = {
-    $schema: 'https://json.schemastore.org/package',
+    schema_version: 1,
     name: PACKAGE_NAME,
     version: VERSION,
-    generated_at: new Date().toISOString(),
     tool_count: tools.length,
     counts_by_risk: {
       sensitive: byRisk.sensitive.length,
@@ -184,9 +155,7 @@ async function main(): Promise<void> {
       public: byRisk.public.length,
       unknown: byRisk.unknown.length,
     },
-    counts_by_domain: Object.fromEntries(
-      Object.entries(byDomain).map(([k, v]) => [k, v.length]),
-    ),
+    counts_by_domain: Object.fromEntries(Object.entries(byDomain).map(([k, v]) => [k, v.length])),
     by_risk: byRisk,
     by_domain: byDomain,
     tools: flat,

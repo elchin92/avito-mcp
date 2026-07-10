@@ -34,15 +34,13 @@ export const register: DomainRegister = (server, ctx) => {
         .number()
         .int()
         .min(0)
-        .optional()
         .describe('Pagination offset: how many reviews to skip from the start of the list. Defaults to 0; increase by the limit value to fetch the next page.'),
       limit: z
         .number()
         .int()
         .min(1)
-        .max(100)
-        .optional()
-        .describe('Maximum number of reviews per page. API-allowed range: 1–50 (defaults to the upper bound).'),
+        .max(50)
+        .describe('Maximum number of reviews per page. API-allowed range: 1–50.'),
     },
     queryParams: ['offset', 'limit'],
   });

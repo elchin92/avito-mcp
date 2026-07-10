@@ -57,9 +57,8 @@ export interface HttpConfig {
   allowNoAuth: boolean;
   /**
    * DNS-rebinding protection allowlists. Empty → derived from publicUrl + the
-   * bind host/port in src/http/mcp-http.ts (protection stays ON; it is only
-   * skipped for a wildcard bind without an explicit public URL, where no
-   * meaningful allowlist can be derived).
+   * bind host/port in src/http/mcp-http.ts. An under-specified wildcard bind
+   * fails startup because no meaningful allowlist can be derived.
    */
   allowedHosts: string[];
   allowedOrigins: string[];
@@ -108,16 +107,83 @@ function parseToolList(raw: string | undefined): string[] {
   return [...seen];
 }
 
-export function parseBool(raw: string | undefined, fallback = false): boolean {
-  if (raw === undefined) return fallback;
-  const v = raw.trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+export class EnvValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EnvValidationError';
+  }
 }
 
-function parsePositiveInt(raw: string | undefined, fallback: number): number {
-  if (!raw) return fallback;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+export function parseBool(
+  raw: string | undefined,
+  fallback = false,
+  name = 'boolean environment value',
+): boolean {
+  if (raw === undefined) return fallback;
+  const v = raw.trim().toLowerCase();
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
+  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+  throw new EnvValidationError(
+    `${name} must be one of: true, false, 1, 0, yes, no, on, off (received ${JSON.stringify(raw)})`,
+  );
+}
+
+export function parsePositiveInt(
+  raw: string | undefined,
+  fallback: number,
+  name = 'positive integer environment value',
+  max = Number.MAX_SAFE_INTEGER,
+): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const normalized = raw.trim();
+  if (!/^[1-9]\d*$/.test(normalized)) {
+    throw new EnvValidationError(
+      `${name} must be a positive base-10 integer (received ${JSON.stringify(raw)})`,
+    );
+  }
+  const n = Number(normalized);
+  if (!Number.isSafeInteger(n) || n > max) {
+    throw new EnvValidationError(
+      `${name} must be at most ${max} (received ${JSON.stringify(raw)})`,
+    );
+  }
+  return n;
+}
+
+export function parseChoice<const T extends readonly string[]>(
+  raw: string | undefined,
+  fallback: T[number],
+  name: string,
+  allowed: T,
+): T[number] {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if ((allowed as readonly string[]).includes(normalized)) return normalized as T[number];
+  throw new EnvValidationError(
+    `${name} must be one of: ${allowed.join(', ')} (received ${JSON.stringify(raw)})`,
+  );
+}
+
+export function requireStrongSecret(value: string | undefined, name: string): void {
+  if (value !== undefined && Buffer.byteLength(value, 'utf8') < 32) {
+    throw new EnvValidationError(`${name} must contain at least 32 bytes`);
+  }
+}
+
+function parseHttpUrl(raw: string, name: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new EnvValidationError(`${name} must be an absolute http(s) URL`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new EnvValidationError(`${name} must use http or https`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new EnvValidationError(`${name} must not contain embedded credentials`);
+  }
+  return stripTrailingSlash(parsed.href);
 }
 
 /**
@@ -136,6 +202,11 @@ function resolveMode(): SafetyMode {
     );
     return 'read_only';
   }
+  if (legacy !== undefined && legacy.trim() !== '') {
+    throw new EnvValidationError(
+      `AVITO_SAFE_MODE is deprecated and only accepts read-only (received ${JSON.stringify(legacy)})`,
+    );
+  }
   return 'full_access';
 }
 
@@ -148,8 +219,24 @@ const ConfigSchema = z.object({
   // If Profile_id is provided but malformed, that's still a hard error below.
   clientId: z.string().default(''),
   clientSecret: z.string().default(''),
-  profileId: z.coerce.number().int().positive('Profile_id must be a positive integer').optional(),
-  baseUrl: z.string().url().default('https://api.avito.ru'),
+  profileId: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().int().positive('Profile_id must be a positive integer').optional(),
+  ),
+  baseUrl: z
+    .string()
+    .url()
+    .refine((value) => /^https?:\/\//.test(value), 'AVITO_BASE_URL must use http or https')
+    .default('https://api.avito.ru'),
+  cpaSource: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(
+      /^[A-Za-z0-9._-]+$/,
+      'AVITO_MCP_CPA_SOURCE may contain only letters, digits, dot, underscore and dash',
+    )
+    .default('avito-mcp'),
   tokenFile: z.string().default(defaultTokenFile()),
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   mode: z.enum(['read_only', 'guarded', 'full_access']).default('full_access'),
@@ -180,51 +267,101 @@ function stripTrailingSlash(u: string): string {
 }
 
 function resolveTransport(): TransportMode {
-  const raw = (process.env.AVITO_MCP_TRANSPORT ?? 'stdio').trim().toLowerCase();
-  if (raw === 'http' || raw === 'both' || raw === 'stdio') return raw;
-  return 'stdio';
+  return parseChoice(process.env.AVITO_MCP_TRANSPORT, 'stdio', 'AVITO_MCP_TRANSPORT', [
+    'stdio',
+    'http',
+    'both',
+  ] as const);
 }
 
 function resolveHttpAuth(): HttpAuthMode {
-  const raw = (process.env.AVITO_MCP_HTTP_AUTH ?? 'oauth').trim().toLowerCase();
-  if (raw === 'oauth' || raw === 'bearer' || raw === 'none') return raw;
-  return 'oauth';
+  return parseChoice(process.env.AVITO_MCP_HTTP_AUTH, 'oauth', 'AVITO_MCP_HTTP_AUTH', [
+    'oauth',
+    'bearer',
+    'none',
+  ] as const);
 }
 
 function buildHttpConfig(): HttpConfig {
   const host = process.env.AVITO_MCP_HTTP_HOST?.trim() || '127.0.0.1';
-  const port = parsePositiveInt(process.env.AVITO_MCP_HTTP_PORT, 3000);
-  const publicUrl = stripTrailingSlash(
-    process.env.AVITO_MCP_HTTP_PUBLIC_URL?.trim() || `http://${host}:${port}`,
+  const port = parsePositiveInt(
+    process.env.AVITO_MCP_HTTP_PORT,
+    3000,
+    'AVITO_MCP_HTTP_PORT',
+    65_535,
   );
+  const publicUrl = parseHttpUrl(
+    process.env.AVITO_MCP_HTTP_PUBLIC_URL?.trim() || `http://${host}:${port}`,
+    'AVITO_MCP_HTTP_PUBLIC_URL',
+  );
+  const transport = resolveTransport();
+  const auth = resolveHttpAuth();
+  const authTokens = parseToolList(process.env.AVITO_MCP_HTTP_AUTH_TOKEN);
+  const oauthOwnerPassword = process.env.AVITO_MCP_OAUTH_OWNER_PASSWORD || undefined;
+  if (transport === 'http' || transport === 'both') {
+    if (auth === 'oauth') requireStrongSecret(oauthOwnerPassword, 'AVITO_MCP_OAUTH_OWNER_PASSWORD');
+    if (auth === 'bearer') {
+      if (authTokens.length === 0) {
+        throw new EnvValidationError(
+          'AVITO_MCP_HTTP_AUTH_TOKEN is required when AVITO_MCP_HTTP_AUTH=bearer',
+        );
+      }
+      for (const token of authTokens) requireStrongSecret(token, 'AVITO_MCP_HTTP_AUTH_TOKEN');
+    }
+  }
   return {
-    transport: resolveTransport(),
+    transport,
     host,
     port,
     publicUrl,
-    auth: resolveHttpAuth(),
-    authTokens: parseToolList(process.env.AVITO_MCP_HTTP_AUTH_TOKEN),
-    allowNoAuth: parseBool(process.env.AVITO_MCP_HTTP_ALLOW_NO_AUTH),
+    auth,
+    authTokens,
+    allowNoAuth: parseBool(
+      process.env.AVITO_MCP_HTTP_ALLOW_NO_AUTH,
+      false,
+      'AVITO_MCP_HTTP_ALLOW_NO_AUTH',
+    ),
     allowedHosts: parseToolList(process.env.AVITO_MCP_HTTP_ALLOWED_HOSTS),
     allowedOrigins: parseToolList(process.env.AVITO_MCP_HTTP_ALLOWED_ORIGINS),
-    maxSessions: parsePositiveInt(process.env.AVITO_MCP_HTTP_MAX_SESSIONS, 100),
-    sessionIdleSec: parsePositiveInt(process.env.AVITO_MCP_HTTP_SESSION_IDLE_SEC, 1800),
-    oauthOwnerPassword: process.env.AVITO_MCP_OAUTH_OWNER_PASSWORD || undefined,
-    oauthTokenTtlSec: parsePositiveInt(process.env.AVITO_MCP_OAUTH_TOKEN_TTL_SEC, 3600),
+    maxSessions: parsePositiveInt(
+      process.env.AVITO_MCP_HTTP_MAX_SESSIONS,
+      100,
+      'AVITO_MCP_HTTP_MAX_SESSIONS',
+      10_000,
+    ),
+    sessionIdleSec: parsePositiveInt(
+      process.env.AVITO_MCP_HTTP_SESSION_IDLE_SEC,
+      1800,
+      'AVITO_MCP_HTTP_SESSION_IDLE_SEC',
+      86_400,
+    ),
+    oauthOwnerPassword,
+    oauthTokenTtlSec: parsePositiveInt(
+      process.env.AVITO_MCP_OAUTH_TOKEN_TTL_SEC,
+      3600,
+      'AVITO_MCP_OAUTH_TOKEN_TTL_SEC',
+      86_400,
+    ),
     oauthStoreFile: process.env.AVITO_MCP_OAUTH_STORE_FILE || undefined,
   };
 }
 
 function buildWebhookConfig(httpPublicUrl: string): WebhookConfig {
   const secret = process.env.AVITO_MCP_WEBHOOK_SECRET?.trim() || undefined;
+  requireStrongSecret(secret, 'AVITO_MCP_WEBHOOK_SECRET');
   // A secret is REQUIRED for the receiver to do anything (without one every
   // request 404s), so ENABLED without a secret stays disabled — server.ts warns
   // about that combo at startup. With a secret present, the explicit flag wins:
   // AVITO_MCP_WEBHOOK_ENABLED=0 turns the receiver off without unsetting the secret.
   const rawEnabled = process.env.AVITO_MCP_WEBHOOK_ENABLED?.trim() || undefined;
-  const enabled = secret !== undefined && (rawEnabled === undefined ? true : parseBool(rawEnabled));
-  const publicUrl = stripTrailingSlash(
+  const enabledFlag =
+    rawEnabled === undefined
+      ? undefined
+      : parseBool(rawEnabled, false, 'AVITO_MCP_WEBHOOK_ENABLED');
+  const enabled = secret !== undefined && (enabledFlag === undefined ? true : enabledFlag);
+  const publicUrl = parseHttpUrl(
     process.env.AVITO_MCP_WEBHOOK_PUBLIC_URL?.trim() || httpPublicUrl,
+    'AVITO_MCP_WEBHOOK_PUBLIC_URL',
   );
   // Normalize to '/prefix' — Express silently registers an unmatchable route
   // for a path without a leading slash.
@@ -235,7 +372,12 @@ function buildWebhookConfig(httpPublicUrl: string): WebhookConfig {
     secret,
     publicUrl,
     path: stripTrailingSlash(path) || '/avito/webhook',
-    bufferSize: parsePositiveInt(process.env.AVITO_MCP_WEBHOOK_BUFFER, 100),
+    bufferSize: parsePositiveInt(
+      process.env.AVITO_MCP_WEBHOOK_BUFFER,
+      100,
+      'AVITO_MCP_WEBHOOK_BUFFER',
+      10_000,
+    ),
     logFile: process.env.AVITO_MCP_WEBHOOK_LOG_FILE || undefined,
   };
 }
@@ -245,29 +387,63 @@ export type Config = z.infer<typeof ConfigSchema> & {
   webhook: WebhookConfig;
 };
 
-function load(): Config {
+function loadUnchecked(): Config {
   const raw = {
     clientId: process.env.Client_id ?? process.env.CLIENT_ID,
     clientSecret: process.env.Client_secret ?? process.env.CLIENT_SECRET,
     profileId: process.env.Profile_id ?? process.env.PROFILE_ID,
     baseUrl: process.env.AVITO_BASE_URL,
+    cpaSource: process.env.AVITO_MCP_CPA_SOURCE,
     tokenFile: process.env.AVITO_TOKEN_FILE,
     logLevel: process.env.LOG_LEVEL,
     mode: resolveMode(),
     allowTools: parseToolList(process.env.AVITO_MCP_ALLOW_TOOLS),
     denyTools: parseToolList(process.env.AVITO_MCP_DENY_TOOLS),
-    exposeAuthTools: parseBool(process.env.AVITO_MCP_EXPOSE_AUTH_TOOLS),
+    exposeAuthTools: parseBool(
+      process.env.AVITO_MCP_EXPOSE_AUTH_TOOLS,
+      false,
+      'AVITO_MCP_EXPOSE_AUTH_TOOLS',
+    ),
     allowedUploadDirs: parseToolList(process.env.AVITO_MCP_ALLOWED_UPLOAD_DIRS),
-    maxUploadMb: parsePositiveInt(process.env.AVITO_MCP_MAX_UPLOAD_MB, 15),
+    maxUploadMb: parsePositiveInt(
+      process.env.AVITO_MCP_MAX_UPLOAD_MB,
+      15,
+      'AVITO_MCP_MAX_UPLOAD_MB',
+      100,
+    ),
     confirmationMode:
       (process.env.AVITO_MCP_CONFIRMATION_MODE as ConfirmationMode | undefined) ?? 'money_public',
-    confirmationTtlSec: parsePositiveInt(process.env.AVITO_MCP_CONFIRMATION_TTL_SEC, 900),
+    confirmationTtlSec: parsePositiveInt(
+      process.env.AVITO_MCP_CONFIRMATION_TTL_SEC,
+      900,
+      'AVITO_MCP_CONFIRMATION_TTL_SEC',
+      86_400,
+    ),
     confirmationSecret: process.env.AVITO_MCP_CONFIRMATION_SECRET,
-    maxBinaryMb: parsePositiveInt(process.env.AVITO_MCP_MAX_BINARY_MB, 20),
+    maxBinaryMb: parsePositiveInt(
+      process.env.AVITO_MCP_MAX_BINARY_MB,
+      20,
+      'AVITO_MCP_MAX_BINARY_MB',
+      100,
+    ),
     // v0.7.0 ───────────────────────────────────────────────────
-    dryRunDefault: parseBool(process.env.AVITO_MCP_DRY_RUN_DEFAULT),
-    idempotencyTtlSec: parsePositiveInt(process.env.AVITO_MCP_IDEMPOTENCY_TTL_SEC, 3600),
-    tokenLockTimeoutMs: parsePositiveInt(process.env.AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS, 30_000),
+    dryRunDefault: parseBool(
+      process.env.AVITO_MCP_DRY_RUN_DEFAULT,
+      false,
+      'AVITO_MCP_DRY_RUN_DEFAULT',
+    ),
+    idempotencyTtlSec: parsePositiveInt(
+      process.env.AVITO_MCP_IDEMPOTENCY_TTL_SEC,
+      3600,
+      'AVITO_MCP_IDEMPOTENCY_TTL_SEC',
+      604_800,
+    ),
+    tokenLockTimeoutMs: parsePositiveInt(
+      process.env.AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS,
+      30_000,
+      'AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS',
+      300_000,
+    ),
   };
 
   const parsed = ConfigSchema.safeParse(raw);
@@ -275,18 +451,26 @@ function load(): Config {
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join('.')}: ${i.message}`)
       .join('\n');
-    process.stderr.write(
-      `Invalid .env (${envFile}):\n${issues}\n\nSee .env.example for the expected format.\n`,
-    );
-    process.exit(1);
+    throw new EnvValidationError(issues);
   }
-  // v0.9.0: HTTP + webhook config are computed in JS (cross-field defaults like
-  // publicUrl depending on host/port don't fit zod cleanly). They stay permissive
-  // here; the hard fail-closed checks (oauth needs an owner password, none needs a
-  // loopback host) run at HTTP-start time, so stdio users are never blocked.
+  // HTTP + webhook config are computed in JS because several defaults depend on
+  // other fields. Syntax, bounds, and applicable secret requirements fail here;
+  // bind/auth topology checks that require the final app run at HTTP startup.
   const http = buildHttpConfig();
   const webhook = buildWebhookConfig(http.publicUrl);
   return { ...parsed.data, http, webhook };
+}
+
+function load(): Config {
+  try {
+    return loadUnchecked();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(
+      `Invalid environment (${envFile}):\n${message}\n\nSee .env.example for the expected format.\n`,
+    );
+    process.exit(1);
+  }
 }
 
 export const config = load();

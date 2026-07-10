@@ -1,6 +1,6 @@
 # Safety configuration / Безопасные конфигурации
 
-`avito-mcp` is designed to run on real production Avito accounts — Avito has no sandbox. Out of the box, every tool is available, and write methods cost real money or are visible to real customers. **You should configure the safety surface before pointing an autonomous agent at it.**
+`avito-mcp` is designed primarily for real Avito accounts. Operations marked `environment: prod` can spend money or affect customers; delivery operations that Avito documents as sandbox are marked separately. **Configure the safety surface before pointing an autonomous agent at the server.**
 
 This doc gives you pre-baked configurations covering common agent personas. Pick the closest one to what you're building, copy the env vars into your MCP-client config or `.env`, and you're done.
 
@@ -12,17 +12,17 @@ The safety model is built around **three orthogonal layers**:
 
 Every tool is tagged with one of five risks at build time:
 
-| risk | meaning | examples |
-|---|---|---|
-| `sensitive` | returns secrets / tokens; **hidden by default**, opt-in via `AVITO_MCP_EXPOSE_AUTH_TOOLS=1` | `auth_get_access_token`, `auth_refresh_access_token_authorization_code` |
-| `read` | GETs and POST-as-query (analytics, info, balance) | `items_get_items_info`, `user_get_user_balance`, `meta_get_rate_limits` |
-| `write` | modifies your own data, no immediate customer impact, no money spent | `messenger_chat_read`, `messenger_upload_images`, `autoload_create_or_update_profile`, `messenger_register_webhook` |
-| `money` | spends balance | `items_put_item_vas`, `cpa_auction_save_item_bids`, `promotion_create_bbip_order_for_items_v1` |
-| `public` | visible to customers or third parties | `messenger_post_send_message`, `items_update_price`, `orders_apply_transition`, `reviews_create_review_answer_v1`, `stock_update_stocks` |
+| risk        | meaning                                                                                     | examples                                                                                                                                              |
+| ----------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sensitive` | returns secrets / tokens; **hidden by default**, opt-in via `AVITO_MCP_EXPOSE_AUTH_TOOLS=1` | `auth_get_access_token`, `auth_refresh_access_token_authorization_code`                                                                               |
+| `read`      | GETs and POST-as-query (analytics, info, balance)                                           | `items_get_items_info`, `user_get_user_balance`, `meta_get_rate_limits`                                                                               |
+| `write`     | modifies your own data, no immediate third-party impact, no money spent                     | `messenger_chat_read`, `messenger_upload_images`, `autoload_create_or_update_profile`                                                                 |
+| `money`     | spends balance                                                                              | `items_put_item_vas`, `cpa_auction_save_item_bids`, `promotion_create_bbip_order_for_items_v1`                                                        |
+| `public`    | visible to customers/third parties or otherwise externally irreversible                     | `messenger_post_send_message`, `messenger_register_webhook`, `messenger_post_blacklist_v2`, `cpa_create_complaint_by_action_id`, `items_update_price` |
 
 You can always check the exact classification of every tool in [`dist/manifest.json`](../dist/manifest.json) after installing the package (run `npm run generate:manifest` to rebuild).
 
-> **v0.9.0 webhook receiver tools.** The three local webhook tools follow the same model: `messenger_get_webhook_events` and `messenger_get_webhook_status` are `read` (they only inspect the in-process buffer), while `messenger_register_webhook` is `write` — it changes account settings by subscribing Avito to a delivery URL. The receiver itself is opt-in (`AVITO_MCP_WEBHOOK_SECRET`) and authenticates deliveries by an unguessable secret path segment.
+> **Webhook receiver tools.** `messenger_get_webhook_events` and `messenger_get_webhook_status` are `read`. Both registration paths are `public`, require confirmation in the default mode, and can subscribe only the exact public HTTPS receiver URL configured by the operator. Arbitrary destinations are rejected and dry-run redacts the URL/secret. The receiver itself is opt-in and requires `AVITO_MCP_WEBHOOK_SECRET` of at least 32 bytes.
 
 ---
 
@@ -34,7 +34,7 @@ Use case: dashboards, monitoring, "summarise yesterday's results", reports. Cann
 AVITO_MCP_MODE=read_only
 ```
 
-That's the entire config. ~82 tools registered, every one of them safe to call in any sequence.
+That's the entire config. 80 tools register in v1.2.0, every one read-only at the Avito/business level.
 
 **What works:** all statistics (`items_post_item_analytics`, `items_post_account_spendings`, `items_post_calls_stats`), balance (`user_get_user_balance`), chat history (`messenger_get_chats_v2`, `messenger_get_messages_v3`), order list (`orders_get_orders`), reports (`autoload_get_reports_v2`), rate limits (`meta_get_rate_limits`).
 
@@ -90,14 +90,14 @@ Note that `items_update_price` is **not** in the denylist here — it's `public`
 
 ## Persona 4 — Full admin (everything goes)
 
-Use case: you, the human, running the MCP server in Claude Desktop / Cursor / Claude Code for interactive ad-hoc work. The agent always asks before destructive calls because *you're* the human-in-the-loop.
+Use case: you, the human, running the MCP server in Claude Desktop / Cursor / Claude Code for interactive ad-hoc work. The agent always asks before destructive calls because _you're_ the human-in-the-loop.
 
 ```bash
 AVITO_MCP_MODE=full_access
 AVITO_MCP_CONFIRMATION_MODE=off    # opt out of the runtime gate
 ```
 
-That's it. **141 tools register** under this exact config: all Avito tools except the 3 `sensitive` auth tools (opt-in via `AVITO_MCP_EXPOSE_AUTH_TOOLS=1`) and `messenger_upload_images` (needs `AVITO_MCP_ALLOWED_UPLOAD_DIRS`), plus 4 meta tools — with confirmation off the three `meta_*_action` tools don't register at all. No confirmation friction. Well-behaved MCP clients (Claude Desktop, Cursor) will still warn you before any `destructiveHint: true` tool runs — that's the `money` and `public` set — because those annotations are on every tool.
+That's it. **141 tools register** under this exact config: the 3 `sensitive` auth tools remain hidden, `messenger_upload_images` still needs `AVITO_MCP_ALLOWED_UPLOAD_DIRS`, and the three `meta_*_action` tools are unnecessary and hidden when confirmation is off. No confirmation friction. Well-behaved MCP clients should still warn before tools with `destructiveHint: true` run.
 
 This is the closest to the v0.1.x default behaviour. **Don't use this for unattended cron jobs.**
 
@@ -117,7 +117,7 @@ Both calls go through the same MCP transport. There's no out-of-band proof that 
 To turn the confirmation flow into something closer to a real human gate, pair it with one of:
 
 - **An MCP client that requires per-tool-call user approval** (Claude Desktop and Cursor both do this for unfamiliar tools). The agent literally cannot dispatch `meta_confirm_action` without the user clicking allow.
-- **`AVITO_MCP_CONFIRMATION_SECRET`** (shipped in v0.5.0; hardened in v1.1.0) — when set, `meta_confirm_action` requires the matching `confirmation_secret` argument, compared in constant time. The agent never sees the secret; only the human can type it. This converts soft-confirmation into hard-confirmation. As of v1.1.0 the secret **must be at least 32 characters** (the server refuses to start otherwise), and **5 wrong/missing attempts delete the pending action** to blunt brute-forcing. See `.env.example` for setup (`openssl rand -base64 32`).
+- **`AVITO_MCP_CONFIRMATION_SECRET`** — when set, `meta_confirm_action` requires the matching `confirmation_secret` argument, compared in constant time. The agent never sees the secret; only the human can type it. The secret **must be at least 32 characters**. Calls are limited to **20 per minute per authenticated principal**, counting successful and unknown-id attempts; **5 wrong/missing attempts across all MCP sessions delete the pending action**. Confirmation claims and idempotency reservations are atomic: concurrent confirmation/replay cannot execute the same mutation twice. See `.env.example` for setup (`openssl rand -base64 32`).
 
 For the use cases this server is designed for (humans-in-the-loop using Claude Desktop / Cursor for Avito), the confirmation flow is the right layer.
 
@@ -132,6 +132,8 @@ Even with a strict mode, you should always:
 - **Read the server startup log** (stderr) — at boot the server logs `mode`, `allowToolsCount`, `denyToolsCount`, `exposeAuthTools`, `uploadDirsCount`, `confirmationMode` and emits a `tool hidden by policy` line for every tool that was suppressed. Verify the count matches what you expected.
 - **Inspect [`dist/manifest.json`](../dist/manifest.json)** — it's the single source of truth on what's classified as what. If you disagree with a classification, open an issue.
 - **For unattended agents, prefer `read_only` or `guarded` + denylist** over `full_access`. The smaller the surface, the smaller the blast radius if something goes wrong.
+- **Keep local state private.** Token/OAuth/webhook files should live in a `0700` state directory and use `0600`. The bundled systemd installer enforces this and runs the process as an unprivileged user.
+- **Treat configuration errors as startup failures.** v1.2.0 rejects unknown booleans/enums, malformed integers, weak remote secrets, and unsafe OAuth/webhook settings instead of silently selecting a fallback.
 
 ## Future work
 

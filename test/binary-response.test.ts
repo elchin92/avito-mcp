@@ -18,6 +18,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     clientSecret: 'sec',
     profileId: 1,
     baseUrl: 'https://api.test.example',
+    cpaSource: 'avito-mcp-test',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     mode: 'full_access',
@@ -43,6 +44,8 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
       allowNoAuth: false,
       allowedHosts: [],
       allowedOrigins: [],
+      maxSessions: 100,
+      sessionIdleSec: 1800,
       oauthTokenTtlSec: 3600,
     },
     webhook: {
@@ -303,5 +306,45 @@ describe('AvitoClient — binary response handling', () => {
     const resp = await rig.client.request({ method: 'GET', path: '/small.pdf' });
     const data = resp.data as unknown as { sizeBytes: number };
     expect(data.sizeBytes).toBe(500 * 1024);
+  });
+
+  it('applies the response-size cap to JSON/text bodies too', async () => {
+    const rig = makeClient({ maxBinaryMb: 1 });
+    cfg = rig.cfg;
+    rig.fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith('/token')) {
+        return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('x'.repeat(1024 * 1024 + 1), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    await expect(rig.client.request({ method: 'GET', path: '/huge.json' })).rejects.toThrow(
+      /Response body too large/,
+    );
+  });
+
+  it('keeps the request deadline active while streaming the response body', async () => {
+    const rig = makeClient();
+    cfg = rig.cfg;
+    rig.fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith('/token')) {
+        return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(new ReadableStream<Uint8Array>({ pull() {} }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    await expect(
+      rig.client.request({ method: 'GET', path: '/slow-body', timeoutMs: 20 }),
+    ).rejects.toThrow(/timeout/i);
   });
 });

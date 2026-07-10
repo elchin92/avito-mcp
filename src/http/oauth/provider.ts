@@ -21,8 +21,10 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
 
 import {
+  InvalidClientMetadataError,
   InvalidGrantError,
   InvalidRequestError,
+  InvalidScopeError,
   InvalidTokenError,
   ServerError,
 } from '@modelcontextprotocol/sdk/server/auth/errors.js';
@@ -71,6 +73,79 @@ function esc(v: string): string {
     .replace(/'/g, '&#39;');
 }
 
+const REQUIRED_SCOPE = 'avito:mcp';
+const MAX_DCR_BYTES = 32 * 1024;
+
+function assertStringLimit(label: string, value: string | undefined, max: number): void {
+  if (value !== undefined && Buffer.byteLength(value, 'utf8') > max) {
+    throw new InvalidClientMetadataError(`${label} exceeds ${max} bytes`);
+  }
+}
+
+/** Rejects large/unneeded DCR metadata before it reaches the persistent store. */
+function sanitizeClientMetadata(
+  client: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>,
+): Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'> {
+  const tokenAuthMethod = client.token_endpoint_auth_method ?? 'client_secret_post';
+  if (tokenAuthMethod !== 'client_secret_post' && tokenAuthMethod !== 'none') {
+    throw new InvalidClientMetadataError(
+      'token_endpoint_auth_method must be client_secret_post or none',
+    );
+  }
+  let encoded: string;
+  try {
+    encoded = JSON.stringify(client);
+  } catch {
+    throw new InvalidClientMetadataError('Client metadata must be JSON serializable');
+  }
+  if (Buffer.byteLength(encoded, 'utf8') > MAX_DCR_BYTES) {
+    throw new InvalidClientMetadataError(`Client metadata exceeds ${MAX_DCR_BYTES} bytes`);
+  }
+  if (client.redirect_uris.length === 0 || client.redirect_uris.length > 10) {
+    throw new InvalidClientMetadataError('redirect_uris must contain between 1 and 10 entries');
+  }
+  for (const uri of client.redirect_uris) assertStringLimit('redirect_uri', uri, 2048);
+  assertStringLimit('client_name', client.client_name, 128);
+  assertStringLimit('client_uri', client.client_uri, 2048);
+  assertStringLimit('logo_uri', client.logo_uri, 2048);
+  assertStringLimit('scope', client.scope, 256);
+  assertStringLimit('tos_uri', client.tos_uri, 2048);
+  assertStringLimit('policy_uri', client.policy_uri, 2048);
+  assertStringLimit('jwks_uri', client.jwks_uri, 2048);
+  assertStringLimit('software_id', client.software_id, 128);
+  assertStringLimit('software_version', client.software_version, 128);
+  if (
+    client.contacts &&
+    (client.contacts.length > 10 || client.contacts.some((v) => v.length > 320))
+  ) {
+    throw new InvalidClientMetadataError('contacts contains too many or oversized values');
+  }
+  if (
+    client.grant_types &&
+    client.grant_types.some((v) => !['authorization_code', 'refresh_token'].includes(v))
+  ) {
+    throw new InvalidClientMetadataError(
+      'Only authorization_code and refresh_token grants are supported',
+    );
+  }
+  if (client.response_types && client.response_types.some((v) => v !== 'code')) {
+    throw new InvalidClientMetadataError('Only the code response type is supported');
+  }
+  if (client.scope) {
+    const scopes = client.scope.split(/\s+/).filter(Boolean);
+    if (scopes.some((scope) => scope !== REQUIRED_SCOPE)) {
+      throw new InvalidClientMetadataError(`Only the ${REQUIRED_SCOPE} scope is supported`);
+    }
+  }
+  const extended = client as typeof client & { jwks?: unknown; software_statement?: string };
+  if (extended.jwks !== undefined || extended.software_statement !== undefined) {
+    throw new InvalidClientMetadataError(
+      'Inline jwks and software_statement metadata are not supported',
+    );
+  }
+  return { ...structuredClone(client), token_endpoint_auth_method: tokenAuthMethod };
+}
+
 /**
  * Renders the self-submitting consent/login page. A single password field plus
  * hidden inputs carry the authorization request to POST /authorize/approve.
@@ -79,23 +154,16 @@ function renderConsentPage(
   params: {
     clientId: string;
     redirectUri: string;
-    codeChallenge: string;
-    state?: string;
-    scope?: string;
-    resource?: string;
+    scopes: string[];
+    resource: string;
     clientName?: string;
+    consentToken: string;
   },
   errorMessage?: string,
 ): string {
-  const hidden = (name: string, value: string | undefined): string =>
-    value === undefined ? '' : `<input type="hidden" name="${esc(name)}" value="${esc(value)}">`;
   const who = params.clientName ? esc(params.clientName) : esc(params.clientId);
-  const scopeLine = params.scope
-    ? `<p class="scope">Requested scope: <code>${esc(params.scope)}</code></p>`
-    : '';
-  const errorBlock = errorMessage
-    ? `<p class="error" role="alert">${esc(errorMessage)}</p>`
-    : '';
+  const redirect = new URL(params.redirectUri);
+  const errorBlock = errorMessage ? `<p class="error" role="alert">${esc(errorMessage)}</p>` : '';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -114,7 +182,10 @@ function renderConsentPage(
   input[type=password] { padding: .55rem .65rem; font-size: 1rem; border: 1px solid #8888; border-radius: .375rem; }
   button { padding: .6rem 1rem; font-size: 1rem; border: 0; border-radius: .375rem; cursor: pointer;
            background: #1565c0; color: #fff; }
-  .scope code { background: #8881; padding: .1rem .3rem; border-radius: .25rem; }
+  dl { display: grid; grid-template-columns: 7rem 1fr; gap: .45rem .75rem; }
+  dt { font-weight: 600; }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  code { background: #8881; padding: .1rem .3rem; border-radius: .25rem; }
   .error { color: #c62828; font-weight: 600; }
   .muted { color: #8a8a8a; font-size: .8rem; margin-top: 1.5rem; }
 </style>
@@ -122,18 +193,20 @@ function renderConsentPage(
 <body>
 <h1>Authorize access to Avito MCP</h1>
 <p>The client <span class="client">${who}</span> is requesting access to this Avito MCP server.</p>
-${scopeLine}
+<dl>
+  <dt>Registration</dt><dd>Dynamically registered client</dd>
+  <dt>Client ID</dt><dd><code>${esc(params.clientId)}</code></dd>
+  <dt>Redirect host</dt><dd><strong>${esc(redirect.origin)}</strong></dd>
+  <dt>Redirect URI</dt><dd><code>${esc(params.redirectUri)}</code></dd>
+  <dt>Resource</dt><dd><code>${esc(params.resource)}</code></dd>
+  <dt>Scopes</dt><dd><code>${esc(params.scopes.join(' '))}</code></dd>
+</dl>
 ${errorBlock}
 <form method="POST" action="/authorize/approve" autocomplete="off">
   <label for="owner_password">Owner password</label>
   <input id="owner_password" name="owner_password" type="password" required autofocus
          autocomplete="current-password">
-  ${hidden('client_id', params.clientId)}
-  ${hidden('redirect_uri', params.redirectUri)}
-  ${hidden('code_challenge', params.codeChallenge)}
-  ${hidden('state', params.state)}
-  ${hidden('scope', params.scope)}
-  ${hidden('resource', params.resource)}
+  <input type="hidden" name="consent_token" value="${esc(params.consentToken)}">
   <button type="submit">Approve</button>
 </form>
 <p class="muted">This is a single-tenant server. Only the deployment owner can approve access.</p>
@@ -154,8 +227,15 @@ class ClientsStore implements OAuthRegisteredClientsStore {
     client: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>,
   ): OAuthClientInformationFull {
     const nowSec = Math.floor(Date.now() / 1000);
+    const sanitized = sanitizeClientMetadata(client);
+    if (sanitized.token_endpoint_auth_method === 'none' && sanitized.client_secret) {
+      throw new InvalidClientMetadataError('Public clients must not include client_secret');
+    }
+    if (sanitized.token_endpoint_auth_method === 'client_secret_post' && !sanitized.client_secret) {
+      sanitized.client_secret = OAuthStore.newSecret();
+    }
     const full: OAuthClientInformationFull = {
-      ...client,
+      ...sanitized,
       client_id: OAuthStore.newId(),
       client_id_issued_at: nowSec,
     };
@@ -164,6 +244,9 @@ class ClientsStore implements OAuthRegisteredClientsStore {
     // and mark it non-expiring (0) unless one was supplied.
     if (full.client_secret && full.client_secret_expires_at === undefined) {
       full.client_secret_expires_at = 0; // never expires
+    }
+    if (!this.store.hasClientCapacity()) {
+      throw new InvalidClientMetadataError('OAuth client capacity reached');
     }
     this.store.putClient(full);
     logger.info(
@@ -179,14 +262,18 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
   private readonly clients: ClientsStore;
   private readonly ttlSec: number;
   private readonly ownerPassword?: string;
+  private readonly expectedResource: string;
   /** Scopes this AS supports; tokens default to these when a client asks none. */
-  private readonly supportedScopes = ['avito:mcp'];
+  private readonly supportedScopes = [REQUIRED_SCOPE];
 
   constructor(httpConfig: HttpConfig) {
-    this.store = new OAuthStore(httpConfig.oauthStoreFile);
-    this.clients = new ClientsStore(this.store);
+    // Validate URL-derived state before acquiring the durable store lease. A bad
+    // public URL must not leave the next corrected startup locked out.
+    this.expectedResource = new URL(`${httpConfig.publicUrl}/mcp`).href;
     this.ttlSec = httpConfig.oauthTokenTtlSec;
     this.ownerPassword = httpConfig.oauthOwnerPassword;
+    this.store = new OAuthStore(httpConfig.oauthStoreFile);
+    this.clients = new ClientsStore(this.store);
   }
 
   // Local PKCE validation stays ON (SDK verifies via challengeForAuthorizationCode).
@@ -208,17 +295,25 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
+    const scopes = this.normalizeScopes(params.scopes);
+    const resource = this.requireExpectedResource(params.resource?.href);
+    const consentToken = this.store.createConsent({
+      clientId: client.client_id,
+      redirectUri: params.redirectUri,
+      codeChallenge: params.codeChallenge,
+      state: params.state,
+      scopes,
+      resource,
+    });
     const html = renderConsentPage({
       clientId: client.client_id,
       clientName: client.client_name,
       redirectUri: params.redirectUri,
-      codeChallenge: params.codeChallenge,
-      state: params.state,
-      scope: params.scopes && params.scopes.length > 0 ? params.scopes.join(' ') : undefined,
-      resource: params.resource?.href,
+      scopes,
+      resource,
+      consentToken,
     });
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
+    this.setConsentHeaders(res);
     res.status(200).send(html);
   }
 
@@ -233,20 +328,24 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
   approveConsent = async (req: Request, res: Response): Promise<void> => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-    const clientId = str(body.client_id);
-    const redirectUri = str(body.redirect_uri);
-    const codeChallenge = str(body.code_challenge);
-    const state = str(body.state);
-    const scope = str(body.scope);
-    const resource = str(body.resource);
+    const consentToken = str(body.consent_token);
     const ownerPassword = str(body.owner_password) ?? '';
 
-    // Re-validate the request shape. These must never 500.
-    if (!clientId || !redirectUri || !codeChallenge) {
-      res.status(400).json({ error: 'invalid_request', error_description: 'Missing authorization parameters' });
+    if (!consentToken) {
+      res
+        .status(400)
+        .json({ error: 'invalid_request', error_description: 'Missing consent transaction' });
       return;
     }
-    const client = this.store.getClient(clientId);
+    const consent = this.store.peekConsent(consentToken);
+    if (!consent) {
+      res.status(400).json({
+        error: 'invalid_request',
+        error_description: 'Invalid or expired consent transaction',
+      });
+      return;
+    }
+    const client = this.store.getClient(consent.clientId);
     if (!client) {
       res.status(400).json({ error: 'invalid_client', error_description: 'Unknown client_id' });
       return;
@@ -256,50 +355,68 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     // already accepted RFC 8252 §7.3 loopback clients (any port on
     // localhost/127.0.0.1/[::1]), so an exact match here would dead-end exactly
     // those flows — after the owner has typed the password.
-    if (!client.redirect_uris.some((registered) => redirectUriMatches(redirectUri, registered))) {
-      res.status(400).json({ error: 'invalid_request', error_description: 'Unregistered redirect_uri' });
+    if (
+      !client.redirect_uris.some((registered) =>
+        redirectUriMatches(consent.redirectUri, registered),
+      )
+    ) {
+      res
+        .status(400)
+        .json({ error: 'invalid_request', error_description: 'Unregistered redirect_uri' });
       return;
     }
 
     if (!this.ownerPassword) {
       // Misconfiguration: oauth mode requires an owner password. Fail closed.
       logger.error('oauth: owner password not configured — refusing to mint a code');
-      res.status(500).json({ error: 'server_error', error_description: 'Owner password not configured' });
+      res
+        .status(500)
+        .json({ error: 'server_error', error_description: 'Owner password not configured' });
       return;
     }
     if (!safeEqual(ownerPassword, this.ownerPassword)) {
-      logger.warn({ clientId }, 'oauth: owner password mismatch at /authorize/approve');
+      logger.warn(
+        { clientId: consent.clientId },
+        'oauth: owner password mismatch at /authorize/approve',
+      );
       const html = renderConsentPage(
         {
-          clientId,
+          clientId: consent.clientId,
           clientName: client.client_name,
-          redirectUri,
-          codeChallenge,
-          state,
-          scope,
-          resource,
+          redirectUri: consent.redirectUri,
+          scopes: consent.scopes,
+          resource: consent.resource,
+          consentToken,
         },
         'Incorrect owner password. Please try again.',
       );
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-store');
+      this.setConsentHeaders(res);
       res.status(401).send(html);
       return;
     }
 
-    // Success: mint a one-time code and redirect back to the client.
-    const scopes = scope ? scope.split(' ').filter(Boolean) : [...this.supportedScopes];
+    // Consume after password verification. Concurrent approvals cannot mint two codes.
+    const approved = this.store.takeConsent(consentToken);
+    if (!approved) {
+      res
+        .status(400)
+        .json({ error: 'invalid_request', error_description: 'Consent transaction already used' });
+      return;
+    }
     const code = this.store.createAuthCode({
-      clientId,
-      codeChallenge,
-      redirectUri,
-      scopes,
-      resource,
+      clientId: approved.clientId,
+      codeChallenge: approved.codeChallenge,
+      redirectUri: approved.redirectUri,
+      scopes: approved.scopes,
+      resource: approved.resource,
     });
-    const target = new URL(redirectUri);
+    const target = new URL(approved.redirectUri);
     target.searchParams.set('code', code);
-    if (state !== undefined) target.searchParams.set('state', state);
-    logger.info({ clientId }, 'oauth: owner approved, authorization code issued');
+    if (approved.state !== undefined) target.searchParams.set('state', approved.state);
+    logger.info(
+      { clientId: approved.clientId },
+      'oauth: owner approved, authorization code issued',
+    );
     res.redirect(302, target.href);
   };
 
@@ -337,13 +454,13 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
       throw new InvalidGrantError('code_verifier does not match the challenge');
     }
     // RFC 8707: the resource at token time must match the one bound to the code.
-    const boundResource = rec.resource;
-    const reqResource = resource?.href;
-    if (boundResource !== undefined && reqResource !== undefined && boundResource !== reqResource) {
+    const boundResource = this.requireExpectedResource(rec.resource);
+    const reqResource = this.requireExpectedResource(resource?.href);
+    if (boundResource !== reqResource) {
       throw new InvalidRequestError('resource does not match the authorization request');
     }
 
-    return this.issueTokens(client.client_id, rec.scopes, boundResource ?? reqResource);
+    return this.issueTokens(client.client_id, this.normalizeScopes(rec.scopes), boundResource);
   }
 
   async exchangeRefreshToken(
@@ -357,16 +474,17 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
       throw new InvalidGrantError('Invalid or expired refresh token');
     }
     // Down-scoping is allowed; requesting NEW scopes is not.
-    let grantedScopes = rec.scopes;
+    let grantedScopes = this.normalizeScopes(rec.scopes);
     if (scopes && scopes.length > 0) {
+      this.normalizeScopes(scopes);
       const widened = scopes.filter((s) => !rec.scopes.includes(s));
       if (widened.length > 0) {
         throw new InvalidGrantError('Cannot grant scopes beyond the original authorization');
       }
       grantedScopes = scopes;
     }
-    const reqResource = resource?.href;
-    if (reqResource !== undefined && rec.resource !== undefined && reqResource !== rec.resource) {
+    const reqResource = this.requireExpectedResource(resource?.href);
+    if (this.requireExpectedResource(rec.resource) !== reqResource) {
       throw new InvalidRequestError('resource does not match the original authorization');
     }
     // Rotate: invalidate the presented refresh token AND the access token it was
@@ -375,7 +493,7 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     // fresh pair.
     this.store.deleteRefreshToken(refreshToken);
     if (rec.accessToken) this.store.deleteAccessToken(rec.accessToken);
-    return this.issueTokens(client.client_id, grantedScopes, rec.resource ?? reqResource);
+    return this.issueTokens(client.client_id, grantedScopes, reqResource);
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
@@ -386,36 +504,43 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
       // 400 and a plain Error to 500 — both wrong for an unknown bearer token.
       throw new InvalidTokenError('Invalid or expired access token');
     }
+    if (
+      !rec.scopes.includes(REQUIRED_SCOPE) ||
+      rec.scopes.some((scope) => scope !== REQUIRED_SCOPE)
+    ) {
+      throw new InvalidTokenError('Access token has invalid scope');
+    }
+    const resource = this.requireExpectedResource(rec.resource, true);
     const info: AuthInfo = {
       token,
       clientId: rec.clientId,
       scopes: rec.scopes,
       expiresAt: Math.floor(rec.expiresAt / 1000), // seconds since epoch
     };
-    if (rec.resource) {
-      try {
-        info.resource = new URL(rec.resource);
-      } catch {
-        /* stored value was already validated as a URL when minted; ignore */
-      }
-    }
+    info.resource = new URL(resource);
     return info;
   }
 
   async revokeToken(
-    _client: OAuthClientInformationFull,
+    client: OAuthClientInformationFull,
     request: OAuthTokenRevocationRequest,
   ): Promise<void> {
-    // Per RFC 7009, revoking an unknown token is a no-op. Try both stores; a
-    // hint narrows the work but is advisory only.
-    const { token, token_type_hint } = request;
-    if (token_type_hint === 'refresh_token') {
-      this.store.deleteRefreshToken(token);
-      this.store.deleteAccessToken(token);
-    } else {
-      this.store.deleteAccessToken(token);
-      this.store.deleteRefreshToken(token);
-    }
+    // RFC 7009 requires an unknown or foreign token to remain a no-op, without
+    // revealing ownership. A known token revokes its whole access/refresh pair.
+    this.store.revokeTokenFamily(client.client_id, request.token);
+  }
+
+  close(): Promise<void> {
+    return this.store.close();
+  }
+
+  /** Releases a just-created store if OAuth router construction fails synchronously. */
+  abortStartup(): void {
+    this.store.abortStartup();
+  }
+
+  isReady(): boolean {
+    return this.store.isReady();
   }
 
   // ───────────────────────────────── internals ───────────────────────────────
@@ -445,5 +570,46 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
       refresh_token: refreshToken,
       scope: scopes.join(' '),
     };
+  }
+
+  private normalizeScopes(scopes: string[] | undefined): string[] {
+    if (!scopes || scopes.length === 0) return [...this.supportedScopes];
+    const unique = [...new Set(scopes.filter(Boolean))];
+    if (unique.length !== 1 || unique[0] !== REQUIRED_SCOPE) {
+      throw new InvalidScopeError(`Only the ${REQUIRED_SCOPE} scope is supported`);
+    }
+    return unique;
+  }
+
+  private requireExpectedResource(value: string | undefined, tokenValidation = false): string {
+    let normalized: string | undefined;
+    try {
+      if (value !== undefined) {
+        const parsed = new URL(value);
+        if (parsed.hash) throw new Error('fragment not allowed');
+        normalized = parsed.href;
+      }
+    } catch {
+      if (tokenValidation) throw new InvalidTokenError('Access token has invalid resource');
+      throw new InvalidRequestError('Invalid resource indicator');
+    }
+    if (normalized !== this.expectedResource) {
+      if (tokenValidation)
+        throw new InvalidTokenError('Access token was issued for a different resource');
+      throw new InvalidRequestError(`resource must be ${this.expectedResource}`);
+    }
+    return normalized;
+  }
+
+  private setConsentHeaders(res: Response): void {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    );
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
   }
 }

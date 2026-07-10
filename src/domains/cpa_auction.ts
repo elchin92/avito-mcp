@@ -23,7 +23,7 @@ export const register: DomainRegister = (server, ctx) => {
       fromItemID: z
         .number()
         .int()
-        .positive()
+        .min(0)
         .optional()
         .describe('Pagination cursor: ID of the last listing from the previous page (default 0 — from the start).'),
       batchSize: z
@@ -50,7 +50,13 @@ export const register: DomainRegister = (server, ctx) => {
     domain: 'auction',
     input: {
       items: z
-        .array(z.record(z.string(), z.unknown()))
+        .array(
+          z.object({
+            itemID: z.number().int(),
+            pricePenny: z.number().int(),
+            expirationTime: z.string().nullable().optional(),
+          }),
+        )
         .min(1)
         .max(200)
         .describe(

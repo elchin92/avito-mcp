@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 function makeConfig(): Config {
   return {
@@ -13,6 +15,7 @@ function makeConfig(): Config {
     clientSecret: 'sec',
     profileId: 12345,
     baseUrl: 'https://api.test.example',
+    cpaSource: 'avito-mcp-test',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     mode: 'full_access',
@@ -37,6 +40,8 @@ function makeConfig(): Config {
       allowNoAuth: false,
       allowedHosts: [],
       allowedOrigins: [],
+      maxSessions: 100,
+      sessionIdleSec: 1800,
       oauthTokenTtlSec: 3600,
     },
     webhook: {
@@ -153,6 +158,51 @@ describe('AvitoClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it('does not retry a POST after a 5xx response by default', async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(new Response('possibly processed', { status: 503 }));
+    const client = new AvitoClient(cfg, {
+      retry: { retry5xxBackoffMs: 1, max5xxRetries: 3, retryJitterRatio: 0 },
+    });
+    await expect(
+      client.request({ method: 'POST', path: '/mutation', body: { value: 1 } }),
+    ).rejects.toBeInstanceOf(AvitoApiError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels a retryable response body before the next attempt', async () => {
+    let canceled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull() {},
+      cancel() {
+        canceled = true;
+      },
+    });
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(new Response(body, { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const client = new AvitoClient(cfg, {
+      retry: { retry5xxBackoffMs: 1, max5xxRetries: 1, retryJitterRatio: 0 },
+    });
+    await client.request({ method: 'GET', path: '/retry' });
+    expect(canceled).toBe(true);
+  });
+
+  it('caps Retry-After before retrying', async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'retry-after': '3600' } }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const client = new AvitoClient(cfg, {
+      retry: { max429Retries: 1, maxRetryAfterMs: 5, retryJitterRatio: 0 },
+    });
+    const started = Date.now();
+    await client.request({ method: 'GET', path: '/retry-after' });
+    expect(Date.now() - started).toBeLessThan(250);
+  });
+
   it('does not retry 5xx beyond max5xxRetries', async () => {
     fetchMock
       .mockResolvedValueOnce(tokenResponse())
@@ -173,22 +223,18 @@ describe('AvitoClient', () => {
       .mockResolvedValueOnce(jsonResponse({ error: 'not found' }, 404));
 
     const client = new AvitoClient(cfg);
-    const err = await client
-      .request({ method: 'GET', path: '/missing' })
-      .catch((e) => e);
+    const err = await client.request({ method: 'GET', path: '/missing' }).catch((e) => e);
     expect(err).toBeInstanceOf(AvitoApiError);
     expect(err.status).toBe(404);
   });
 
   it('records rate-limit headers per domain', async () => {
-    fetchMock
-      .mockResolvedValueOnce(tokenResponse())
-      .mockResolvedValueOnce(
-        jsonResponse({}, 200, {
-          'x-ratelimit-limit': '60',
-          'x-ratelimit-remaining': '42',
-        }),
-      );
+    fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(
+      jsonResponse({}, 200, {
+        'x-ratelimit-limit': '60',
+        'x-ratelimit-remaining': '42',
+      }),
+    );
 
     const client = new AvitoClient(cfg);
     await client.request({ method: 'GET', path: '/messenger/v3/x' });
@@ -200,9 +246,7 @@ describe('AvitoClient', () => {
   });
 
   it('serialises JSON body and sets Content-Type', async () => {
-    fetchMock
-      .mockResolvedValueOnce(tokenResponse())
-      .mockResolvedValueOnce(jsonResponse({}));
+    fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(jsonResponse({}));
 
     const client = new AvitoClient(cfg);
     await client.request({
@@ -216,9 +260,7 @@ describe('AvitoClient', () => {
   });
 
   it('serialises form-urlencoded body', async () => {
-    fetchMock
-      .mockResolvedValueOnce(tokenResponse())
-      .mockResolvedValueOnce(jsonResponse({}));
+    fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(jsonResponse({}));
 
     const client = new AvitoClient(cfg);
     await client.request({
@@ -242,5 +284,65 @@ describe('AvitoClient', () => {
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds only code-owned allowlisted static headers', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const client = new AvitoClient(cfg);
+    await client.request({
+      method: 'GET',
+      path: '/public/thing',
+      auth: false,
+      staticHeaders: { 'X-Source': 'operator-configured' },
+    });
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.headers).toMatchObject({ 'X-Source': 'operator-configured' });
+
+    await expect(
+      client.request({
+        method: 'GET',
+        path: '/public/thing',
+        auth: false,
+        staticHeaders: { Authorization: 'model-controlled' } as never,
+      }),
+    ).rejects.toThrow(/not allowlisted/);
+  });
+
+  it('supports an explicitly opted-in GET JSON body through the low-level transport', async () => {
+    let seenBody = '';
+    let seenSource: string | undefined;
+    const server = createServer((req, res) => {
+      req.setEncoding('utf8');
+      req.on('data', (chunk) => {
+        seenBody += chunk;
+      });
+      req.on('end', () => {
+        const source = req.headers['x-source'];
+        seenSource = Array.isArray(source) ? source[0] : source;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address() as AddressInfo;
+      cfg.baseUrl = `http://127.0.0.1:${address.port}`;
+      const client = new AvitoClient(cfg);
+      const result = await client.request({
+        method: 'GET',
+        path: '/swagger-get-body',
+        auth: false,
+        body: { ids: [1, 2] },
+        allowGetBody: true,
+        staticHeaders: { 'X-Source': 'cpa' },
+      });
+      expect(result.data).toEqual({ ok: true });
+      expect(seenBody).toBe('{"ids":[1,2]}');
+      expect(seenSource).toBe('cpa');
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
   });
 });

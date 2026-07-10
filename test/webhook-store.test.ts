@@ -14,6 +14,10 @@
  * clear failure here rather than crashing the whole suite at load time.
  */
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomBytes } from 'node:crypto';
 
 // Loaded lazily in beforeAll (see file header).
 type WebhookStoreCtor = typeof import('../src/core/webhook-store.js').WebhookStore;
@@ -237,5 +241,78 @@ describe('WebhookStore.onChange', () => {
     store.onChange(good);
     expect(() => store.record(makeEnvelope())).not.toThrow();
     expect(good).toHaveBeenCalledOnce();
+  });
+});
+
+describe('WebhookStore durability log', () => {
+  it('writes a minimized 0600 JSONL record without raw message content', async () => {
+    const dir = join(tmpdir(), `webhook-log-${randomBytes(6).toString('hex')}`);
+    const file = join(dir, 'events.jsonl');
+    try {
+      const store = new WebhookStore(10, file);
+      store.record({
+        id: 'event-with-secret',
+        payload: {
+          type: 'message',
+          value: { chat_id: 'chat-1', type: 'text', text: 'PRIVATE-MESSAGE-CANARY' },
+        },
+      });
+      await store.flush();
+      expect(store.isReady()).toBe(true);
+      const text = await fs.readFile(file, 'utf8');
+      expect(text).not.toContain('PRIVATE-MESSAGE-CANARY');
+      expect(JSON.parse(text).raw).toBeUndefined();
+      expect(JSON.parse(text).chat_id).toBe('chat-1');
+      expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('serializes appends and retains only the configured rotated files', async () => {
+    const dir = join(tmpdir(), `webhook-rotate-${randomBytes(6).toString('hex')}`);
+    const file = join(dir, 'events.jsonl');
+    try {
+      const store = new WebhookStore(20, file, { maxLogBytes: 180, retainedFiles: 2 });
+      for (let i = 0; i < 8; i += 1) {
+        store.record(makeEnvelope({ id: `rotation-${i}` }));
+      }
+      await store.flush();
+      expect(await fs.readFile(file, 'utf8')).toContain('rotation-7');
+      expect(await fs.readFile(`${file}.1`, 'utf8')).toContain('rotation-6');
+      await expect(fs.stat(`${file}.2`)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not follow a symlink at the configured log path', async () => {
+    const dir = join(tmpdir(), `webhook-symlink-${randomBytes(6).toString('hex')}`);
+    const target = join(dir, 'target.txt');
+    const link = join(dir, 'events.jsonl');
+    try {
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(target, 'DO-NOT-TOUCH', { mode: 0o644 });
+      await fs.symlink(target, link);
+      const store = new WebhookStore(10, link);
+      store.record(makeEnvelope({ id: 'symlink-attempt' }));
+      await store.flush();
+      expect(store.isReady()).toBe(false);
+      expect(await fs.readFile(target, 'utf8')).toBe('DO-NOT-TOUCH');
+      expect((await fs.stat(target)).mode & 0o777).toBe(0o644);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('starts unready when the configured log parent cannot be created', async () => {
+    const parent = join(tmpdir(), `webhook-invalid-parent-${randomBytes(6).toString('hex')}`);
+    try {
+      await fs.writeFile(parent, 'not-a-directory');
+      const store = new WebhookStore(10, join(parent, 'events.jsonl'));
+      expect(store.isReady()).toBe(false);
+    } finally {
+      await fs.rm(parent, { force: true });
+    }
   });
 });

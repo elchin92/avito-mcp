@@ -4,7 +4,14 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 
-import { TokenStore } from '../src/core/token-store.js';
+import {
+  TokenStore,
+  createTokenAccountFingerprint,
+  type TokenRecord,
+} from '../src/core/token-store.js';
+
+const ACCOUNT_A = { baseUrl: 'https://api.avito.ru/', clientId: 'client-a', profileId: 1 };
+const ACCOUNT_B = { baseUrl: 'https://api.avito.ru', clientId: 'client-b', profileId: 2 };
 
 describe('TokenStore', () => {
   let tokenFile: string;
@@ -32,6 +39,8 @@ describe('TokenStore', () => {
     await store.getToken();
     expect(fetcher).toHaveBeenCalledOnce();
     const onDisk = JSON.parse(await fs.readFile(tokenFile, 'utf8'));
+    expect(onDisk.version).toBe(1);
+    expect(onDisk.accountFingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(onDisk.accessToken).toBe('tok2');
     expect(onDisk.expiresAt).toBeGreaterThan(Date.now());
   });
@@ -101,5 +110,98 @@ describe('TokenStore', () => {
     const results = await Promise.all([p1, p2, p3]);
     expect(results).toEqual(['shared', 'shared', 'shared']);
     expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it('does not reuse a shared token file across different accounts', async () => {
+    const fetcherA = vi.fn().mockResolvedValue({ accessToken: 'account-a-token', expiresIn: 3600 });
+    const storeA = new TokenStore(tokenFile, fetcherA, 30_000, ACCOUNT_A);
+    expect(await storeA.getToken()).toBe('account-a-token');
+
+    const fetcherB = vi.fn().mockResolvedValue({ accessToken: 'account-b-token', expiresIn: 3600 });
+    const storeB = new TokenStore(tokenFile, fetcherB, 30_000, ACCOUNT_B);
+    expect(await storeB.getMetadata()).toEqual({ present: false });
+    expect(await storeB.getToken()).toBe('account-b-token');
+    expect(fetcherB).toHaveBeenCalledOnce();
+
+    const onDisk = JSON.parse(await fs.readFile(tokenFile, 'utf8'));
+    expect(onDisk.accountFingerprint).toBe(createTokenAccountFingerprint(ACCOUNT_B));
+    expect(onDisk.accountFingerprint).not.toBe(createTokenAccountFingerprint(ACCOUNT_A));
+  });
+
+  it('serializes account-conditional invalidation with a successor refresh', async () => {
+    const fetcherA = vi.fn().mockResolvedValue({ accessToken: 'account-a-token', expiresIn: 3600 });
+    const storeA = new TokenStore(tokenFile, fetcherA, 5_000, ACCOUNT_A);
+    await storeA.getToken();
+
+    const actualReadFile = fs.readFile.bind(fs);
+    let markInvalidateRead!: () => void;
+    const invalidateRead = new Promise<void>((resolve) => {
+      markInvalidateRead = resolve;
+    });
+    let releaseInvalidateRead!: () => void;
+    const readGate = new Promise<void>((resolve) => {
+      releaseInvalidateRead = resolve;
+    });
+    let intercepted = false;
+    const readSpy = vi.spyOn(fs, 'readFile').mockImplementation(async (path, options) => {
+      const value = await actualReadFile(path, options);
+      if (!intercepted && String(path) === tokenFile) {
+        intercepted = true;
+        markInvalidateRead();
+        await readGate;
+      }
+      return value;
+    });
+
+    try {
+      const invalidation = storeA.invalidate();
+      await invalidateRead;
+
+      const fetcherB = vi
+        .fn()
+        .mockResolvedValue({ accessToken: 'account-b-successor', expiresIn: 3600 });
+      const storeB = new TokenStore(tokenFile, fetcherB, 5_000, ACCOUNT_B);
+      const successorRefresh = storeB.refresh();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(fetcherB).not.toHaveBeenCalled();
+
+      releaseInvalidateRead();
+      await Promise.all([invalidation, successorRefresh]);
+      const onDisk = JSON.parse(await actualReadFile(tokenFile, 'utf8')) as TokenRecord;
+      expect(onDisk.accountFingerprint).toBe(createTokenAccountFingerprint(ACCOUNT_B));
+      expect(onDisk.accessToken).toBe('account-b-successor');
+    } finally {
+      releaseInvalidateRead();
+      readSpy.mockRestore();
+    }
+  });
+
+  it('rejects legacy unbound token records', async () => {
+    await fs.writeFile(
+      tokenFile,
+      JSON.stringify({ accessToken: 'legacy-token', expiresAt: Date.now() + 3_600_000 }),
+    );
+    const fetcher = vi.fn().mockResolvedValue({ accessToken: 'bound-token', expiresIn: 3600 });
+    const store = new TokenStore(tokenFile, fetcher, 30_000, ACCOUNT_A);
+    expect(await store.getMetadata()).toEqual({ present: false });
+    expect(await store.getToken()).toBe('bound-token');
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it('creates a missing parent directory before acquiring the lock', async () => {
+    const root = join(tmpdir(), `avito-token-nested-${randomBytes(6).toString('hex')}`);
+    tokenFile = join(root, 'deep', 'token.json');
+    const fetcher = vi.fn().mockResolvedValue({ accessToken: 'nested', expiresIn: 3600 });
+    const store = new TokenStore(tokenFile, fetcher, 30_000, ACCOUNT_A);
+    expect(await store.getToken()).toBe('nested');
+    expect(JSON.parse(await fs.readFile(tokenFile, 'utf8')).accessToken).toBe('nested');
+    if (process.platform !== 'win32') {
+      expect((await fs.stat(join(root, 'deep'))).mode & 0o077).toBe(0);
+      expect((await fs.stat(tokenFile)).mode & 0o077).toBe(0);
+    }
+    expect((await fs.readdir(join(root, 'deep'))).filter((name) => name.endsWith('.tmp'))).toEqual(
+      [],
+    );
+    await fs.rm(root, { recursive: true, force: true });
   });
 });

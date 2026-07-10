@@ -17,16 +17,16 @@
 #     -e AVITO_MCP_HTTP_HOST=0.0.0.0 \
 #     -e AVITO_MCP_HTTP_PUBLIC_URL=https://mcp.example.com \
 #     -e AVITO_MCP_OAUTH_OWNER_PASSWORD=... \
-#     -p 3000:3000 \
+#     -p 127.0.0.1:3000:3000 \
 #     avito-mcp
-# In production keep AVITO_MCP_HTTP_HOST loopback and terminate TLS with a
-# reverse proxy (nginx/Caddy) in front — see the README "Remote MCP" section.
+# Inside the container the app binds 0.0.0.0 so Docker's bridge can reach it;
+# host-side publishing stays loopback-only. Terminate TLS with a reverse proxy.
 #
 # Credentials are optional at startup: without them the server still serves
 # tools/list / resources / prompts; API calls fail with CONFIG_ERROR until set.
 
 # ---- build stage -------------------------------------------------------------
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 
 # Install full deps (incl. dev) for the TypeScript build.
@@ -44,9 +44,11 @@ RUN npm run build && npm run generate:manifest
 RUN npm prune --omit=dev
 
 # ---- runtime stage -----------------------------------------------------------
-FROM node:20-alpine
+FROM node:24-alpine
 WORKDIR /app
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    HOME=/home/node \
+    XDG_STATE_HOME=/home/node/.local/state
 
 # Runtime artifacts. node_modules + dist (incl. generated manifest.json) come from
 # the build stage; swaggers/ and docs/ are static and copied straight from context
@@ -56,10 +58,19 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./package.json
 COPY swaggers ./swaggers
 COPY docs ./docs
+COPY deploy/container-healthcheck.sh /usr/local/bin/avito-mcp-healthcheck
+
+RUN mkdir -p /home/node/.local/state/avito-mcp && \
+    chown -R node:node /home/node/.local && \
+    chmod 0555 /usr/local/bin/avito-mcp-healthcheck && \
+    chmod -R a-w /app/node_modules /app/dist /app/swaggers /app/docs /app/package.json
 
 # Default transport is stdio (stdin/stdout) — no port needed. When run with
 # AVITO_MCP_TRANSPORT=http (or both) the server also listens on this port for the
 # Streamable HTTP MCP endpoint / OAuth flow / webhook receiver; publish it with
-# `-p 3000:3000`. Override the port via AVITO_MCP_HTTP_PORT.
+# `-p 127.0.0.1:3000:3000`. Override the port via AVITO_MCP_HTTP_PORT.
 EXPOSE 3000
+USER node
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["/usr/local/bin/avito-mcp-healthcheck"]
 ENTRYPOINT ["node", "dist/server.js"]

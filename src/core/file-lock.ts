@@ -1,20 +1,18 @@
 /**
- * A simple cross-process advisory file lock for defence-in-depth on top of the
- * in-process single-flight in TokenStore. Used during OAuth refresh so that
- * multiple avito-mcp processes (e.g. an MCP client + a cron agent + a manual CLI)
- * do not refresh concurrently and hit the rate limit of Avito's /token endpoint.
+ * A cross-process advisory lease used by TokenStore during OAuth refresh.
  *
- * Implementation: an exclusive-create lock file (`{target}.lock`) with the PID written to it.
- * Stale detection: if the owning PID is not alive, the lock is treated as orphaned and removed.
- * Backoff: 50–150ms jitter to avoid lockstep when there are multiple contenders.
+ * The canonical `{target}.lock` path is a private directory containing one
+ * generation-specific owner marker. Release and stale cleanup first rename that
+ * marker to a transition marker, then move the whole directory to a unique path
+ * before deleting it. The marker rename is the atomic ownership claim: a delayed
+ * cleaner cannot claim a replacement generation because its marker has a
+ * different name.
  *
- * This is an advisory mechanism. Any code that does not use withFileLock() will not see it,
- * so it only works when all processes honor the same convention.
- *
- * No dependencies are added. proper-lockfile, which is most commonly used for such tasks,
- * would pull in graceful-fs and retry — overkill here.
+ * This remains advisory. Every cooperating process must use withFileLock().
  */
-import { promises as fs } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { promises as fs, type Stats } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 export interface FileLockOptions {
   /** Maximum time to wait for the lock to become free. Default 30s. */
@@ -23,9 +21,38 @@ export interface FileLockOptions {
   retryMinMs?: number;
   /** Maximum interval between attempts. Default 150ms. */
   retryMaxMs?: number;
-  /** Maximum age of a stale lock after which it can be removed. Default 60s. */
+  /** Grace age before a partial marker can be reclaimed. Default 60s. */
   staleMs?: number;
 }
+
+interface LockRecord {
+  version: 1;
+  pid: number;
+  createdAt: number;
+  nonce: string;
+}
+
+interface LockSnapshot {
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  directory: boolean;
+  markerName?: string;
+  markerMtimeMs?: number;
+  raw?: string;
+  record?: Pick<LockRecord, 'pid' | 'createdAt'> & { nonce?: string };
+  claimantPid?: number;
+}
+
+interface LockOwnership extends LockSnapshot {
+  directory: true;
+  markerName: string;
+  raw: string;
+  record: LockRecord;
+}
+
+const OWNER_MARKER = /^owner-([0-9a-f]{32})\.json$/;
+const TRANSITION_MARKER = /^\.transition-(\d+)-([0-9a-f]{32})\.json$/;
 
 const DEFAULTS: Required<FileLockOptions> = {
   timeoutMs: 30_000,
@@ -35,9 +62,8 @@ const DEFAULTS: Required<FileLockOptions> = {
 };
 
 /**
- * Acquires `${target}.lock`, runs fn(), then releases.
- * fn runs only once the lock has actually been acquired.
- * If the lock could not be acquired within timeoutMs, FileLockTimeoutError is thrown.
+ * Acquires `${target}.lock`, runs fn(), then releases it.
+ * fn runs only after the lease has been acquired.
  */
 export async function withFileLock<T>(
   target: string,
@@ -48,13 +74,12 @@ export async function withFileLock<T>(
   const lockPath = `${target}.lock`;
   const deadline = Date.now() + opts.timeoutMs;
 
-  await acquireLock(lockPath, deadline, opts);
+  await fs.mkdir(dirname(lockPath), { recursive: true, mode: 0o700 });
+  const ownership = await acquireLock(lockPath, deadline, opts);
   try {
     return await fn();
   } finally {
-    // Releasing is best-effort. If the file is no longer ours (stolen via stale-cleanup),
-    // that's fine: the next acquireLock will obtain a fresh lock.
-    await fs.rm(lockPath, { force: true }).catch(() => {});
+    await removeIfUnchanged(lockPath, ownership).catch(() => false);
   }
 }
 
@@ -62,29 +87,74 @@ async function acquireLock(
   lockPath: string,
   deadline: number,
   opts: Required<FileLockOptions>,
-): Promise<void> {
-  const pidLine = `${process.pid}\n${Date.now()}\n`;
+): Promise<LockOwnership> {
   while (true) {
+    const record: LockRecord = {
+      version: 1,
+      pid: process.pid,
+      createdAt: Date.now(),
+      nonce: randomBytes(16).toString('hex'),
+    };
+    const raw = `${JSON.stringify(record)}\n`;
+    const markerName = `owner-${record.nonce}.json`;
+    const markerPath = join(lockPath, markerName);
+    let createdDirectory = false;
+    let createdStat: Stats | undefined;
+    let markerCreated = false;
+
     try {
-      // wx = O_CREAT | O_EXCL — atomically creates the file; if it exists, throws EEXIST.
-      const fd = await fs.open(lockPath, 'wx', 0o600);
+      // mkdir is the atomic publication of a new lease generation.
+      await fs.mkdir(lockPath, { mode: 0o700 });
+      createdDirectory = true;
+      createdStat = await fs.lstat(lockPath);
+
+      const marker = await fs.open(markerPath, 'wx', 0o600);
+      markerCreated = true;
       try {
-        await fd.writeFile(pidLine);
+        await marker.writeFile(raw, 'utf8');
+        await marker.sync();
       } finally {
-        await fd.close();
+        await marker.close();
       }
-      return;
+
+      const ownership: LockOwnership = {
+        dev: createdStat.dev,
+        ino: createdStat.ino,
+        mtimeMs: createdStat.mtimeMs,
+        directory: true,
+        markerName,
+        raw,
+        record,
+      };
+      if (!(await lockMatches(ownership, lockPath, markerPath))) {
+        throw new Error(`File lock ${lockPath} changed during initialization`);
+      }
+      return ownership;
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== 'EEXIST') throw err;
-      // Lock is held. If it is stale, try to remove it.
-      const stale = await isStale(lockPath, opts.staleMs);
-      if (stale) {
-        await fs.rm(lockPath, { force: true }).catch(() => {});
-        // On the next iteration we will try to create it again. If someone else
-        // beats us to it, we get EEXIST again and re-check for staleness.
-        continue;
+      if (createdDirectory) {
+        if (createdStat && markerCreated) {
+          const partial: LockSnapshot = {
+            dev: createdStat.dev,
+            ino: createdStat.ino,
+            mtimeMs: createdStat.mtimeMs,
+            directory: true,
+            markerName,
+            raw,
+            record,
+          };
+          await removeIfUnchanged(lockPath, partial).catch(() => false);
+        } else {
+          // No generation marker was published, so the directory can only be ours.
+          if (markerCreated) await fs.rm(markerPath, { force: true }).catch(() => undefined);
+          await fs.rmdir(lockPath).catch(() => undefined);
+        }
+        throw err;
       }
+
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+
+      const stale = await staleSnapshot(lockPath, opts.staleMs);
+      if (stale && (await removeIfUnchanged(lockPath, stale))) continue;
       if (Date.now() >= deadline) {
         throw new FileLockTimeoutError(lockPath, opts.timeoutMs);
       }
@@ -96,40 +166,189 @@ async function acquireLock(
 }
 
 /**
- * Considers a lock stale if: (a) the file is unreadable (corrupted), or (b) the owning PID
- * is not alive, or (c) the timestamp in the lock file is older than opts.staleMs. This guards
- * against the case where a process crashed while holding the lock and nobody released it.
+ * A valid owner is stale only when its PID is gone. During a transition the
+ * claimant PID owns cleanup. A partial recognized marker receives staleMs grace.
+ * Legacy file-style locks and marker-less directories fail closed because Node
+ * has no atomic compare-and-unlink primitive for those shapes.
  */
-async function isStale(lockPath: string, staleMs: number): Promise<boolean> {
-  let raw: string;
+async function staleSnapshot(lockPath: string, staleMs: number): Promise<LockSnapshot | undefined> {
+  const snapshot = await readSnapshot(lockPath);
+  if (!snapshot?.directory || !snapshot.markerName || snapshot.raw === undefined) return undefined;
+  if (snapshot.claimantPid !== undefined) {
+    return processIsAlive(snapshot.claimantPid) ? undefined : snapshot;
+  }
+  if (snapshot.record) {
+    return processIsAlive(snapshot.record.pid) ? undefined : snapshot;
+  }
+  const ageBase = Math.max(snapshot.mtimeMs, snapshot.markerMtimeMs ?? 0);
+  return Date.now() - ageBase > staleMs ? snapshot : undefined;
+}
+
+async function readSnapshot(lockPath: string): Promise<LockSnapshot | undefined> {
+  let stat: Stats;
   try {
-    raw = await fs.readFile(lockPath, 'utf8');
+    stat = await fs.lstat(lockPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
+  }
+
+  const snapshot: LockSnapshot = {
+    dev: stat.dev,
+    ino: stat.ino,
+    mtimeMs: stat.mtimeMs,
+    directory: stat.isDirectory() && !stat.isSymbolicLink(),
+  };
+
+  if (!snapshot.directory) {
+    // Parse old file-style locks only to recognize their owner. They are never
+    // auto-removed: doing so would reintroduce the compare/unlink race.
+    if (stat.isFile() && !stat.isSymbolicLink()) {
+      try {
+        snapshot.raw = await fs.readFile(lockPath, 'utf8');
+        snapshot.record = parseRecord(snapshot.raw);
+      } catch {
+        // Fail closed on an unreadable legacy lock.
+      }
+    }
+    return snapshot;
+  }
+
+  let entries: string[];
+  try {
+    entries = await fs.readdir(lockPath);
   } catch {
-    return true;
+    return snapshot;
+  }
+  const markerNames = entries.filter(
+    (name) => OWNER_MARKER.test(name) || TRANSITION_MARKER.test(name),
+  );
+  if (markerNames.length !== 1) return snapshot;
+
+  const markerName = markerNames[0]!;
+  const markerPath = join(lockPath, markerName);
+  try {
+    const markerStat = await fs.lstat(markerPath);
+    if (!markerStat.isFile() || markerStat.isSymbolicLink()) return snapshot;
+    snapshot.markerName = markerName;
+    snapshot.markerMtimeMs = markerStat.mtimeMs;
+    snapshot.raw = await fs.readFile(markerPath, 'utf8');
+    snapshot.record = parseRecord(snapshot.raw);
+  } catch {
+    return snapshot;
+  }
+
+  const owner = OWNER_MARKER.exec(markerName);
+  if (owner && snapshot.record?.nonce !== owner[1]) {
+    snapshot.record = undefined;
+  }
+  const transition = TRANSITION_MARKER.exec(markerName);
+  if (transition) snapshot.claimantPid = Number(transition[1]);
+  return snapshot;
+}
+
+function parseRecord(raw: string): LockSnapshot['record'] {
+  try {
+    const parsed = JSON.parse(raw) as Partial<LockRecord>;
+    if (
+      parsed.version === 1 &&
+      Number.isSafeInteger(parsed.pid) &&
+      parsed.pid! > 0 &&
+      Number.isFinite(parsed.createdAt) &&
+      typeof parsed.nonce === 'string' &&
+      /^[0-9a-f]{32}$/.test(parsed.nonce)
+    ) {
+      return { pid: parsed.pid!, createdAt: parsed.createdAt!, nonce: parsed.nonce };
+    }
+  } catch {
+    // Fall through to the legacy two-line format.
   }
   const [pidLine, tsLine] = raw.split('\n', 2);
   const pid = Number.parseInt(pidLine ?? '', 10);
-  const ts = Number.parseInt(tsLine ?? '', 10);
-  if (Number.isFinite(ts) && Date.now() - ts > staleMs) return true;
-  if (!Number.isFinite(pid) || pid <= 0) return true;
-  // signal 0 = existence check only. ESRCH = the process is gone; EPERM = it exists,
-  // but we lack permission to signal it — meaning it exists, so the lock is alive.
+  const createdAt = Number.parseInt(tsLine ?? '', 10);
+  if (Number.isSafeInteger(pid) && pid > 0 && Number.isFinite(createdAt)) {
+    return { pid, createdAt };
+  }
+  return undefined;
+}
+
+function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return false;
+    return true;
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ESRCH') return true;
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
+async function lockMatches(
+  expected: LockSnapshot,
+  lockPath: string,
+  markerPath: string,
+): Promise<boolean> {
+  try {
+    const current = await fs.lstat(lockPath);
+    if (
+      !current.isDirectory() ||
+      current.isSymbolicLink() ||
+      current.dev !== expected.dev ||
+      current.ino !== expected.ino
+    ) {
+      return false;
+    }
+    return expected.raw === undefined || (await fs.readFile(markerPath, 'utf8')) === expected.raw;
+  } catch {
     return false;
   }
 }
 
+/** Atomically claims this generation, moves it aside, then deletes only that path. */
+async function removeIfUnchanged(lockPath: string, expected: LockSnapshot): Promise<boolean> {
+  if (!expected.directory || !expected.markerName || expected.raw === undefined) return false;
+
+  const markerPath = join(lockPath, expected.markerName);
+  if (!(await lockMatches(expected, lockPath, markerPath))) return false;
+
+  const transitionId = randomBytes(16).toString('hex');
+  const claimedName = `.transition-${process.pid}-${transitionId}.json`;
+  const claimedPath = join(lockPath, claimedName);
+  try {
+    // This rename is the compare-and-claim operation. A successor generation has
+    // a different owner marker, so a delayed release receives ENOENT here.
+    await fs.rename(markerPath, claimedPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+
+  const claimed: LockSnapshot = {
+    ...expected,
+    markerName: claimedName,
+    claimantPid: process.pid,
+  };
+  if (!(await lockMatches(claimed, lockPath, claimedPath))) {
+    throw new Error(`File lock ${lockPath} changed after transition claim`);
+  }
+
+  const transitionedPath = `${lockPath}.transitioned-${transitionId}`;
+  await fs.rename(lockPath, transitionedPath);
+  const transitionedMarker = join(transitionedPath, basename(claimedPath));
+  if (!(await lockMatches(claimed, transitionedPath, transitionedMarker))) {
+    throw new Error(`File lock ${lockPath} identity changed during transition`);
+  }
+  await fs.rm(transitionedPath, { recursive: true, force: true });
+  return true;
+}
+
 function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export class FileLockTimeoutError extends Error {
-  constructor(public readonly lockPath: string, public readonly timeoutMs: number) {
+  constructor(
+    public readonly lockPath: string,
+    public readonly timeoutMs: number,
+  ) {
     super(`Failed to acquire ${lockPath} within ${timeoutMs}ms`);
     this.name = 'FileLockTimeoutError';
   }

@@ -52,11 +52,43 @@ export type PendingChangeListener = (
   action?: PendingActionInfo,
 ) => void;
 
+export class PendingActionLimitError extends Error {
+  constructor(public readonly maxActions: number) {
+    super(
+      `Pending action limit reached (${maxActions}); confirm, cancel, or wait for expiry before creating another action.`,
+    );
+    this.name = 'PendingActionLimitError';
+  }
+}
+
+export interface ConfirmationFailureResult {
+  found: boolean;
+  failedAttempts: number;
+  /** True means the shared threshold was reached and the pending action was deleted. */
+  locked: boolean;
+}
+
+export interface ConfirmationRateLimitResult {
+  allowed: boolean;
+  retryAfterMs: number;
+}
+
 export class PendingActionStore {
   private actions = new Map<string, PendingAction>();
+  /**
+   * Claimed actions stay here until their executor settles. They are no longer
+   * confirmable/listed, but an idempotency entry that points at their id must not
+   * be mistaken for a cancelled/expired pending action while the mutation runs.
+   */
+  private inFlight = new Map<string, PendingAction>();
+  private failedConfirmationAttempts = new Map<string, number>();
+  private confirmationAttempts = new Map<string, number[]>();
   private listeners: PendingChangeListener[] = [];
 
-  constructor(private readonly ttlMs: number) {}
+  constructor(
+    private readonly ttlMs: number,
+    private readonly maxActions: number = 1000,
+  ) {}
 
   /**
    * Creates an entry. id is 32 hex characters (16 bytes of entropy), strong
@@ -69,8 +101,12 @@ export class PendingActionStore {
     args: Record<string, unknown>;
     execute: PendingExecutor;
   }): PendingAction {
-    const id = randomBytes(16).toString('hex');
     const now = Date.now();
+    this.cleanupExpired(now);
+    if (this.actions.size + this.inFlight.size >= this.maxActions) {
+      throw new PendingActionLimitError(this.maxActions);
+    }
+    const id = randomBytes(16).toString('hex');
     const action: PendingAction = {
       ...input,
       id,
@@ -92,8 +128,91 @@ export class PendingActionStore {
   delete(id: string): boolean {
     const had = this.actions.get(id);
     const existed = this.actions.delete(id);
+    this.failedConfirmationAttempts.delete(id);
     if (existed && had) this.emit('deleted', had);
     return existed;
+  }
+
+  /**
+   * Atomically claims a pending action for one-time execution. Only one caller can
+   * receive the action; concurrent sessions observe undefined after the first claim.
+   */
+  take(id: string): PendingAction | undefined {
+    this.cleanupExpired();
+    const action = this.actions.get(id);
+    if (!action) return undefined;
+    this.actions.delete(id);
+    this.inFlight.set(id, action);
+    this.failedConfirmationAttempts.delete(id);
+    this.emit('deleted', action);
+    return action;
+  }
+
+  /**
+   * Releases a claimed action after its executor has settled. Callers must place
+   * this in a finally block so a thrown executor cannot permanently pin the key.
+   */
+  complete(id: string): boolean {
+    return this.inFlight.delete(id);
+  }
+
+  /**
+   * True while the action can still be confirmed OR is already executing. This
+   * is intentionally wider than get(): confirmation callers must not be able to
+   * claim an in-flight action twice, while idempotency needs the lifecycle view.
+   */
+  isActive(id: string): boolean {
+    this.cleanupExpired();
+    return this.actions.has(id) || this.inFlight.has(id);
+  }
+
+  /**
+   * Atomically records a hard-confirmation failure in the process-wide store.
+   * Every MCP session shares this counter through the shared ToolContext.
+   */
+  recordFailedConfirmation(id: string, maxAttempts: number = 5): ConfirmationFailureResult {
+    this.cleanupExpired();
+    const action = this.actions.get(id);
+    if (!action) return { found: false, failedAttempts: 0, locked: false };
+
+    const failedAttempts = (this.failedConfirmationAttempts.get(id) ?? 0) + 1;
+    const locked = failedAttempts >= Math.max(1, maxAttempts);
+    if (locked) {
+      this.actions.delete(id);
+      this.failedConfirmationAttempts.delete(id);
+      this.emit('deleted', action);
+    } else {
+      this.failedConfirmationAttempts.set(id, failedAttempts);
+    }
+    return { found: true, failedAttempts, locked };
+  }
+
+  /** Clears the shared failure counter after a valid secret without deleting the action. */
+  resetConfirmationFailures(id: string): void {
+    this.failedConfirmationAttempts.delete(id);
+  }
+
+  /** Shared sliding-window budget keyed by an authenticated principal fingerprint. */
+  checkConfirmationRateLimit(
+    principal: string,
+    now: number = Date.now(),
+    maxAttempts: number = 20,
+    windowMs: number = 60_000,
+  ): ConfirmationRateLimitResult {
+    const cutoff = now - windowMs;
+    for (const [key, attempts] of this.confirmationAttempts) {
+      const live = attempts.filter((timestamp) => timestamp > cutoff);
+      if (live.length === 0) this.confirmationAttempts.delete(key);
+      else if (live.length !== attempts.length) this.confirmationAttempts.set(key, live);
+    }
+
+    const attempts = this.confirmationAttempts.get(principal) ?? [];
+    if (attempts.length >= Math.max(1, maxAttempts)) {
+      return { allowed: false, retryAfterMs: Math.max(1, attempts[0]! + windowMs - now) };
+    }
+    attempts.push(now);
+    this.confirmationAttempts.set(principal, attempts);
+    return { allowed: true, retryAfterMs: 0 };
   }
 
   /** Safe list — without args, without execute. */
@@ -127,11 +246,11 @@ export class PendingActionStore {
     }
   }
 
-  private cleanupExpired(): void {
-    const now = Date.now();
+  private cleanupExpired(now: number = Date.now()): void {
     for (const [id, a] of this.actions) {
       if (a.expiresAt < now) {
         this.actions.delete(id);
+        this.failedConfirmationAttempts.delete(id);
         this.emit('expired', a);
       }
     }

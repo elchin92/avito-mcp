@@ -24,8 +24,10 @@ import { PendingActionStore } from '../src/core/pending-actions.js';
 import { WebhookStore } from '../src/core/webhook-store.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config, HttpConfig, WebhookConfig } from '../src/config.js';
+import { configuredWebhookReceiverUrl } from '../src/domains/webhook.js';
 
 const WEBHOOK_SECRET = 'super-secret-token-abcd';
+const SPECIAL_WEBHOOK_SECRET = 'base64-secret-0123456789abcdef/+=';
 
 function makeHttpConfig(): HttpConfig {
   return {
@@ -61,6 +63,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     clientSecret: 'sec',
     profileId: 12345678,
     baseUrl: 'https://api.test.example',
+    cpaSource: 'avito-mcp-test',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     mode: 'full_access',
@@ -95,7 +98,11 @@ function makeEnvelope(chatId: string, id: string): unknown {
   };
 }
 
-async function makeRig(overrides: Partial<Config> = {}, seed = true) {
+async function makeRig(
+  overrides: Partial<Config> = {},
+  seed = true,
+  domain: 'webhook' | 'messenger' = 'webhook',
+) {
   const cfg = makeConfig(overrides);
   const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
   const webhookStore = new WebhookStore(cfg.webhook.bufferSize, cfg.webhook.logFile);
@@ -110,7 +117,10 @@ async function makeRig(overrides: Partial<Config> = {}, seed = true) {
     webhookStore,
   };
 
-  const { register } = await import('../src/domains/webhook.js');
+  const { register } =
+    domain === 'webhook'
+      ? await import('../src/domains/webhook.js')
+      : await import('../src/domains/messenger.js');
   const server = new McpServer({ name: 'webhook-test', version: '0.0.0' });
   register(server, ctx);
 
@@ -157,9 +167,11 @@ describe('webhook domain tools', () => {
 
     const r = await rig.client.callTool({ name: 'messenger_get_webhook_events', arguments: {} });
     expect(r.isError).not.toBe(true);
-    const payload = parseStructured<{ enabled: boolean; events: Array<{ id?: string; chat_id?: string }>; count: number }>(
-      r as { structuredContent?: unknown; content?: unknown },
-    );
+    const payload = parseStructured<{
+      enabled: boolean;
+      events: Array<{ id?: string; chat_id?: string }>;
+      count: number;
+    }>(r as { structuredContent?: unknown; content?: unknown });
     expect(payload.enabled).toBe(true);
     expect(payload.count).toBe(2);
     // Newest-first: evt-2 then evt-1.
@@ -178,9 +190,10 @@ describe('webhook domain tools', () => {
       name: 'messenger_get_webhook_events',
       arguments: { chat_id: 'c1' },
     });
-    const payload = parseStructured<{ events: Array<{ id?: string; chat_id?: string }>; count: number }>(
-      r as { structuredContent?: unknown; content?: unknown },
-    );
+    const payload = parseStructured<{
+      events: Array<{ id?: string; chat_id?: string }>;
+      count: number;
+    }>(r as { structuredContent?: unknown; content?: unknown });
     expect(payload.count).toBe(1);
     expect(payload.events[0]!.chat_id).toBe('c1');
     expect(payload.events[0]!.id).toBe('evt-1');
@@ -256,7 +269,7 @@ describe('messenger_register_webhook (v0.9.1 hardening)', () => {
 
   type Preview = { request_preview: { body: { url?: string } } };
 
-  it('dry-run computes the receiver URL from the webhook config', async () => {
+  it('dry-run validates but redacts the configured receiver URL', async () => {
     const rig = await makeRig();
     cleanup = async () => {
       await rig.client.close();
@@ -269,9 +282,71 @@ describe('messenger_register_webhook (v0.9.1 hardening)', () => {
     });
     expect(r.isError).not.toBe(true);
     const payload = parseStructured<Preview>(r as { structuredContent?: unknown });
-    expect(payload.request_preview.body.url).toBe(
-      `https://mcp.example.com/avito/webhook/${WEBHOOK_SECRET}`,
+    expect(payload.request_preview.body.url).toBe('[redacted webhook URL]');
+    expect(JSON.stringify(r)).not.toContain(WEBHOOK_SECRET);
+  });
+
+  it('canonicalizes a base64 /+= secret as one exact path segment and keeps dry-run redacted', async () => {
+    const webhook = makeWebhookConfig({ secret: SPECIAL_WEBHOOK_SECRET });
+    const expectedUrl = configuredWebhookReceiverUrl(webhook);
+    expect(expectedUrl).toBe(
+      `https://mcp.example.com/avito/webhook/${encodeURIComponent(SPECIAL_WEBHOOK_SECRET)}`,
     );
+    expect(expectedUrl).toContain('%2F%2B%3D');
+
+    const rig = await makeRig({ webhook });
+    cleanup = async () => {
+      await rig.client.close();
+      await fs.rm(rig.cfg.tokenFile, { force: true });
+    };
+    const accepted = await rig.client.callTool({
+      name: 'messenger_register_webhook',
+      arguments: { dryRun: true, url: expectedUrl },
+    });
+    expect(accepted.isError).not.toBe(true);
+    expect(
+      parseStructured<Preview>(accepted as { structuredContent?: unknown; content?: unknown })
+        .request_preview.body.url,
+    ).toBe('[redacted webhook URL]');
+    expect(JSON.stringify(accepted)).not.toContain(SPECIAL_WEBHOOK_SECRET);
+    expect(JSON.stringify(accepted)).not.toContain(expectedUrl);
+
+    const legacySplitUrl = `https://mcp.example.com/avito/webhook/${SPECIAL_WEBHOOK_SECRET}`;
+    const rejected = await rig.client.callTool({
+      name: 'messenger_register_webhook',
+      arguments: { dryRun: true, url: legacySplitUrl },
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toContain('arbitrary webhook destinations are not allowed');
+
+    const status = await rig.client.callTool({
+      name: 'messenger_get_webhook_status',
+      arguments: {},
+    });
+    const subscribeUrl = parseStructured<{ subscribe_url: string }>(
+      status as { structuredContent?: unknown; content?: unknown },
+    ).subscribe_url;
+    expect(subscribeUrl).not.toContain(SPECIAL_WEBHOOK_SECRET);
+    expect(new URL(subscribeUrl).pathname.split('/')).toHaveLength(4);
+  });
+
+  it('uses public risk so money_public mode requires confirmation', async () => {
+    const rig = await makeRig();
+    cleanup = async () => {
+      await rig.client.close();
+      await fs.rm(rig.cfg.tokenFile, { force: true });
+    };
+
+    const r = await rig.client.callTool({
+      name: 'messenger_register_webhook',
+      arguments: {},
+    });
+    const payload = parseStructured<{ requires_confirmation: boolean; risk: string }>(
+      r as { structuredContent?: unknown; content?: unknown },
+    );
+    expect(payload.requires_confirmation).toBe(true);
+    expect(payload.risk).toBe('public');
+    expect(JSON.stringify(r)).not.toContain(WEBHOOK_SECRET);
   });
 
   it('rejects a loopback public URL — Avito could never deliver to it', async () => {
@@ -337,7 +412,8 @@ describe('messenger_register_webhook (v0.9.1 hardening)', () => {
     });
     expect(r.isError).not.toBe(true);
     const payload = parseStructured<Preview>(r as { structuredContent?: unknown });
-    expect(payload.request_preview.body.url).toBe(expectedUrl);
+    expect(payload.request_preview.body.url).toBe('[redacted webhook URL]');
+    expect(JSON.stringify(r)).not.toContain(WEBHOOK_SECRET);
   });
 
   it('errors clearly when unconfigured and no url is given', async () => {
@@ -355,5 +431,64 @@ describe('messenger_register_webhook (v0.9.1 hardening)', () => {
     });
     const text = JSON.stringify(r.content) + JSON.stringify(r.structuredContent ?? {});
     expect(text).toContain('not configured');
+  });
+});
+
+describe('messenger_post_webhook_v3 configured receiver enforcement', () => {
+  let cleanup: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    await cleanup?.();
+    cleanup = undefined;
+  });
+
+  type Preview = { request_preview: { body: { url?: string } } };
+
+  async function makeMessengerRig() {
+    const rig = await makeRig({}, false, 'messenger');
+    cleanup = async () => {
+      await rig.client.close();
+      await fs.rm(rig.cfg.tokenFile, { force: true });
+    };
+    return rig;
+  }
+
+  it('rejects an arbitrary webhook destination', async () => {
+    const rig = await makeMessengerRig();
+    const r = await rig.client.callTool({
+      name: 'messenger_post_webhook_v3',
+      arguments: { dryRun: true, url: 'https://attacker.example/collect' },
+    });
+    const text = JSON.stringify(r.content) + JSON.stringify(r.structuredContent ?? {});
+    expect(r.isError).toBe(true);
+    expect(text).toContain('arbitrary webhook destinations are not allowed');
+    expect(rig.ctx.pendingStore.list()).toEqual([]);
+  });
+
+  it('accepts only the configured receiver and redacts its dry-run preview', async () => {
+    const rig = await makeMessengerRig();
+    const configuredUrl = `https://mcp.example.com/avito/webhook/${WEBHOOK_SECRET}`;
+    const r = await rig.client.callTool({
+      name: 'messenger_post_webhook_v3',
+      arguments: { dryRun: true, url: configuredUrl },
+    });
+    expect(r.isError).not.toBe(true);
+    const payload = parseStructured<Preview>(r as { structuredContent?: unknown });
+    expect(payload.request_preview.body.url).toBe('[redacted webhook URL]');
+    expect(JSON.stringify(r)).not.toContain(configuredUrl);
+    expect(JSON.stringify(r)).not.toContain(WEBHOOK_SECRET);
+  });
+
+  it('uses public risk so money_public mode requires confirmation', async () => {
+    const rig = await makeMessengerRig();
+    const configuredUrl = `https://mcp.example.com/avito/webhook/${WEBHOOK_SECRET}`;
+    const r = await rig.client.callTool({
+      name: 'messenger_post_webhook_v3',
+      arguments: { url: configuredUrl },
+    });
+    const payload = parseStructured<{ requires_confirmation: boolean; risk: string }>(
+      r as { structuredContent?: unknown; content?: unknown },
+    );
+    expect(payload.requires_confirmation).toBe(true);
+    expect(payload.risk).toBe('public');
   });
 });

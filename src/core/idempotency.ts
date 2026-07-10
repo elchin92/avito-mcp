@@ -29,25 +29,51 @@ export interface IdempotencyEntry {
 
 interface IdempotencyReservation {
   argsHash: string;
-  expiresAt: number;
   promise: Promise<IdempotencyEntry>;
+}
+
+export interface IdempotencyRetentionOptions {
+  /** Keep an expired entry while an external lifecycle (for example confirmation) is active. */
+  retainExpired?: (entry: IdempotencyEntry) => boolean;
 }
 
 export class IdempotencyConflictError extends Error {
   constructor(key: string, toolName: string) {
+    const safeKey = storedIdempotencyKey(key);
     super(
-      `Idempotency conflict: key '${key}' was already used for tool '${toolName}' with different arguments. ` +
+      `Idempotency conflict: key '${safeKey}' was already used for tool '${toolName}' with different arguments. ` +
         `Use a fresh idempotencyKey or repeat the call with identical arguments to get the cached result.`,
     );
     this.name = 'IdempotencyConflictError';
   }
 }
 
+export class IdempotencyLimitError extends Error {
+  constructor(public readonly maxEntries: number) {
+    super(
+      `Idempotency ledger capacity reached (${maxEntries}); wait for an in-flight operation to finish ` +
+        'or for an existing entry to expire before using a new idempotency key.',
+    );
+    this.name = 'IdempotencyLimitError';
+  }
+}
+
 export class IdempotencyStore {
   private entries = new Map<string, IdempotencyEntry>();
   private reservations = new Map<string, IdempotencyReservation>();
+  private retainExpired = new Map<
+    string,
+    NonNullable<IdempotencyRetentionOptions['retainExpired']>
+  >();
 
-  constructor(private readonly ttlMs: number) {}
+  constructor(
+    private readonly ttlMs: number,
+    private readonly maxEntries: number = 10_000,
+  ) {
+    if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) {
+      throw new RangeError('IdempotencyStore maxEntries must be a positive safe integer');
+    }
+  }
 
   /**
    * If an entry for `key` exists and it is for the same tool+args, returns it.
@@ -73,18 +99,26 @@ export class IdempotencyStore {
     toolName: string,
     argsHash: string,
     result: CallToolResult,
+    options: IdempotencyRetentionOptions = {},
   ): IdempotencyEntry {
+    this.cleanupExpired();
+    const composed = this.composeKey(toolName, key);
+    this.assertCapacity(composed);
     const now = Date.now();
     const entry: IdempotencyEntry = {
-      key,
+      key: storedIdempotencyKey(key),
       toolName,
       argsHash,
       createdAt: now,
       expiresAt: now + this.ttlMs,
       result,
     };
-    this.entries.set(this.composeKey(toolName, key), entry);
-    this.reservations.delete(this.composeKey(toolName, key));
+    // Replace an existing reservation/entry in the same logical slot. No code can
+    // interleave between these synchronous map operations.
+    this.reservations.delete(composed);
+    this.entries.set(composed, entry);
+    if (options.retainExpired) this.retainExpired.set(composed, options.retainExpired);
+    else this.retainExpired.delete(composed);
     return entry;
   }
 
@@ -98,6 +132,7 @@ export class IdempotencyStore {
     toolName: string,
     argsHash: string,
     execute: () => Promise<CallToolResult>,
+    options: IdempotencyRetentionOptions = {},
   ): Promise<{ entry: IdempotencyEntry; replay: boolean }> {
     const composed = this.composeKey(toolName, key);
     this.cleanupExpired();
@@ -114,21 +149,25 @@ export class IdempotencyStore {
       return { entry: await existing.promise, replay: true };
     }
 
-    const now = Date.now();
-    const promise = (async () => {
+    // Capacity is checked before execute() is invoked. Never evict a completed
+    // entry to make room: doing so could permit a duplicate destructive action.
+    this.assertCapacity(composed);
+    let resolveReservation!: (entry: IdempotencyEntry) => void;
+    let rejectReservation!: (reason: unknown) => void;
+    const promise = new Promise<IdempotencyEntry>((resolve, reject) => {
+      resolveReservation = resolve;
+      rejectReservation = reject;
+    });
+    this.reservations.set(composed, { argsHash, promise });
+    void (async () => {
       try {
         const result = await execute();
-        return this.remember(key, toolName, argsHash, result);
+        resolveReservation(this.remember(key, toolName, argsHash, result, options));
       } catch (err) {
         this.reservations.delete(composed);
-        throw err;
+        rejectReservation(err);
       }
     })();
-    this.reservations.set(composed, {
-      argsHash,
-      expiresAt: now + this.ttlMs,
-      promise,
-    });
     return { entry: await promise, replay: false };
   }
 
@@ -138,12 +177,14 @@ export class IdempotencyStore {
    * so a fresh retry with the same key is not wedged on a dead confirmation_id.
    */
   delete(key: string, toolName: string): boolean {
-    return this.entries.delete(this.composeKey(toolName, key));
+    const composed = this.composeKey(toolName, key);
+    this.retainExpired.delete(composed);
+    return this.entries.delete(composed);
   }
 
   size(): number {
     this.cleanupExpired();
-    return this.entries.size;
+    return this.entries.size + this.reservations.size;
   }
 
   /** For tests / meta_*. */
@@ -153,18 +194,47 @@ export class IdempotencyStore {
   }
 
   private composeKey(toolName: string, key: string): string {
-    return `${toolName}::${key}`;
+    return `${toolName}::${fingerprintIdempotencyKey(key)}`;
   }
 
   private cleanupExpired(): void {
     const now = Date.now();
     for (const [k, e] of this.entries) {
-      if (e.expiresAt < now) this.entries.delete(k);
+      if (e.expiresAt >= now) continue;
+      const retain = this.retainExpired.get(k);
+      let active = false;
+      if (retain) {
+        try {
+          active = retain(e);
+        } catch {
+          // A lifecycle check failure must not reopen a destructive slot.
+          active = true;
+        }
+      }
+      if (!active) {
+        this.entries.delete(k);
+        this.retainExpired.delete(k);
+      }
     }
-    for (const [k, r] of this.reservations) {
-      if (r.expiresAt < now) this.reservations.delete(k);
+    // Active reservations deliberately have no TTL. Removing one before its
+    // promise settles would allow a second mutation to run under the same key.
+  }
+
+  private assertCapacity(composed: string): void {
+    if (this.entries.has(composed) || this.reservations.has(composed)) return;
+    if (this.entries.size + this.reservations.size >= this.maxEntries) {
+      throw new IdempotencyLimitError(this.maxEntries);
     }
   }
+}
+
+/** A fixed-size namespace key for the in-memory ledger and safe diagnostic logging. */
+export function fingerprintIdempotencyKey(key: string): string {
+  return createHash('sha256').update('avito-mcp:idempotency-key:v1\0').update(key).digest('hex');
+}
+
+function storedIdempotencyKey(key: string): string {
+  return Buffer.byteLength(key, 'utf8') <= 256 ? key : `sha256:${fingerprintIdempotencyKey(key)}`;
 }
 
 /**
@@ -183,9 +253,5 @@ function stableStringify(value: unknown): string {
   }
   const obj = value as Record<string, unknown>;
   const keys = Object.keys(obj).sort();
-  return (
-    '{' +
-    keys.map((k) => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') +
-    '}'
-  );
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}';
 }

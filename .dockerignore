@@ -9,14 +9,21 @@ test
 swaggers/*.local.json
 
 # Secrets / local state — MUST never enter the image.
-.env
-.env.local
-.remote.env
-.npmrc
-.avito-token.json
-.mcp.json
+.env*
+!.env.example
+.remote.env*
+.npmrc*
+.avito-token.json*
+.mcp.json*
+!.mcp.json.example
+*.pem
+*.pem.*
+*.key
+*.key.*
 *.jsonl
 deploy/Caddyfile
+PROJECT_AUDIT.md
+AUDIT-*.md
 *.tgz
 logs
 *.log

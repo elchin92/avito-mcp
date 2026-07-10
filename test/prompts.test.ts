@@ -22,6 +22,7 @@ function makeConfig(): Config {
     clientSecret: 'sec',
     profileId: 12345,
     baseUrl: 'https://api.test.example',
+    cpaSource: 'avito-mcp-test',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     mode: 'full_access',
@@ -46,6 +47,8 @@ function makeConfig(): Config {
       allowNoAuth: false,
       allowedHosts: [],
       allowedOrigins: [],
+      maxSessions: 100,
+      sessionIdleSec: 1800,
       oauthTokenTtlSec: 3600,
     },
     webhook: {
@@ -70,10 +73,7 @@ async function makeRig() {
 
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a);
-  const client = new Client(
-    { name: 'test-client', version: '0.0.0' },
-    { capabilities: {} },
-  );
+  const client = new Client({ name: 'test-client', version: '0.0.0' }, { capabilities: {} });
   await client.connect(b);
   return { client, ctx, cfg };
 }
@@ -120,7 +120,7 @@ describe('MCP prompts', () => {
       arguments: { days: '14' },
     });
     expect(got.messages).toHaveLength(1);
-    const text = (got.messages[0].content as { text: string }).text;
+    const text = (got.messages[0]!.content as { text: string }).text;
     expect(text).toContain('14 дней');
     expect(text).toContain('user_get_user_balance');
     expect(text).toContain('items_get_items_info');
@@ -138,7 +138,7 @@ describe('MCP prompts', () => {
       name: 'avito_promote_item',
       arguments: { item_id: '789012' },
     });
-    const text = (got.messages[0].content as { text: string }).text;
+    const text = (got.messages[0]!.content as { text: string }).text;
     expect(text).toContain('789012');
     expect(text).toContain('items_post_vas_prices');
     expect(text).toContain('promotion_get_bbip_suggests_by_items_v1');
@@ -157,7 +157,7 @@ describe('MCP prompts', () => {
       name: 'avito_check_unread_chats',
       arguments: {},
     });
-    const text = (got.messages[0].content as { text: string }).text;
+    const text = (got.messages[0]!.content as { text: string }).text;
     expect(text).toContain('messenger_get_chats_v2');
     expect(text).toContain('unread_only');
     // explicit guard: no send/blacklist hint

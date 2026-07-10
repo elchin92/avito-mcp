@@ -15,7 +15,7 @@ import { promises as fs } from 'node:fs';
 import { AvitoClient } from '../src/core/client.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import { WebhookStore } from '../src/core/webhook-store.js';
-import { registerResources, PENDING_ACTIONS_URI } from '../src/resources.js';
+import { registerResources, PENDING_ACTIONS_URI, WEBHOOK_EVENTS_URI } from '../src/resources.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config } from '../src/config.js';
 
@@ -30,13 +30,14 @@ function makeConfig(): Config {
     clientSecret: 'sec',
     profileId: 12345,
     baseUrl: 'https://api.test.example',
+    cpaSource: 'avito-mcp-test',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     mode: 'full_access',
     allowTools: [],
     denyTools: [],
     exposeAuthTools: false,
-    allowedUploadDirs: [],
+    allowedUploadDirs: ['/sensitive/operator/upload/root'],
     maxUploadMb: 15,
     confirmationMode: 'money_public',
     confirmationTtlSec: 900,
@@ -90,10 +91,7 @@ async function makeRig(configure: (cfg: Config) => void = () => {}) {
 
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a);
-  const client = new Client(
-    { name: 'test-client', version: '0.0.0' },
-    { capabilities: {} },
-  );
+  const client = new Client({ name: 'test-client', version: '0.0.0' }, { capabilities: {} });
   await client.connect(b);
   return { server, client, ctx, cfg };
 }
@@ -138,6 +136,7 @@ describe('MCP resources — listing & static reads', () => {
     expect(body.config.clientId).toBe('[redacted]');
     expect(body.config.clientSecret).toBe('[redacted]');
     expect(body.config.tokenFile).toBe('[redacted]');
+    expect(body.config.allowedUploadDirs).toBe('[redacted]');
     expect(body.config.profileId).toBe(12345); // not redacted
     expect(body.config.mode).toBe('full_access');
     // confirmationSecret was undefined → exposed as null, not the value.
@@ -153,7 +152,14 @@ describe('MCP resources — listing & static reads', () => {
     expect(body.config.http.publicUrl).toBe('http://127.0.0.1:3000');
     expect(body.config.webhook.path).toBe('/avito/webhook');
     // Belt and braces: no secret VALUE appears anywhere in the serialized resource.
-    for (const secret of ['cid', 'sec', OWNER_PASSWORD, BEARER_TOKEN, WEBHOOK_SECRET]) {
+    for (const secret of [
+      'cid',
+      'sec',
+      OWNER_PASSWORD,
+      BEARER_TOKEN,
+      WEBHOOK_SECRET,
+      '/sensitive/operator/upload/root',
+    ]) {
       expect(text).not.toContain(`"${secret}"`);
     }
   });
@@ -208,7 +214,6 @@ describe('MCP resources — listing & static reads', () => {
     expect(body2.pending[0].args).toBeUndefined();
   });
 
-
   it('hides pending-actions resource when meta_list_pending_actions is denied', async () => {
     const { client, ctx, cfg } = await makeRig((config) => {
       config.denyTools = ['meta_list_pending_actions'];
@@ -258,6 +263,37 @@ describe('MCP resources — listing & static reads', () => {
     expect(onUpdated).not.toHaveBeenCalledWith(PENDING_ACTIONS_URI);
   });
 
+  it('hides webhook events resource when the equivalent read tool is denied', async () => {
+    const { client, cfg } = await makeRig((config) => {
+      config.denyTools = ['messenger_get_webhook_events'];
+    });
+    cleanup = async () => {
+      await client.close();
+      await fs.rm(cfg.tokenFile, { force: true });
+    };
+    const { resources } = await client.listResources();
+    expect(resources.map((resource) => resource.uri)).not.toContain(WEBHOOK_EVENTS_URI);
+    await expect(client.readResource({ uri: WEBHOOK_EVENTS_URI })).rejects.toThrow();
+  });
+
+  it('filters avito://manifest to the active safety policy', async () => {
+    const { client, cfg } = await makeRig((config) => {
+      config.mode = 'read_only';
+    });
+    cleanup = async () => {
+      await client.close();
+      await fs.rm(cfg.tokenFile, { force: true });
+    };
+    const res = await client.readResource({ uri: 'avito://manifest' });
+    const manifest = JSON.parse((res.contents[0] as { text: string }).text);
+    expect(manifest.catalogue_scope).toBe('active_policy');
+    expect(manifest.tool_count).toBe(manifest.tools.length);
+    expect(manifest.tools.every((tool: { risk: string }) => tool.risk === 'read')).toBe(true);
+    expect(manifest.by_risk.write).toEqual([]);
+    expect(manifest.by_risk.money).toEqual([]);
+    expect(manifest.by_risk.public).toEqual([]);
+  });
+
   it('emits notifications/resources/updated when pending-actions change', async () => {
     const { client, ctx, cfg } = await makeRig();
     cleanup = async () => {
@@ -302,6 +338,9 @@ describe('MCP resources — listing & static reads', () => {
     // Path-traversal attempt:
     await expect(
       client.readResource({ uri: 'avito://swaggers/..%2F..%2Fetc%2Fpasswd' }),
+    ).rejects.toThrow();
+    await expect(
+      client.readResource({ uri: 'avito://swaggers/..%5C..%5Cwindows%5Csystem32' }),
     ).rejects.toThrow();
   });
 });

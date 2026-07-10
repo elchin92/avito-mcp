@@ -1,10 +1,10 @@
 /**
  * Hardening checks for the messenger_upload_images path-allowlist guard.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 import { validateUpload, UploadGuardError } from '../src/core/upload-guard.js';
@@ -119,6 +119,45 @@ describe('upload-guard.validateUpload', () => {
     await expect(validateUpload(link, baseCfg())).rejects.toMatchObject({
       reason: 'outside_allowed_dirs',
     });
+  });
+
+  it('rejects a parent-directory symlink swap after realpath but before open', async () => {
+    if (process.platform !== 'linux') return;
+
+    const root = join(tmpdir(), `avito-upload-parent-swap-${randomBytes(6).toString('hex')}`);
+    const allowed = join(root, 'allowed');
+    const originalParent = join(allowed, 'parent');
+    const savedParent = join(allowed, 'parent-original');
+    const outside = join(root, 'outside');
+    const input = join(originalParent, 'target.png');
+    await fs.mkdir(originalParent, { recursive: true });
+    await fs.mkdir(outside, { recursive: true });
+    await fs.writeFile(input, PNG_HEADER);
+    // The outside file is also a valid image: the old absolute open + final-only
+    // O_NOFOLLOW implementation would accept and disclose this replacement.
+    await fs.writeFile(join(outside, 'target.png'), PNG_HEADER);
+
+    const realRealpath = fs.realpath.bind(fs);
+    let swapped = false;
+    const spy = vi.spyOn(fs, 'realpath').mockImplementation(async (path) => {
+      const canonical = await realRealpath(path);
+      if (!swapped && resolve(String(path)) === resolve(input)) {
+        swapped = true;
+        await fs.rename(originalParent, savedParent);
+        await fs.symlink(outside, originalParent, 'dir');
+      }
+      return canonical;
+    });
+
+    try {
+      await expect(
+        validateUpload(input, { allowedDirs: [allowed], maxBytes: 1024 * 1024 }),
+      ).rejects.toMatchObject({ reason: 'symlink_escape' });
+      expect(swapped).toBe(true);
+    } finally {
+      spy.mockRestore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it('rejects a directory pretending to be jpg', async () => {

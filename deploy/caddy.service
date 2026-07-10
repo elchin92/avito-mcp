@@ -6,16 +6,39 @@ Wants=network-online.target
 
 [Service]
 Type=notify
-# Reuse the cert store from the ad-hoc run (~/.local/share/caddy) so no re-issue.
-Environment=HOME=/root
-ExecStart=/usr/local/bin/caddy run --config /srv/avito_mcp/deploy/Caddyfile --adapter caddyfile
-ExecReload=/usr/local/bin/caddy reload --config /srv/avito_mcp/deploy/Caddyfile --adapter caddyfile --force
+Environment=HOME=/var/lib/caddy
+ExecStart=/usr/local/bin/caddy run --config /etc/caddy/avito-mcp.Caddyfile --adapter caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/avito-mcp.Caddyfile --adapter caddyfile --force
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=10s
 LimitNOFILE=1048576
+User=caddy
+Group=caddy
+UMask=0077
+StateDirectory=caddy
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-User=root
+SystemCallArchitectures=native
+TasksMax=256
+MemoryMax=512M
 
 [Install]
 WantedBy=multi-user.target

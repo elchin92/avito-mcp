@@ -25,7 +25,7 @@ export const register: DomainRegister = (server, ctx) => {
       callId: z
         .number()
         .int()
-        .positive()
+        .min(1)
         .describe('Call identifier (callId) obtained from calltracking_get_calls.'),
     },
     body: { contentType: 'application/json', fields: ['callId'] },
@@ -57,7 +57,7 @@ export const register: DomainRegister = (server, ctx) => {
         .number()
         .int()
         .min(1)
-        .max(1000)
+        .max(100)
         .describe('Page size — how many calls to return per request (the API allows at most 100).'),
       offset: z
         .number()
