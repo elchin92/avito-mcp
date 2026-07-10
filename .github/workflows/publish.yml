@@ -1,0 +1,188 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+      - name: Verify release tag is current main
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "$GITHUB_REF" != 'refs/heads/main' ]]; then
+            printf 'Publish workflow must be dispatched from main, got %s\n' "$GITHUB_REF" >&2
+            exit 1
+          fi
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *) printf 'Release tag must begin with v\n' >&2; exit 1 ;;
+          esac
+          git check-ref-format "refs/tags/$RELEASE_TAG"
+          git fetch --force --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git fetch --force --no-tags origin \
+            "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          DISPATCH_COMMIT="$(git rev-parse --verify "${GITHUB_SHA}^{commit}")"
+          MAIN_COMMIT="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')"
+          RELEASE_COMMIT="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          if ! test "$DISPATCH_COMMIT" = "$MAIN_COMMIT" || \
+             ! test "$RELEASE_COMMIT" = "$MAIN_COMMIT"; then
+            printf 'Dispatch, main and release tag must match: dispatch=%s main=%s tag=%s\n' \
+              "$DISPATCH_COMMIT" "$MAIN_COMMIT" "$RELEASE_COMMIT" >&2
+            exit 1
+          fi
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Require successful main CI for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            -f branch=main \
+            -f head_sha="$GITHUB_SHA" \
+            -f event=push \
+            -f status=completed \
+            -f per_page=100 > "$RUNNER_TEMP/ci-runs.json"
+          node -e '
+            const fs = require("node:fs");
+            const [file, sha] = process.argv.slice(1);
+            const runs = JSON.parse(fs.readFileSync(file, "utf8")).workflow_runs ?? [];
+            const passed = runs.some((run) =>
+              run.head_branch === "main" &&
+              run.head_sha === sha &&
+              run.event === "push" &&
+              run.conclusion === "success"
+            );
+            if (!passed) {
+              console.error(`No successful main push CI run found for ${sha}`);
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/ci-runs.json" "$GITHUB_SHA"
+      - name: Use the audited npm CLI
+        run: npm install --global npm@11.15.0 --ignore-scripts
+      - run: npm ci
+      - name: Verify tag matches package version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          test "$RELEASE_TAG" = "v${VERSION}"
+      - run: npm run verify:release
+      - run: npm audit --audit-level=high
+      - run: npm audit --omit=dev --audit-level=high
+      - name: Build verified release tarball
+        id: pack
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm pack --json > "$RUNNER_TEMP/npm-pack.json"
+          PACKAGE_FILE="$(node -e '
+            const fs = require("node:fs");
+            const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (data.length !== 1 || typeof data[0]?.filename !== "string") process.exit(1);
+            process.stdout.write(data[0].filename);
+          ' "$RUNNER_TEMP/npm-pack.json")"
+          test -f "$PACKAGE_FILE"
+          sha256sum "$PACKAGE_FILE" > "${PACKAGE_FILE}.sha256"
+          printf 'package_file=%s\n' "$PACKAGE_FILE" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package-${{ github.sha }}
+          path: |
+            ${{ steps.pack.outputs.package_file }}
+            ${{ steps.pack.outputs.package_file }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
+
+  publish:
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Use an npm CLI with trusted-publishing support
+        run: npm install --global npm@11.15.0 --ignore-scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package-${{ github.sha }}
+          path: release-artifact
+      - name: Verify release artifact integrity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd release-artifact
+          shopt -s nullglob
+          packages=(*.tgz)
+          checksums=(*.sha256)
+          test "${#packages[@]}" -eq 1
+          test "${#checksums[@]}" -eq 1
+          sha256sum --check --strict "${checksums[0]}"
+      - name: Recheck release tag is current main and publish
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "$GITHUB_REF" != 'refs/heads/main' ]]; then
+            printf 'Publish workflow must be dispatched from main, got %s\n' "$GITHUB_REF" >&2
+            exit 1
+          fi
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *) printf 'Release tag must begin with v\n' >&2; exit 1 ;;
+          esac
+          git check-ref-format "refs/tags/$RELEASE_TAG"
+          git fetch --force --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git fetch --force --no-tags origin \
+            "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          DISPATCH_COMMIT="$(git rev-parse --verify "${GITHUB_SHA}^{commit}")"
+          MAIN_COMMIT="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')"
+          RELEASE_COMMIT="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          if ! test "$DISPATCH_COMMIT" = "$MAIN_COMMIT" || \
+             ! test "$RELEASE_COMMIT" = "$MAIN_COMMIT"; then
+            printf 'Dispatch, main and release tag must match: dispatch=%s main=%s tag=%s\n' \
+              "$DISPATCH_COMMIT" "$MAIN_COMMIT" "$RELEASE_COMMIT" >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          packages=(./release-artifact/*.tgz)
+          test "${#packages[@]}" -eq 1
+          npm publish "${packages[0]}" --access public --ignore-scripts --provenance

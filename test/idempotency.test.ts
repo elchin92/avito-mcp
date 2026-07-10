@@ -1,7 +1,7 @@
 /**
  * Tests for the idempotency store (v0.7.0). Isolated unit tests without MCP.
  */
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import {
@@ -16,6 +16,10 @@ function resultOf(text: string): CallToolResult {
 }
 
 describe('idempotency', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('hashArgs is stable regardless of key order', () => {
     const a = hashArgs({ x: 1, y: 'a', z: [1, 2, 3] });
     const b = hashArgs({ z: [1, 2, 3], y: 'a', x: 1 });
@@ -70,12 +74,14 @@ describe('idempotency', () => {
     }
   });
 
-  it('store: expires entries by TTL', async () => {
-    const store = new IdempotencyStore(50); // 50ms
+  it('store: expires entries by TTL', () => {
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const store = new IdempotencyStore(1_000);
     const h = hashArgs({ a: 1 });
     store.remember('k', 't', h, resultOf('x'));
     expect(store.lookup('k', 't', h)).toBeDefined();
-    await new Promise((r) => setTimeout(r, 80));
+    now += 2_000;
     expect(store.lookup('k', 't', h)).toBeUndefined();
     expect(store.size()).toBe(0);
   });
@@ -119,7 +125,9 @@ describe('idempotency', () => {
   });
 
   it('does not expire an active reservation even when execution exceeds the TTL', async () => {
-    const store = new IdempotencyStore(5);
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const store = new IdempotencyStore(1_000);
     const h = hashArgs({ a: 1 });
     let executions = 0;
     let release!: () => void;
@@ -132,7 +140,7 @@ describe('idempotency', () => {
       return resultOf('first');
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    now += 2_000;
     const second = store.runExclusive('slow', 'tool', h, async () => {
       executions += 1;
       return resultOf('duplicate');
@@ -147,14 +155,16 @@ describe('idempotency', () => {
     expect(b.replay).toBe(true);
   });
 
-  it('retains an expired entry while its external lifecycle remains active', async () => {
-    const store = new IdempotencyStore(5);
+  it('retains an expired entry while its external lifecycle remains active', () => {
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const store = new IdempotencyStore(1_000);
     const h = hashArgs({ a: 1 });
     let active = true;
     store.remember('pending', 'tool', h, resultOf('pending'), {
       retainExpired: () => active,
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    now += 2_000;
     expect(store.lookup('pending', 'tool', h)).toBeDefined();
     active = false;
     expect(store.lookup('pending', 'tool', h)).toBeUndefined();

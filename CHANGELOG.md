@@ -46,7 +46,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 - `npm test` is self-contained (`pretest` generates the manifest); tests/scripts/source all have strict TypeScript checks. Coverage includes every `src/**/*.ts` file with blocking thresholds.
 - CI actions are SHA-pinned. Dependency audit and gitleaks are blocking; jobs cover the real npm tarball, CLI, Docker health/immutability, HTTP restart, systemd syntax, OpenAPI contracts and Node 22/24.
 - npm's install-script policy explicitly approves only the reviewed, version-pinned `esbuild@0.28.1` development postinstall; dependency upgrades surface a new review warning instead of inheriting a name-wide approval.
-- Added a manual, read-only production smoke workflow with explicit opt-in and a tag-driven npm trusted-publishing workflow (Node 24 + npm 11.15 + OIDC).
+- Added a manual, read-only production smoke workflow with explicit opt-in and a main-only, manually approved npm trusted-publishing workflow (Node 24 + npm 11.15 + OIDC).
 - Updated compatible development dependencies (`prettier` 3.9.5 and `typescript-eslint` 8.63.x). Full and production `npm audit` both report zero vulnerabilities.
 
 ### Upgrade notes
