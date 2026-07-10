@@ -205,6 +205,7 @@ function extractConfirmationId(text: string): string {
 describe('confirmation flow', () => {
   let cfg: Config;
   afterEach(async () => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     if (cfg) await fs.rm(cfg.tokenFile, { force: true });
   });
@@ -252,7 +253,9 @@ describe('confirmation flow', () => {
   });
 
   it('keeps an idempotency key reserved while its confirmed action is executing', async () => {
-    const rig = await makeRig('money_public', 900, { idempotencyTtlSec: 0.005 });
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const rig = await makeRig('money_public', 900, { idempotencyTtlSec: 1 });
     cfg = rig.cfg;
     const args = { item_id: 1, vas_id: 'highlight', idempotencyKey: 'inflight-confirm-key' };
     const first = await rig.client.callTool({ name: 'money_tool', arguments: args });
@@ -260,7 +263,7 @@ describe('confirmation flow', () => {
 
     // The ledger TTL is intentionally shorter than the pending TTL. Expiry must
     // not reopen the slot while the confirmation is still waiting for approval.
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    now += 2_000;
     const expiredButPending = await rig.client.callTool({ name: 'money_tool', arguments: args });
     expect(extractConfirmationId(parseText(expiredButPending.content))).toBe(confirmationId);
 
@@ -294,7 +297,6 @@ describe('confirmation flow', () => {
       arguments: { confirmation_id: confirmationId },
     });
     await operationStarted;
-    await new Promise((resolve) => setTimeout(resolve, 20));
 
     // take() has removed the action from the confirmable list, but its lifecycle
     // remains active until execution + the final idempotency remember complete.
@@ -312,7 +314,16 @@ describe('confirmation flow', () => {
 
     const completedReplay = await rig.client.callTool({ name: 'money_tool', arguments: args });
     expect(parseText(completedReplay.content)).not.toContain('requires_confirmation');
-    expect(completedReplay.structuredContent).toMatchObject({ idempotent_replay: true });
+    expect(completedReplay.structuredContent).toMatchObject({
+      ok: true,
+      idempotent_replay: true,
+    });
+    expect(operationCalls).toBe(1);
+
+    now += 2_000;
+    const afterFinalTtl = await rig.client.callTool({ name: 'money_tool', arguments: args });
+    expect(extractConfirmationId(parseText(afterFinalTtl.content))).not.toBe(confirmationId);
+    expect(afterFinalTtl.structuredContent).not.toMatchObject({ idempotent_replay: true });
     expect(operationCalls).toBe(1);
     await rig.client.close();
   });
