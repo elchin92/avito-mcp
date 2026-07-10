@@ -17,6 +17,7 @@ import { domains } from './meta/domain-registry.js';
 import { registerResources } from './resources.js';
 import { registerPrompts } from './prompts.js';
 import { PACKAGE_NAME, VERSION } from './version.js';
+import { hasConfiguredCredentials } from './core/credentials.js';
 
 /**
  * Builds a fully-registered McpServer (all domains, resources, prompts) wired to
@@ -68,7 +69,7 @@ export function buildMcpServer(baseCtx: ToolContext): McpServer {
 }
 
 /**
- * The JSON snapshot returned by `--health` and by the HTTP `GET /healthz` probe.
+ * The rich local JSON snapshot returned by `--health`.
  * Pure (no I/O, no Avito call): safe for docker healthchecks and quick diagnostics.
  */
 export function healthPayload(config: Config): Record<string, unknown> {
@@ -96,7 +97,7 @@ export function healthPayload(config: Config): Record<string, unknown> {
       enabled: config.webhook.enabled,
       publicUrl: config.webhook.enabled ? config.webhook.publicUrl : null,
     },
-    credentialsConfigured: !!config.clientId && !!config.clientSecret,
+    credentialsConfigured: hasConfiguredCredentials(config),
     baseUrl: config.baseUrl,
   };
 }

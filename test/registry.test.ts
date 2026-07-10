@@ -20,6 +20,7 @@ import { domains } from '../src/meta/domain-registry.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config } from '../src/config.js';
+import { domainOfToolName } from '../src/meta/tool-naming.js';
 
 function makeConfig(): Config {
   return {
@@ -27,6 +28,7 @@ function makeConfig(): Config {
     clientSecret: 'sec',
     profileId: 12345,
     baseUrl: 'https://api.test.example',
+    cpaSource: 'avito-mcp-test',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     // Full surface for registry inventory: expose everything that exists.
@@ -52,6 +54,8 @@ function makeConfig(): Config {
       allowNoAuth: false,
       allowedHosts: [],
       allowedOrigins: [],
+      maxSessions: 100,
+      sessionIdleSec: 1800,
       oauthTokenTtlSec: 3600,
     },
     webhook: {
@@ -136,39 +140,35 @@ describe('tool registry invariants', () => {
   it('every tool has both readOnlyHint and destructiveHint set explicitly', () => {
     const incomplete = tools.filter(
       (t) =>
-        t.annotations?.readOnlyHint === undefined ||
-        t.annotations?.destructiveHint === undefined,
+        t.annotations?.readOnlyHint === undefined || t.annotations?.destructiveHint === undefined,
     );
     expect(incomplete.map((t) => t.name)).toEqual([]);
   });
 
   it('tool names match the convention <domain>_<rest>', () => {
-    const known = [
-      'auth',
-      'autoload',
-      'calltracking',
-      'cpa',
-      'cpa_auction',
-      'cpa_target',
-      'delivery',
-      'hierarchy',
-      'items',
-      'meta',
-      'messenger',
-      'msg_discounts',
-      'orders',
-      'promotion',
-      'reviews',
-      'stock',
-      'tariffs',
-      'trxpromo',
-      'user',
-    ];
-    const bad = toolNames.filter((n) => !known.some((d) => n === d || n.startsWith(`${d}_`)));
+    const bad = toolNames.filter((name) => domainOfToolName(name) === 'unknown');
     expect(bad).toEqual([]);
   });
 
   it('exposes at least one tool per registered domain', () => {
-    expect(domains.length).toBeGreaterThanOrEqual(19); // 18 swaggers + meta
+    const cfg = makeConfig();
+    const ctx: ToolContext = {
+      client: new AvitoClient(cfg),
+      config: cfg,
+      pendingStore: new PendingActionStore(cfg.confirmationTtlSec * 1000),
+    };
+    const empty: number[] = [];
+    domains.forEach((register, index) => {
+      const names: string[] = [];
+      const server = {
+        registerTool(name: string): void {
+          names.push(name);
+        },
+      } as unknown as McpServer;
+      register(server, ctx);
+      if (names.length === 0) empty.push(index);
+    });
+    expect(domains).toHaveLength(20); // 18 Swagger domains + webhook + meta
+    expect(empty).toEqual([]);
   });
 });

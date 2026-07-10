@@ -75,11 +75,12 @@ export const register: DomainRegister = (server, ctx) => {
       employeeId: z
         .number()
         .int()
-        .positive()
+        .min(1)
         .describe('ID of the hierarchy employee the listings are assigned to (employeeId from hierarchy_get_employees_v1).'),
       itemIds: z
         .array(z.number().int().positive())
         .min(1)
+        .max(50)
         .describe('List of Avito listing IDs to assign/reassign to the employee (from 1 to 50 elements).'),
     },
     body: { contentType: 'application/json', fields: ['employeeId', 'itemIds'] },
@@ -100,16 +101,17 @@ export const register: DomainRegister = (server, ctx) => {
       employeeId: z
         .number()
         .int()
-        .positive()
+        .min(1)
         .describe('ID of the hierarchy employee whose listings are requested (employeeId from hierarchy_get_employees_v1).'),
       categoryId: z
         .number()
         .int()
+        .min(1)
         .describe('Avito category ID for filtering the employee\'s listings.'),
       lastItemId: z
         .number()
         .int()
-        .positive()
+        .min(1)
         .optional()
         .describe(
           'Pagination cursor: the ID of the last listing from the previous page. Omit for the first page; keep going while hasNext=true.',

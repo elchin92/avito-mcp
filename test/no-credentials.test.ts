@@ -20,6 +20,7 @@ import { defineTool, type ToolContext } from '../src/core/tool-factory.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import { IdempotencyStore } from '../src/core/idempotency.js';
 import { domains } from '../src/meta/domain-registry.js';
+import { healthPayload } from '../src/build-server.js';
 import type { Config } from '../src/config.js';
 
 /** Config with NO credentials — clientId/clientSecret empty, profileId undefined. */
@@ -29,6 +30,7 @@ function makeUnconfiguredConfig(overrides: Partial<Config> = {}): Config {
     clientSecret: '',
     profileId: undefined,
     baseUrl: 'https://api.test.example',
+    cpaSource: 'avito-mcp-test',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     mode: 'full_access',
@@ -53,6 +55,8 @@ function makeUnconfiguredConfig(overrides: Partial<Config> = {}): Config {
       allowNoAuth: false,
       allowedHosts: [],
       allowedOrigins: [],
+      maxSessions: 100,
+      sessionIdleSec: 1800,
       oauthTokenTtlSec: 3600,
     },
     webhook: {
@@ -171,6 +175,17 @@ describe('introspection without credentials', () => {
       error: { type: 'CONFIG_ERROR', retryable: false },
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('health requires the same complete credential tuple as the runtime client', () => {
+    const incomplete = makeUnconfiguredConfig({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      profileId: undefined,
+    });
+    const complete = { ...incomplete, profileId: 12345 };
+    expect(healthPayload(incomplete).credentialsConfigured).toBe(false);
+    expect(healthPayload(complete).credentialsConfigured).toBe(true);
   });
 
   it('full domain registry loads without credentials (no startup crash)', async () => {

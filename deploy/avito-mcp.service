@@ -6,13 +6,44 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/srv/avito_mcp
-# Avito creds come from .env (loaded by the app); HTTP/OAuth/webhook from .remote.env.
-EnvironmentFile=/srv/avito_mcp/.remote.env
-ExecStart=/usr/bin/node /srv/avito_mcp/dist/server.js
+WorkingDirectory=/opt/avito-mcp/current
+# install-services.sh copies only the application's allowlisted variables into
+# this root-owned file; unrelated checkout secrets never enter the service env.
+EnvironmentFile=/etc/avito-mcp/avito-mcp.env
+Environment=AVITO_ENV_FILE=/dev/null
+Environment=NODE_ENV=production
+Environment=HOME=/var/lib/avito-mcp
+Environment=XDG_STATE_HOME=/var/lib/avito-mcp
+ExecStart=/usr/bin/env node /opt/avito-mcp/current/dist/server.js
 Restart=on-failure
 RestartSec=3
-User=root
+TimeoutStopSec=15s
+User=avito-mcp
+Group=avito-mcp
+UMask=0077
+StateDirectory=avito-mcp
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+TasksMax=256
+MemoryMax=1G
 
 [Install]
 WantedBy=multi-user.target

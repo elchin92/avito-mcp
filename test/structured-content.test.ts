@@ -25,6 +25,7 @@ function makeConfig(): Config {
     clientSecret: 'sec',
     profileId: 12345,
     baseUrl: 'https://api.test.example',
+    cpaSource: 'avito-mcp-test',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     mode: 'full_access',
@@ -49,6 +50,8 @@ function makeConfig(): Config {
       allowNoAuth: false,
       allowedHosts: [],
       allowedOrigins: [],
+      maxSessions: 100,
+      sessionIdleSec: 1800,
       oauthTokenTtlSec: 3600,
     },
     webhook: {
@@ -70,10 +73,10 @@ async function makeRig(fetchResponse: Response): Promise<Rig> {
   const cfg = makeConfig();
   const fetchMock = vi.fn(async (url: string) => {
     if (url.endsWith('/token')) {
-      return new Response(
-        JSON.stringify({ access_token: 't', expires_in: 3600 }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
+      return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
     }
     return fetchResponse.clone();
   });
@@ -115,9 +118,9 @@ describe('structuredContent', () => {
     cleanup = undefined;
   });
 
-  it('object responses → structuredContent has status + spread fields', async () => {
+  it('object responses keep API status separate from http_status', async () => {
     const { client, cfg } = await makeRig(
-      new Response(JSON.stringify({ balance: 12345, currency: 'RUB' }), {
+      new Response(JSON.stringify({ status: 'active', balance: 12345, currency: 'RUB' }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       }),
@@ -127,8 +130,13 @@ describe('structuredContent', () => {
       await fs.rm(cfg.tokenFile, { force: true });
     };
     const res = await client.callTool({ name: 'echo', arguments: {} });
-    expect(res.structuredContent).toEqual({ status: 200, balance: 12345, currency: 'RUB' });
-    expect((res.content as Array<{ text: string }>)[0].text).toContain('status=200');
+    expect(res.structuredContent).toEqual({
+      status: 'active',
+      http_status: 200,
+      balance: 12345,
+      currency: 'RUB',
+    });
+    expect((res.content as Array<{ text: string }>)[0]!.text).toContain('status=200');
   });
 
   it('array responses → structuredContent wraps as { items, count }', async () => {
@@ -145,6 +153,7 @@ describe('structuredContent', () => {
     const res = await client.callTool({ name: 'echo', arguments: {} });
     expect(res.structuredContent).toEqual({
       status: 200,
+      http_status: 200,
       items: [{ id: 1 }, { id: 2 }, { id: 3 }],
       count: 3,
     });
@@ -165,10 +174,13 @@ describe('structuredContent', () => {
     const res = await client.callTool({ name: 'echo', arguments: {} });
     expect(res.structuredContent).toMatchObject({
       status: 200,
+      http_status: 200,
       mimeType: 'application/pdf',
       sizeBytes: 8,
     });
     expect(typeof (res.structuredContent as { base64: string }).base64).toBe('string');
+    const text = (res.content as Array<{ text: string }>)[0]!.text;
+    expect(text).toContain(Buffer.from(pdf).toString('base64'));
   });
 
   it('error responses → isError=true + structuredContent.error_kind', async () => {
@@ -209,6 +221,6 @@ describe('structuredContent', () => {
     };
     const res = await client.callTool({ name: 'echo', arguments: {} });
     expect(res.structuredContent).toBeUndefined();
-    expect((res.content as Array<{ text: string }>)[0].text).toContain('plain text');
+    expect((res.content as Array<{ text: string }>)[0]!.text).toContain('plain text');
   });
 });

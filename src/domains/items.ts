@@ -43,9 +43,10 @@ export const register: DomainRegister = (server, ctx) => {
         .describe('Page size: how many listings to return per request (1–100). If omitted, the server picks a default value.'),
       page: z.number().int().min(1).optional().describe('Pagination page number, starting from 1.'),
       status: z
-        .enum(['active', 'old', 'blocked', 'removed'])
+        .string()
+        .regex(/^(active|removed|old|blocked|rejected)(,(active|removed|old|blocked|rejected))*$/)
         .optional()
-        .describe('Filter by listing status: active (published), old (archived), blocked, removed (deleted). Without the filter — all statuses.'),
+        .describe('One status or a comma-separated list: active, removed, old, blocked, rejected. Example: "active,old".'),
       category: z.number().int().optional().describe('Numeric Avito category ID to filter listings by category.'),
       updatedAtFrom: z
         .string()
@@ -154,7 +155,9 @@ export const register: DomainRegister = (server, ctx) => {
       dateTo: z.string().describe('End of the period, inclusive (YYYY-MM-DD).'),
       periodGrouping: z.enum(['day', 'week', 'month']).optional().describe('Group counters by period: day, week (by the first day of the week), month (by the first day of the month).'),
       fields: z
-        .array(z.string())
+        .array(
+          z.enum(['views', 'uniqViews', 'contacts', 'uniqContacts', 'favorites', 'uniqFavorites']),
+        )
         .optional()
         .describe(
           'Which metrics (counters) to return: uniqViews (unique views), uniqContacts (unique contacts), uniqFavorites (unique favorites added), calls. If unspecified, all available ones are returned.',
@@ -187,12 +190,8 @@ export const register: DomainRegister = (server, ctx) => {
         .min(1)
         .describe('List of requested metrics (at least 1): views, contacts, presenceSpending, etc.'),
       grouping: z
-        .object({
-          period: z.enum(['day', 'week', 'month']).optional(),
-          itemId: z.boolean().optional(),
-        })
-        .passthrough()
-        .describe('How to group the metrics: period (day|week|month), itemId (by listing) and/or by category. An empty object — overall totals.'),
+        .enum(['day', 'week', 'month', 'item', 'totals'])
+        .describe('How to group metrics: day, week, month, item, or totals.'),
       limit: z.number().int().min(0).max(1000).describe('Maximum number of rows in the response (0..1000) for pagination.'),
       offset: z.number().int().min(0).describe('Offset from the start of the selection for pagination (>= 0).'),
       filter: z
@@ -297,7 +296,7 @@ export const register: DomainRegister = (server, ctx) => {
     domain: 'core',
     input: {
       item_id: z.number().int().positive().describe('ID of the listing the service is applied to.'),
-      vas_id: z.string().describe('Slug of a single VAS service, e.g. "highlight", "xl", "premium", "vip" (find available ones via items_post_vas_prices).'),
+      vas_id: z.enum(['highlight', 'xl']).describe('Slug of a single VAS service: "highlight" or "xl".'),
       user_id: z.number().int().positive().optional().describe('ID of the owner user. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id', 'item_id'],
@@ -321,7 +320,9 @@ export const register: DomainRegister = (server, ctx) => {
     domain: 'core',
     input: {
       item_id: z.number().int().positive().describe('ID of the listing the service package is applied to.'),
-      package_id: z.string().describe('Identifier of the VAS service package (available packages are in the items_post_vas_prices response).'),
+      package_id: z
+        .enum(['x2_1', 'x2_7', 'x5_1', 'x5_7', 'x10_1', 'x10_7', 'x15_1', 'x15_7', 'x20_1', 'x20_7'])
+        .describe('Identifier of the VAS service package from items_post_vas_prices.'),
       user_id: z.number().int().positive().optional().describe('ID of the owner user. Defaults to Profile_id from .env.'),
     },
     pathParams: ['user_id', 'item_id'],
@@ -349,7 +350,7 @@ export const register: DomainRegister = (server, ctx) => {
         .array(z.string())
         .min(1)
         .describe('Slugs of the promotion services to apply, e.g. ["highlight","xl"] (at least 1; available ones from items_post_vas_prices).'),
-      stickers: z.array(z.string()).optional().describe('Sticker slugs, e.g. "No accidents", "Urgent" (no more than 3, available only together with the "XL listing" service).'),
+      stickers: z.array(z.number().int()).max(3).optional().describe('Sticker IDs (integers), no more than 3; available only with the "XL listing" service.'),
     },
     pathParams: ['itemId'],
     body: {

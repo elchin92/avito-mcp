@@ -29,6 +29,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     clientSecret: 'sec',
     profileId: 12345,
     baseUrl: 'https://api.test.example',
+    cpaSource: 'avito-mcp-test',
     tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
     logLevel: 'fatal',
     mode: 'full_access',
@@ -53,6 +54,8 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
       allowNoAuth: false,
       allowedHosts: [],
       allowedOrigins: [],
+      maxSessions: 100,
+      sessionIdleSec: 1800,
       oauthTokenTtlSec: 3600,
     },
     webhook: {
@@ -68,10 +71,10 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 async function makeRig(cfg: Config) {
   const fetchMock = vi.fn(async (url: string) => {
     if (url.endsWith('/token')) {
-      return new Response(
-        JSON.stringify({ access_token: 't', expires_in: 3600 }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
+      return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
     }
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
@@ -128,12 +131,37 @@ describe('dry-run middleware', () => {
     const { tools } = await client.listTools();
     const writer = tools.find((t) => t.name === 'writer')!;
     const reader = tools.find((t) => t.name === 'reader')!;
-    const writerProps = writer.inputSchema.properties as Record<string, unknown>;
+    const writerProps = writer.inputSchema.properties as Record<
+      string,
+      { maxLength?: number } | undefined
+    >;
     expect(writerProps.dryRun).toBeDefined();
     expect(writerProps.idempotencyKey).toBeDefined();
+    expect(writerProps.idempotencyKey?.maxLength).toBeUndefined();
     const readerProps = (reader.inputSchema.properties ?? {}) as Record<string, unknown>;
     expect(readerProps.dryRun).toBeUndefined();
     expect(readerProps.idempotencyKey).toBeUndefined();
+  });
+
+  it('accepts and deduplicates a long idempotencyKey through a bounded fingerprint', async () => {
+    const cfg = makeConfig();
+    const { client, fetchMock } = await makeRig(cfg);
+    cleanup = async () => {
+      await client.close();
+      await fs.rm(cfg.tokenFile, { force: true });
+    };
+    const longKey = 'k'.repeat(4096);
+    const first = await client.callTool({
+      name: 'writer',
+      arguments: { val: 'hello', idempotencyKey: longKey },
+    });
+    const replay = await client.callTool({
+      name: 'writer',
+      arguments: { val: 'hello', idempotencyKey: longKey },
+    });
+    expect(first.isError).not.toBe(true);
+    expect(replay.structuredContent).toMatchObject({ idempotent_replay: true });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/x'))).toHaveLength(1);
   });
 
   it('dryRun=true returns preview without HTTP call', async () => {
@@ -186,6 +214,21 @@ describe('dry-run middleware', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('explicit dryRun=false overrides AVITO_MCP_DRY_RUN_DEFAULT=true', async () => {
+    const cfg = makeConfig({ dryRunDefault: true });
+    const { client, fetchMock } = await makeRig(cfg);
+    cleanup = async () => {
+      await client.close();
+      await fs.rm(cfg.tokenFile, { force: true });
+    };
+    const res = await client.callTool({
+      name: 'writer',
+      arguments: { val: 'execute', dryRun: false },
+    });
+    expect(res.isError).not.toBe(true);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith('/x'))).toBe(true);
+  });
+
   it('dryRun bypasses confirmation flow (no pending action created)', async () => {
     const cfg = makeConfig({ confirmationMode: 'all_destructive' });
     const { client, fetchMock } = await makeRig(cfg);
@@ -199,7 +242,9 @@ describe('dry-run middleware', () => {
     });
     // We should NOT get a requires_confirmation envelope.
     expect(res.structuredContent).toMatchObject({ dryRun: true });
-    expect((res.structuredContent as Record<string, unknown>).requires_confirmation).toBeUndefined();
+    expect(
+      (res.structuredContent as Record<string, unknown>).requires_confirmation,
+    ).toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

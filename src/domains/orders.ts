@@ -40,7 +40,18 @@ export const register: DomainRegister = (server, ctx) => {
     input: {
       ids: z.array(z.string()).optional().describe('Filter by Avito order IDs (array of strings). If omitted, all orders matching the other filters are returned.'),
       statuses: z
-        .array(z.string())
+        .array(
+          z.enum([
+            'on_confirmation',
+            'ready_to_ship',
+            'in_transit',
+            'canceled',
+            'delivered',
+            'on_return',
+            'in_dispute',
+            'closed',
+          ]),
+        )
         .optional()
         .describe(
           'Filter by statuses (array). Allowed values: on_confirmation (awaiting confirmation), ' +
@@ -49,7 +60,7 @@ export const register: DomainRegister = (server, ctx) => {
         ),
       dateFrom: z.number().int().optional().describe('Unix timestamp in seconds. Returns only orders created no earlier than this moment.'),
       page: z.number().int().min(1).optional().describe('Page number for pagination (starting from 1).'),
-      limit: z.number().int().min(1).max(100).optional().describe('Maximum orders per page. The API allows up to 20.'),
+      limit: z.number().int().min(0).max(20).optional().describe('Maximum orders per page, from 0 to 20.'),
     },
     queryParams: ['ids', 'statuses', 'dateFrom', 'page', 'limit'],
   });
@@ -161,7 +172,7 @@ export const register: DomainRegister = (server, ctx) => {
     input: {
       orderId: z.string().describe('Avito order ID.'),
       transition: z
-        .string()
+        .enum(['confirm', 'reject', 'perform', 'receive'])
         .describe(
           'Transition name. Allowed values: confirm (confirm the order), reject (cancel the order), ' +
             'perform (confirm shipment, RDBS), receive (confirm delivery, RDBS/CNC). The set depends on the current status.',
@@ -244,7 +255,7 @@ export const register: DomainRegister = (server, ctx) => {
       phone: z.string().describe("Phone of the seller's contact person."),
       startDate: z.string().describe('Start date/time of the courier arrival in date-time format (ISO 8601); taken from the get method response.'),
       endDate: z.string().describe('End date/time of the courier arrival in date-time format (ISO 8601); taken from the get method response.'),
-      intervalType: z.string().describe('Interval type: fixed (fixed slot) or asap (as soon as possible). Taken from the orders_get_courier_delivery_range response.'),
+      intervalType: z.enum(['fixed', 'asap']).describe('Interval type from orders_get_courier_delivery_range.'),
     },
     body: {
       contentType: 'application/json',

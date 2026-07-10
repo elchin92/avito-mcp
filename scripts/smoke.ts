@@ -1,6 +1,7 @@
 /**
  * Smoke check without MCP: obtains a token and calls READ-ONLY methods only.
- * Run with: `npm run smoke` or `npx tsx scripts/smoke.ts`.
+ * Production requires an explicit opt-in:
+ *   AVITO_MCP_SMOKE_ALLOW_PRODUCTION=true npm run smoke
  *
  * DO NOT RUN WITH WRITE METHODS — this is a live (production) account.
  */
@@ -9,7 +10,18 @@ import { config } from '../src/config.js';
 import { logger } from '../src/logger.js';
 
 async function main() {
-  logger.info({ profileId: config.profileId }, 'smoke starting');
+  const apiHost = new URL(config.baseUrl).hostname;
+  const production = apiHost === 'api.avito.ru';
+  const productionAllowed = ['1', 'true'].includes(
+    (process.env.AVITO_MCP_SMOKE_ALLOW_PRODUCTION ?? '').trim().toLowerCase(),
+  );
+  if (production && !productionAllowed) {
+    throw new Error(
+      'Refusing to smoke-test production without AVITO_MCP_SMOKE_ALLOW_PRODUCTION=true',
+    );
+  }
+
+  logger.info({ apiHost, production }, 'read-only smoke starting');
   // Smoke runs against the live account — credentials are required here (unlike the
   // MCP server itself, which since v0.7.4 starts without them for introspection).
   if (config.profileId === undefined || !config.clientId || !config.clientSecret) {
@@ -41,18 +53,14 @@ async function main() {
     }),
   );
 
-  process.stderr.write('\n== Rate-limit snapshots ==\n');
-  process.stdout.write(JSON.stringify(client.rateLimiter.getStatus(), null, 2) + '\n');
+  process.stdout.write(
+    `PASS: read-only smoke completed (${client.rateLimiter.getStatus().length} rate-limit snapshots)\n`,
+  );
 }
 
 async function runStep<T>(label: string, fn: () => Promise<T>) {
-  process.stderr.write(`\n== ${label} ==\n`);
-  try {
-    const res = await fn();
-    process.stdout.write(JSON.stringify(res, null, 2).slice(0, 1500) + '\n');
-  } catch (err) {
-    process.stderr.write(`STEP FAILED: ${err instanceof Error ? err.message : String(err)}\n`);
-  }
+  await fn();
+  process.stdout.write(`PASS: ${label}\n`);
 }
 
 main().catch((err) => {

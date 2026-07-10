@@ -16,6 +16,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const MANIFEST = resolve(here, '..', 'dist', 'manifest.json');
 
 interface Manifest {
+  schema_version: number;
   name: string;
   version: string;
   tool_count: number;
@@ -45,16 +46,21 @@ beforeAll(() => {
 });
 
 describe('manifest snapshot', () => {
+  it('uses the deterministic manifest schema version', () => {
+    expect(manifest.schema_version).toBe(1);
+    expect(manifest).not.toHaveProperty('$schema');
+    expect(manifest).not.toHaveProperty('generated_at');
+  });
+
   it('has stable counts_by_risk (148 total)', () => {
     expect(manifest.counts_by_risk).toEqual({
       sensitive: 3,
-      // v1.0.1: read 82→80, write 44→46 — two delivery sandbox POSTs that record
-      // tracking events (delivery_tracking, delivery_sandbox_track_announcement)
-      // were misclassified as read; they mutate, so they are now write.
+      // External submissions, recipient changes, and third-party-visible effects
+      // are public so money_public confirmation protects them by default.
       read: 80,
-      write: 46,
+      write: 40,
       money: 9,
-      public: 10,
+      public: 16,
       unknown: 0,
     });
   });
@@ -94,12 +100,16 @@ describe('manifest snapshot', () => {
   });
 
   it('snapshot: full tool roster (name, risk, domain)', () => {
-    const inventory = manifest.tools.map((t) => `${t.risk.padEnd(9)} ${t.domain.padEnd(15)} ${t.name}`);
+    const inventory = manifest.tools.map(
+      (t) => `${t.risk.padEnd(9)} ${t.domain.padEnd(15)} ${t.name}`,
+    );
     expect(inventory).toMatchSnapshot();
   });
 
   it('v0.7.2: EVERY tool has a non-empty human-readable title', () => {
-    const withTitle = manifest.tools.filter((t) => typeof t.title === 'string' && t.title.length > 0);
+    const withTitle = manifest.tools.filter(
+      (t) => typeof t.title === 'string' && t.title.length > 0,
+    );
     // v0.7.2 backfilled titles across all domains — full coverage is now an invariant.
     // A new tool added without a title will fail this test (re-run generate:manifest + add a title).
     expect(withTitle.length).toBe(manifest.tool_count);

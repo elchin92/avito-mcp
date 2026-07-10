@@ -4,9 +4,21 @@ import { z, type ZodRawShape } from 'zod';
 
 import type { Config } from '../config.js';
 import { logger } from '../logger.js';
-import type { AvitoClient, BodyContentType, HttpMethod } from './client.js';
+import type {
+  AvitoClient,
+  BodyContentType,
+  HttpMethod,
+  RequestResponse,
+  SafeStaticHeaders,
+} from './client.js';
 import { errorToMcpContent } from './errors.js';
-import { hashArgs, type IdempotencyStore, IdempotencyConflictError } from './idempotency.js';
+import {
+  hashArgs,
+  fingerprintIdempotencyKey,
+  type IdempotencyStore,
+  IdempotencyConflictError,
+  IdempotencyLimitError,
+} from './idempotency.js';
 import type { PendingActionStore } from './pending-actions.js';
 import { evaluatePolicy, requiresConfirmation } from './policy.js';
 import type { Primitive, QueryValue } from './url.js';
@@ -159,6 +171,21 @@ export interface ToolSpec<I extends ZodRawShape = ZodRawShape> {
    */
   accessesLocalFiles?: boolean;
   environment?: 'prod' | 'sandbox' | 'local';
+  /** Code-owned, runtime-allowlisted headers. They are never sourced from tool args. */
+  staticHeaders?: SafeStaticHeaders;
+  /** Code-owned opt-in for documented Swagger GET operations with a JSON body. */
+  allowGetBody?: boolean;
+  /** Code-owned opt-in for status-code retries on a non-GET operation. */
+  retry?: boolean;
+  /** Execute a non-standard operation while retaining the common safety pipeline. */
+  customExecute?: (
+    cleanArgs: Record<string, unknown>,
+    ctx: ToolContext,
+  ) => Promise<RequestResponse>;
+  /** Build a dry-run preview for a custom executor without performing side effects. */
+  buildDryRunPreview?: (cleanArgs: Record<string, unknown>, ctx: ToolContext) => unknown;
+  /** Last-mile secret redaction for generated previews. */
+  redactDryRunPreview?: (preview: unknown, ctx: ToolContext) => unknown;
 }
 
 /** MCP ToolAnnotations are derived deterministically from ToolRisk. */
@@ -167,14 +194,34 @@ function riskToAnnotations(risk: ToolRisk): ToolAnnotations {
     case 'sensitive':
       // Read-only on the Avito side, but it returns secrets — that is also an
       // important signal for the client. The secrets protection itself lives in policy.ts (hidden by default).
-      return { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true };
+      return {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      };
     case 'read':
-      return { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
+      return {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      };
     case 'write':
-      return { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
+      return {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      };
     case 'money':
     case 'public':
-      return { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
+      return {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      };
   }
 }
 
@@ -208,10 +255,7 @@ export function defineTool<I extends ZodRawShape>(
   // tools/list — removes the temptation entirely.
   const decision = evaluatePolicy(spec.name, risk, ctx.config);
   if (!decision.allowed) {
-    logger.info(
-      { tool: spec.name, risk, reason: decision.reason },
-      'tool hidden by policy',
-    );
+    logger.info({ tool: spec.name, risk, reason: decision.reason }, 'tool hidden by policy');
     return;
   }
 
@@ -221,17 +265,9 @@ export function defineTool<I extends ZodRawShape>(
   // are handled in the handler above.
   const execute = async (cleanArgs: Record<string, unknown>): Promise<CallToolResult> => {
     try {
-      const { pathParams, query, body } = splitArgs(cleanArgs, spec, ctx);
-      const response = await ctx.client.request({
-        method: spec.method,
-        path: spec.path,
-        pathParams,
-        query,
-        body,
-        bodyContentType: spec.body?.contentType,
-        auth: spec.auth ?? true,
-        domain: spec.domain,
-      });
+      const response = spec.customExecute
+        ? await spec.customExecute(cleanArgs, ctx)
+        : await executeHttpRequest(cleanArgs, spec, ctx);
       const result: CallToolResult = {
         content: [
           {
@@ -263,7 +299,8 @@ export function defineTool<I extends ZodRawShape>(
     // effect, so neither confirm nor dedup is needed.
     const dryRunRequested = args.dryRun === true;
     const effectiveDryRun =
-      destructive && (dryRunRequested || ctx.config.dryRunDefault === true);
+      destructive &&
+      (typeof args.dryRun === 'boolean' ? args.dryRun : ctx.config.dryRunDefault === true);
     if (effectiveDryRun) {
       return dryRunPreview(spec, cleanArgs, ctx, dryRunRequested);
     }
@@ -293,11 +330,15 @@ export function defineTool<I extends ZodRawShape>(
             sc?.requires_confirmation === true && typeof sc.confirmation_id === 'string'
               ? (sc.confirmation_id as string)
               : undefined;
-          if (stalePendingId !== undefined && !ctx.pendingStore.get(stalePendingId)) {
+          if (stalePendingId !== undefined && !ctx.pendingStore.isActive(stalePendingId)) {
             ctx.idempotencyStore.delete(idempotencyKey, spec.name);
           } else {
             logger.info(
-              { tool: spec.name, idempotencyKey, ageMs: Date.now() - cached.createdAt },
+              {
+                tool: spec.name,
+                idempotencyKeyHash: fingerprintIdempotencyKey(idempotencyKey),
+                ageMs: Date.now() - cached.createdAt,
+              },
               'idempotent replay served from ledger',
             );
             return annotateReplay(cached.result);
@@ -312,53 +353,78 @@ export function defineTool<I extends ZodRawShape>(
     }
 
     if (requiresConfirmation(risk, ctx.config)) {
-      const pending = ctx.pendingStore.create({
-        toolName: spec.name,
-        risk,
-        summary: summarisePending(spec, cleanArgs),
-        args: cleanArgs,
-        execute: async () => {
-          const r = await execute(cleanArgs);
-          if (idempotencyKey && ctx.idempotencyStore && argsHash) {
-            ctx.idempotencyStore.remember(idempotencyKey, spec.name, argsHash, r);
-          }
-          return r;
-        },
-      });
-      const pendingResult: CallToolResult = {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(
-              {
-                requires_confirmation: true,
-                confirmation_id: pending.id,
-                tool: spec.name,
-                risk,
-                summary: pending.summary,
-                expires_at: new Date(pending.expiresAt).toISOString(),
-                next_step:
-                  'Call meta_confirm_action with this confirmation_id ONLY after explicit human approval. ' +
-                  'Confirmation flow is a server-side two-step safety guard against accidental one-shot execution; ' +
-                  'it is not a cryptographic human-approval mechanism by itself.',
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-        structuredContent: {
-          requires_confirmation: true,
-          confirmation_id: pending.id,
-          tool: spec.name,
+      const createPending = async (): Promise<CallToolResult> => {
+        const pending = ctx.pendingStore.create({
+          toolName: spec.name,
           risk,
-          expires_at: new Date(pending.expiresAt).toISOString(),
-        },
+          summary: summarisePending(spec, cleanArgs),
+          args: cleanArgs,
+          execute: async () => {
+            const r = await execute(cleanArgs);
+            if (idempotencyKey && ctx.idempotencyStore && argsHash) {
+              ctx.idempotencyStore.remember(idempotencyKey, spec.name, argsHash, r);
+            }
+            return r;
+          },
+        });
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  requires_confirmation: true,
+                  confirmation_id: pending.id,
+                  tool: spec.name,
+                  risk,
+                  summary: pending.summary,
+                  expires_at: new Date(pending.expiresAt).toISOString(),
+                  next_step:
+                    'Call meta_confirm_action with this confirmation_id ONLY after explicit human approval. ' +
+                    'Confirmation flow is a server-side two-step safety guard against accidental one-shot execution; ' +
+                    'it is not a cryptographic human-approval mechanism by itself.',
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+          structuredContent: {
+            requires_confirmation: true,
+            confirmation_id: pending.id,
+            tool: spec.name,
+            risk,
+            expires_at: new Date(pending.expiresAt).toISOString(),
+          },
+        };
       };
-      if (idempotencyKey && ctx.idempotencyStore && argsHash) {
-        ctx.idempotencyStore.remember(idempotencyKey, spec.name, argsHash, pendingResult);
+
+      try {
+        if (idempotencyKey && ctx.idempotencyStore && argsHash) {
+          const { entry, replay } = await ctx.idempotencyStore.runExclusive(
+            idempotencyKey,
+            spec.name,
+            argsHash,
+            createPending,
+            {
+              retainExpired: (candidate) => {
+                const structured = candidate.result.structuredContent as
+                  Record<string, unknown> | undefined;
+                const confirmationId =
+                  structured?.requires_confirmation === true &&
+                  typeof structured.confirmation_id === 'string'
+                    ? structured.confirmation_id
+                    : undefined;
+                return confirmationId !== undefined && ctx.pendingStore.isActive(confirmationId);
+              },
+            },
+          );
+          return replay ? annotateReplay(entry.result) : entry.result;
+        }
+        return await createPending();
+      } catch (err) {
+        return errorToMcpContent(err);
       }
-      return pendingResult;
     }
 
     if (idempotencyKey && ctx.idempotencyStore && argsHash) {
@@ -371,7 +437,7 @@ export function defineTool<I extends ZodRawShape>(
         );
         return replay ? annotateReplay(entry.result) : entry.result;
       } catch (err) {
-        if (err instanceof IdempotencyConflictError) {
+        if (err instanceof IdempotencyConflictError || err instanceof IdempotencyLimitError) {
           return errorToMcpContent(err);
         }
         throw err;
@@ -410,7 +476,7 @@ export function defineTool<I extends ZodRawShape>(
           .describe(
             'v0.7.0: optional key for duplicate protection. A repeat call with the same key ' +
               'within AVITO_MCP_IDEMPOTENCY_TTL_SEC returns the cached result. ' +
-              'The same key with different args returns a conflict error — this is safe by design.',
+              'The same key with different args returns a conflict error. Keys are stored as bounded SHA-256 fingerprints.',
           ),
       }
     : inputSchema;
@@ -447,10 +513,14 @@ function dryRunPreview(
   ctx: ToolContext,
   explicit: boolean,
 ): CallToolResult {
-  let preview: { pathParams: Record<string, unknown>; query: Record<string, unknown>; body: unknown };
+  let preview: unknown;
   try {
-    const split = splitArgs(cleanArgs, spec, ctx);
-    preview = split as typeof preview;
+    preview = spec.buildDryRunPreview
+      ? spec.buildDryRunPreview(cleanArgs, ctx)
+      : splitArgs(cleanArgs, spec, ctx);
+    if (spec.redactDryRunPreview) {
+      preview = spec.redactDryRunPreview(preview, ctx);
+    }
   } catch (err) {
     return errorToMcpContent(err);
   }
@@ -501,23 +571,23 @@ function annotateReplay(result: CallToolResult): CallToolResult {
 function toStructuredContent(status: number, data: unknown): Record<string, unknown> | undefined {
   if (data === null || data === undefined) return undefined;
   if (typeof data === 'string') return undefined;
-  if (
-    typeof data === 'object' &&
-    (data as { __binary?: unknown }).__binary === true
-  ) {
+  if (typeof data === 'object' && (data as { __binary?: unknown }).__binary === true) {
     const b = data as { mimeType: string; sizeBytes: number; base64: string };
     return {
       status,
+      http_status: status,
       mimeType: b.mimeType,
       sizeBytes: b.sizeBytes,
       base64: b.base64,
     };
   }
   if (Array.isArray(data)) {
-    return { status, items: data, count: data.length };
+    return { status, http_status: status, items: data, count: data.length };
   }
   if (typeof data === 'object') {
-    return { status, ...(data as Record<string, unknown>) };
+    // Keep the legacy `status` behavior for compatibility: an API-owned status
+    // field still wins. `http_status` is always authoritative and collision-free.
+    return { status, ...(data as Record<string, unknown>), http_status: status };
   }
   return undefined;
 }
@@ -583,6 +653,27 @@ function splitArgs(
     query,
     body: finalBody,
   };
+}
+
+async function executeHttpRequest(
+  cleanArgs: Record<string, unknown>,
+  spec: ToolSpec,
+  ctx: ToolContext,
+): Promise<RequestResponse> {
+  const { pathParams, query, body } = splitArgs(cleanArgs, spec, ctx);
+  return ctx.client.request({
+    method: spec.method,
+    path: spec.path,
+    pathParams,
+    query,
+    body,
+    bodyContentType: spec.body?.contentType,
+    auth: spec.auth ?? true,
+    domain: spec.domain,
+    staticHeaders: spec.staticHeaders,
+    allowGetBody: spec.allowGetBody,
+    retry: spec.retry,
+  });
 }
 
 function formatResponse(status: number, data: unknown): string {

@@ -3,6 +3,63 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-07-10
+
+**End-to-end audit remediation release.** A multi-agent review covered the token client, destructive-operation pipeline, OAuth 2.1/HTTP transport, webhook receiver, all bundled OpenAPI contracts, tests, packaging, CI, Docker and systemd deployment. The implementation was then cross-reviewed with deterministic race reproductions. The resulting suite has **330 tests** across 30 files; whole-source coverage is **82.32% statements / 72.79% branches / 83.59% functions / 85.04% lines**. The manifest remains 148 tools, with corrected risk totals: `read:80 / write:40 / money:9 / public:16 / sensitive:3`.
+
+### Security
+
+- **Account-bound Avito token cache.** Persisted records now carry a SHA-256 binding to API origin, client id and profile id. Legacy/unbound/foreign records are ignored; the first valid call obtains a fresh token. Missing state directories are created as `0700`, token files use exclusive `0600` temp files, file and directory `fsync`, atomic rename and cleanup. Invalidation now shares the same lease as refresh and cannot delete another account/process's successor token.
+- **Ownership-safe cross-process token lease.** The lock uses a private directory with PID + random owner marker + inode identity. Fresh partial markers receive a grace period, a live PID is never evicted by age, and an atomic transition marker ensures stale removal/release can delete only the generation it claimed, never a replacement owner's lock.
+- **Mutation-safe HTTP behavior.** Automatic 429/5xx retry defaults to safe reads; mutations retry only by explicit code opt-in. One deadline now covers waits, token work, fetch and body consumption. JSON/text/binary bodies all use the bounded `AVITO_MCP_MAX_BINARY_MB` reader; retry bodies are cancelled/drained and `Retry-After` is capped with jitter.
+- **Strict OAuth 2.1 authorization.** Tokens require the exact `avito:mcp` scope and exact MCP resource. Sessions are bound to the initializing principal; foreign principals receive the same response as unknown sessions. Consent transactions/codes are one-time, DCR metadata and auth methods are validated/bounded, inactive clients are swept/evicted, revoke is owner-aware and revokes the token pair.
+- **Durable OAuth state concurrency.** Writes are serialized and fsynced; shutdown waits for the latest snapshot. The single-writer process lease uses a generation marker and atomic transition baton so delayed cleaner/release paths cannot touch a successor. Startup failures release acquired state.
+- **OAuth consent and HTTP surface.** The consent page shows client, redirect and resource, is protected against framing, and requires a server-side one-time transaction. Host/Origin validation is fail-closed across OAuth/DCR/MCP routes. Session initialization is atomically capped, active SSE is not reaped as idle, and MCP logs are routed only to their owning session via `AsyncLocalStorage`.
+- **Webhook exfiltration closed.** Both registration tools accept only the exact public HTTPS receiver URL configured by the operator; arbitrary destinations are rejected. Dry-run redacts the URL/secret. Registration, blacklist changes and both irreversible CPA complaint tools are now `risk: public`, so default `money_public` mode confirms them.
+- **Webhook receiver/storage hardening.** Secret comparison uses fixed-size hashes in constant time, weak secrets fail startup, and bad-secret responses are status/body/minimum-time uniform and rate-limited. Disk logging persists only normalized metadata (no message text/raw payload), uses `0600`, rejects symlinks, rotates at 10 MiB, and is flushed on graceful shutdown.
+- **Slow-body webhook oracle closed.** Valid and invalid path secrets now traverse the same 1 MiB body path before authentication changes control flow. An absolute one-second body deadline acknowledges and closes incomplete requests uniformly, while invalid or timed-out deliveries are never recorded and invalid attempts still consume their per-IP rate-limit budget.
+- **Canonical webhook secret segment.** Receiver URLs now percent-encode the configured secret as exactly one path segment, so the documented Base64 generator works when a secret contains `/`, `+` or `=`. Existing subscriptions using such a secret must be re-registered with the encoded URL returned by the registration tool; alphanumeric URL-safe secrets are unchanged.
+- **Race-safe confirmation and idempotency.** Confirmation is claimed atomically across sessions and remains active through execution/result storage. Pending/in-flight actions cannot produce a second confirmable mutation when the idempotency TTL is short. Keys of any previously valid length are reduced to domain-separated SHA-256 fingerprints before indexing/logging, and the ledger fails closed at 10,000 entries instead of growing without bound.
+- **Bounded hard-confirm attempts.** When `AVITO_MCP_CONFIRMATION_SECRET` is configured, `meta_confirm_action` accepts at most 20 calls per minute per authenticated principal (including successful and unknown-id attempts); excess calls return `RATE_LIMITED`. The existing per-action limit still deletes a pending action after five wrong or missing secrets.
+- **Descriptor-safe image upload.** The custom uploader now uses the common policy/dry-run/confirmation/idempotency pipeline. Uploads are count/dedup/aggregate-size bounded. Linux opens every path component through anchored descriptors with `O_NOFOLLOW` and inode checks; other platforms revalidate and fail closed. Local paths are redacted.
+- **Defence-in-depth redaction.** Pino and MCP logging recursively censor token/password/cookie/API-key fields and local state paths. Auth status/resources expose only account-bound metadata and never token values or filesystem locations.
+
+### API contracts
+
+- Added a generated contract gate covering **18 Swagger files and all 138 endpoint wrappers**: method/path, required fields, scalar/array types, enum/min/max, path/query/body/header wiring, auth defaults, GET bodies, `X-Source`, sandbox metadata and mutation risk. Reviewed exceptions are explicit and limited to upstream spec defects/adapters.
+- Added `AVITO_MCP_CPA_SOURCE` (default `avito-mcp`) and send the required allowlisted `X-Source` header on all CPA operations. Static headers reject unknown names and CR/LF values.
+- Added the low-level GET-with-body transport required by `trxpromo_get_commissions`.
+- Corrected delivery scalar inputs and typed delivery write bodies; fixed autoload schedule/feed types, sorting-center query wiring, analytics grouping, VAS sticker arrays, item statuses, enums, offsets and documented limits across the domain catalogue.
+- Marked all documented delivery sandbox operations as `environment: sandbox`; `autoload_upload` is `public`.
+- Structured output keeps the legacy `status` field and adds collision-free `http_status` as the authoritative HTTP code. Binary base64 remains in text as required for pre-2025-06-18 MCP clients and is also available in `structuredContent` for current clients.
+
+### Reliability and operations
+
+- Environment parsing is fail-fast for unknown enum/boolean values, malformed or out-of-range integers, unsafe URLs and weak remote secrets. `meta_auth_status` now requires all three Avito credentials and redacts the token path.
+- `avito://manifest` reflects the active registration policy; webhook/pending resources follow the corresponding tool allow/deny policy. Tool-domain naming has one source of truth and manifest generation is deterministic.
+- Added `/readyz` alongside the minimal unauthenticated `/healthz`; readiness covers complete HTTP credentials, writable token state, OAuth lease state and webhook persistence health without exposing details. HTTP shutdown closes MCP sessions, waits for the listener, flushes webhook/OAuth state and releases leases.
+- Runtime baseline is Node.js `>=22.12.0`; CI covers Node 22 and 24. The Node 24 image runs as `node`, keeps code/dependencies root-owned read-only, writes only to its state directory, and probes the actual PID 1 or live `/readyz`.
+- Hardened systemd units run as dedicated `avito-mcp`/`caddy` users with `UMask=0077` and sandboxing (`systemd-analyze security`: 3.0/3.2 OK). The installer creates immutable versioned releases, filters runtime env, serializes deploys with `flock`, atomically switches `current`, verifies readiness/version and transactionally restores config/units/services on failure.
+
+### Tests and release pipeline
+
+- `npm test` is self-contained (`pretest` generates the manifest); tests/scripts/source all have strict TypeScript checks. Coverage includes every `src/**/*.ts` file with blocking thresholds.
+- CI actions are SHA-pinned. Dependency audit and gitleaks are blocking; jobs cover the real npm tarball, CLI, Docker health/immutability, HTTP restart, systemd syntax, OpenAPI contracts and Node 22/24.
+- npm's install-script policy explicitly approves only the reviewed, version-pinned `esbuild@0.28.1` development postinstall; dependency upgrades surface a new review warning instead of inheriting a name-wide approval.
+- Added a manual, read-only production smoke workflow with explicit opt-in and a tag-driven npm trusted-publishing workflow (Node 24 + npm 11.15 + OIDC).
+- Updated compatible development dependencies (`prettier` 3.9.5 and `typescript-eslint` 8.63.x). Full and production `npm audit` both report zero vulnerabilities.
+
+### Upgrade notes
+
+- **Node 20 is no longer supported.** Upgrade to Node `>=22.12.0`.
+- A legacy or differently bound Avito token cache is ignored and replaced automatically on the next API call. A stale pre-1.2 file-style `{tokenFile}.lock` cannot be reclaimed with an atomic ownership check; after verifying that no older avito-mcp process is running, remove that one legacy lock manually. New directory leases reclaim dead owners automatically.
+- OAuth artifacts without exact scope/resource binding are rejected; affected remote clients must authorize again. One running process may own an `AVITO_MCP_OAUTH_STORE_FILE`; use distinct files for multiple instances. A stale legacy file-style `.process.lock` is intentionally not removed automatically and must be inspected/removed by the operator.
+- Webhook registration no longer accepts arbitrary URLs. Configure `AVITO_MCP_WEBHOOK_SECRET` and the public receiver URL, then pass that exact URL or use `messenger_register_webhook`.
+- Legacy raw `webhook-events.jsonl` files are never migrated into service state. Inspect and securely delete or archive them according to your retention policy; new persistence contains normalized metadata only.
+- Default confirmation now also covers webhook registration, blacklist changes and CPA complaints because they moved from `write` to `public`. `autoload_upload` likewise moves to `public`.
+- Several Zod inputs that contradicted bundled Swagger are intentionally corrected (notably delivery scalar/write schemas, schedules, arrays, enums and limits). Clients generated from the old incorrect schemas should refresh `tools/list`.
+- Invalid env values that previously fell back silently now stop startup with a diagnostic.
+
 ## [1.1.1] - 2026-07-09
 
 **Dependency security patch.** Clears the transitive `npm audit` advisories reported in [#21](https://github.com/elchin92/avito-mcp/issues/21) — no application code changed, lockfile only. `npm audit` now reports **0 vulnerabilities**; `tsc`, `eslint` and 212 tests pass, and the manifest stays at 148 tools with unchanged `counts_by_risk`. The `package.json` ranges already permitted the patched versions, so this is a pure `package-lock.json` bump (also generated by `npm audit fix`).
@@ -22,7 +79,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ### Security (fixed)
 
-- **Cached-token introspection bypass** — `AvitoClient` now asserts all three credentials (`Client_id` + `Client_secret` + `Profile_id`) *before* reading any token, so a token persisted on disk can no longer authenticate Avito calls when the server is started without full credentials. The v0.7.4 introspection-without-credentials feature is preserved (the guard only fires on authenticated requests; `tools/list` / resources / prompts still work creds-free). (`src/core/client.ts`)
+- **Cached-token introspection bypass** — `AvitoClient` now asserts all three credentials (`Client_id` + `Client_secret` + `Profile_id`) _before_ reading any token, so a token persisted on disk can no longer authenticate Avito calls when the server is started without full credentials. The v0.7.4 introspection-without-credentials feature is preserved (the guard only fires on authenticated requests; `tools/list` / resources / prompts still work creds-free). (`src/core/client.ts`)
 - **Idempotency double-spend race** — concurrent destructive calls sharing one `idempotencyKey` could each create an independently-confirmable pending action (double charge on `money`/`public` tools). A new atomic `IdempotencyStore.runExclusive` coalesces them, and a duplicate pre-confirmation call now returns the same `confirmation_id` instead of a second pending action. (`src/core/idempotency.ts`, `src/core/tool-factory.ts`)
 - **Webhook-redirect exfiltration** — `messenger_register_webhook` now registers **only** the operator-configured receiver URL; an arbitrary `url` override (which could redirect all incoming customer chat events to an attacker host) is rejected. (`src/domains/webhook.ts`) **Behaviour change:** the `url` parameter is accepted only when it equals the configured receiver URL.
 - **Pending-actions resource policy gap** — the `avito://state/pending-actions` MCP resource is now gated by the same allow/deny policy as the `meta_list_pending_actions` tool, so it cannot leak confirmation ids when that tool is denied. (`src/resources.ts`)
@@ -108,7 +165,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ### Fixed
 
-- **OAuth: RFC 8252 loopback clients could never finish the flow** — `approveConsent` re-validated `redirect_uri` with an exact string match while the SDK's `GET /authorize` (correctly) allows any port on loopback hosts; native clients died with `Unregistered redirect_uri` *after* the owner typed the password. Now uses the SDK's `redirectUriMatches` semantics at both validation points. (`src/http/oauth/provider.ts`)
+- **OAuth: RFC 8252 loopback clients could never finish the flow** — `approveConsent` re-validated `redirect_uri` with an exact string match while the SDK's `GET /authorize` (correctly) allows any port on loopback hosts; native clients died with `Unregistered redirect_uri` _after_ the owner typed the password. Now uses the SDK's `redirectUriMatches` semantics at both validation points. (`src/http/oauth/provider.ts`)
 - **OAuth: token store grew without bound** — expired entries were only collected when that exact token was presented again, and refresh rotation never revoked the abandoned access token (one orphan per refresh, forever, in memory and in `AVITO_MCP_OAUTH_STORE_FILE`). Added a 60-second expired-entry sweeper (`unref`'d) and eager revocation of the paired access token on rotation. (`src/http/oauth/store.ts`, `provider.ts`)
 - **Streamable HTTP: unknown session ids answered 400 instead of the spec-mandated 404** — clients that lost their session to a server restart got wedged instead of re-initializing. Missing-id → 400 (`Mcp-Session-Id header is required`); unknown-id → **404 `-32001 Session not found`**. (`src/http/mcp-http.ts`)
 - **Streamable HTTP: abandoned sessions lived forever** — a client that vanished without `DELETE` pinned a full 148-tool `McpServer` until process exit, with no cap on session creation. New: `AVITO_MCP_HTTP_MAX_SESSIONS` (default `100`, `initialize` beyond it → 503) and `AVITO_MCP_HTTP_SESSION_IDLE_SEC` (default `1800`) idle reaping.
@@ -186,7 +243,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ### Changed
 
-- **Enriched all tool descriptions** — each now front-loads a clear verb + resource, states when (and when *not*) to use it, flags side effects and visibility (money / public-to-buyer / irreversible), and disambiguates version-suffixed or sandbox-vs-prod siblings (`_v1`/`_v2`/`_v3`, `[SANDBOX]` vs `[3PL]`).
+- **Enriched all tool descriptions** — each now front-loads a clear verb + resource, states when (and when _not_) to use it, flags side effects and visibility (money / public-to-buyer / irreversible), and disambiguates version-suffixed or sandbox-vs-prod siblings (`_v1`/`_v2`/`_v3`, `[SANDBOX]` vs `[3PL]`).
 - **Every input parameter now has a meaningful `.describe()`** — formats, units, constraints and enum values sourced from the bundled swagger snapshot. Previously-opaque params (e.g. `announcementID`, delivery nested bodies) are explained.
 - **Honest `destructiveHint` annotations** — cancellations, deletions, removals, unsubscribes and account re-links are policy-`write` but irreversible, so they now report `destructiveHint: true` to MCP clients instead of inheriting `false`. New optional `ToolSpec.destructiveHint` override drives this; risk classification and confirmation policy are unchanged.
 
@@ -264,14 +321,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 - **Cross-process token file-lock** — `src/core/file-lock.ts`. OAuth refresh in `TokenStore.refresh` is now guarded by a `{tokenFile}.lock` file with PID + timestamp + stale-detection (`process.kill(pid, 0)`). Inside the lock a double-check re-reads the token file — if another process already refreshed, no extra `/token` call is made. Defends against thundering-herd from multiple workers / cron / CLI hitting Avito's `/token` endpoint at once. Configurable via `AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS` (default 30000ms).
 - **Structured error taxonomy** — `errorToMcpContent` now classifies errors into a formal `ErrorType` union: `AVITO_BAD_REQUEST` / `AVITO_UNAUTHORIZED` / `AVITO_FORBIDDEN` / `AVITO_NOT_FOUND` / `AVITO_RATE_LIMIT` / `AVITO_SERVER_ERROR` / `AVITO_API_ERROR` / `NETWORK_ERROR` / `TIMEOUT` / `INTERNAL_ERROR`. The envelope carries `retryable: boolean`, `retryAfter?: number` and `httpStatus?: number` — agents make programmatic retry decisions without regex over text. Legacy `error_kind` preserved for v0.6.x consumers.
 - **Idempotency ledger** — `src/core/idempotency.ts`. Every write/money/public tool now accepts an optional `idempotencyKey: string` parameter (min 8 chars) in its input schema. With an `IdempotencyStore` attached to `ToolContext`: same key + identical args replays the cached `CallToolResult` (marked `structuredContent.idempotent_replay: true`); same key + different args returns a structured conflict error. TTL via `AVITO_MCP_IDEMPOTENCY_TTL_SEC` (default 3600s). Argument hashing is order-stable (`sha256` over sorted JSON). In-memory only; persistent backends are an extension point.
-- **Dry-run middleware** — every destructive tool now accepts `dryRun: boolean` in its input schema. When `true` (or when `AVITO_MCP_DRY_RUN_DEFAULT=true`), the tool returns a structured preview `{ dryRun, explicit_request, operation, request_preview }` without calling Avito — agents and operators can inspect *what would happen* before going live. Dry-run bypasses both confirmation flow and idempotency ledger (no effect to dedupe).
-- **Three new meta-tools with strict `outputSchema` (zod)** — `meta_health`, `meta_auth_status`, `meta_capabilities`. All read-only, local environment, no Avito API calls. `meta_auth_status` returns only token *metadata* (presence, `expiresInSec`, last refresh error) — the access token value itself is NEVER returned, even with `probe: true`.
+- **Dry-run middleware** — every destructive tool now accepts `dryRun: boolean` in its input schema. When `true` (or when `AVITO_MCP_DRY_RUN_DEFAULT=true`), the tool returns a structured preview `{ dryRun, explicit_request, operation, request_preview }` without calling Avito — agents and operators can inspect _what would happen_ before going live. Dry-run bypasses both confirmation flow and idempotency ledger (no effect to dedupe).
+- **Three new meta-tools with strict `outputSchema` (zod)** — `meta_health`, `meta_auth_status`, `meta_capabilities`. All read-only, local environment, no Avito API calls. `meta_auth_status` returns only token _metadata_ (presence, `expiresInSec`, last refresh error) — the access token value itself is NEVER returned, even with `probe: true`.
 - **CLI flags** — `--readonly`, `--guarded`, `--dry-run`, `--no-confirmation` as syntactic sugar for the corresponding env vars (env wins if both set). `--health` prints a JSON health snapshot and exits without opening stdio transport — perfect for container/k8s probes or quick diagnostics.
 - **pino redact paths for token defence-in-depth** — `logger.ts` now redacts any field named `Authorization`, `authorization`, `accessToken`, `access_token`, `refresh_token`, `refreshToken`, `client_secret`, `clientSecret`, `bearer`, `Bearer`, `token` from logged objects. Current code never logged these, but future regressions are caught automatically.
 
 ### Test coverage
 
 5 new test files, 31 additional cases. **Total: 141 passing (was 110, +31).**
+
 - `test/file-lock.test.ts` — 5: serialisation, stale-by-PID, stale-by-age, timeout, release-on-throw
 - `test/idempotency.test.ts` — 6: stable hash, hit/miss, cross-tool isolation, TTL expiry, conflict, list()
 - `test/dry-run.test.ts` — 5: schema injection only on destructive, preview without HTTP, dryRun=false executes, env default, bypasses confirmation
@@ -293,7 +351,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 ### Compatibility
 
 - No tools removed, no tools renamed, no defaults changed for existing knobs.
-- Every existing v0.6.x client continues to work unchanged — the new `dryRun` and `idempotencyKey` parameters are *optional*; if not passed, behaviour is identical to v0.6.x.
+- Every existing v0.6.x client continues to work unchanged — the new `dryRun` and `idempotencyKey` parameters are _optional_; if not passed, behaviour is identical to v0.6.x.
 - Test fixtures that construct `Config` objects in user code may need three new fields (`dryRunDefault`, `idempotencyTtlSec`, `tokenLockTimeoutMs`); using the zod-parsed loader (`config.ts`) requires no changes.
 
 ## [0.6.0] - 2026-05-25
@@ -344,6 +402,7 @@ MCP **2025-11-25 alignment release**. Adds first-class **Resources**, **Prompts*
 External audit pass. Closes the four remaining polish items the v0.5.0 reviewer flagged.
 
 ### Fixed
+
 - **Policy was not applied to `meta_confirm_action`, `meta_cancel_action`, `meta_list_pending_actions`.** They bypassed `AVITO_MCP_ALLOW_TOOLS` / `AVITO_MCP_DENY_TOOLS`, breaking the documented "deny wins" / "allowlist is literal" contract. Each confirmation tool now goes through `evaluatePolicy` individually. Tests added for: allowlist excludes confirm tools, denylist hides them (deny wins), `read_only` mode hides write meta tools but keeps the read-class `meta_list_pending_actions`.
 - **DX warning at startup**: if confirmation is enabled but `meta_confirm_action` is hidden by policy, the server logs a warning that pending actions will be unconfirmable, with the fix recipe (add to allowlist or set `AVITO_MCP_CONFIRMATION_MODE=off`).
 - **`dist/manifest.json` now includes `environment` and `accessesLocalFiles`** on every tool entry. Previously these were only in runtime `_meta` but the manifest had only `risk`. Now `messenger_upload_images` shows `environment: "prod", accessesLocalFiles: true`; `meta_*` tools show `environment: "local"`. CHANGELOG claim ↔ artifact now match.
@@ -352,6 +411,7 @@ External audit pass. Closes the four remaining polish items the v0.5.0 reviewer 
 - **`docs/` added to npm `files` whitelist** so the README link to `docs/safety.md` resolves inside the published package, not just on GitHub.
 
 ### Added
+
 - **`AVITO_MCP_MAX_BINARY_MB`** (default `20`) — caps the size of binary responses (PDF labels, audio recordings). Fails fast on `Content-Length` header if available; falls back to checking actual body size. Drains the response to avoid lingering sockets. Audit-recommended production hardening for `orders_download_label` and `calltracking_get_record_by_call_id`.
 - 7 new tests (95 total, +7 from v0.5.0): 4 for meta-tool policy gating, 3 for binary size limit (Content-Length reject, body-size reject, accepts under-limit).
 
@@ -360,6 +420,7 @@ External audit pass. Closes the four remaining polish items the v0.5.0 reviewer 
 Final hardening pass. Closes the last items on the v0.3.0 audit's path to 10/10: hard-confirmation, binary endpoint UX, richer safety metadata. No breaking changes for default configs.
 
 ### Added
+
 - **`AVITO_MCP_CONFIRMATION_SECRET`** — turns the confirmation flow from soft (any caller can confirm) into **hard** (caller must supply the secret). When set, `meta_confirm_action` requires a `confirmation_secret` parameter, compared in constant time via `crypto.timingSafeEqual`. Wrong or missing secret returns `isError: true` and **does not delete the pending action** — agent can retry within TTL with the correct secret. Bridges the gap between two-step UX and actual human-in-the-loop guarantees when paired with an MCP client that asks the user to type the secret.
 - **Binary endpoint UX** — `safeParseResponse` in `src/core/client.ts` now detects non-JSON, non-text content-types (PDF, audio, octet-stream) and returns a structured envelope: `{ __binary: true, mimeType, sizeBytes, base64 }`. Affects `orders_download_label` (PDF labels) and `calltracking_get_record_by_call_id` (audio recordings). `formatResponse` renders binaries as a clean readable block instead of dumping bytes-as-text. Agents can now decode `base64` to save the file locally or upload elsewhere.
 - **Richer ToolSpec safety metadata** — two new optional fields:
@@ -368,18 +429,22 @@ Final hardening pass. Closes the last items on the v0.3.0 audit's path to 10/10:
 - New tests (88 total, +9 from v0.4.1): 4 hard-confirmation (no secret rejected, wrong secret rejected, correct secret executes, length-mismatch rejected), 5 binary-response (PDF, audio, JSON-not-affected, text-not-affected, empty body).
 
 ### Changed
+
 - Server startup log adds `hardConfirmation: true/false` so the active safety profile is fully auditable in one line.
 - `--help` documents `AVITO_MCP_CONFIRMATION_SECRET` and all v0.4.x env vars (some were missing from earlier help output).
 - `.env.example` documents `AVITO_MCP_CONFIRMATION_SECRET` with explanation of soft vs hard confirmation.
 - `orders_download_label` and `calltracking_get_record_by_call_id` descriptions updated — they now correctly describe the structured `{mimeType, sizeBytes, base64}` envelope instead of the old "raw bytes as text" warning.
 
 ### Notes on the audit
+
 This release closes the last items on the path to 10/10 from the v0.3.0 audit:
+
 - ✅ Confirmation secret (audit's "10/10 safety" recommendation)
 - ✅ Binary endpoint UX (audit P2)
 - ✅ Richer safety metadata as first-class fields (audit P3)
 
 Still deferred to future minor releases (none are 10/10-blockers — they're polish):
+
 - Per-tool spending caps (requires Avito price oracle we don't have)
 - Persist manifest to repo (vs. ship-only — current approach is sufficient)
 - `delivery_*` sandbox tools manually tagged `environment: 'sandbox'`
@@ -389,6 +454,7 @@ Still deferred to future minor releases (none are 10/10-blockers — they're pol
 CI hygiene release. No code changes, no breaking changes.
 
 ### Added
+
 - **`npm audit` job in CI** (`audit-level=high`, `--omit=dev`, `continue-on-error: true`). Runs only on push to main — non-blocking by design, just a warning signal in the Actions tab.
 - **`gitleaks` job in CI** — scans every push and PR for committed secrets. Uses the official `gitleaks/gitleaks-action@v2`. `continue-on-error` so it doesn't block obviously-clean PRs but always reports.
 - **`tsconfig.scripts.json`** + `npm run typecheck:scripts` — type-checks `scripts/` (was excluded from the main `tsconfig.json`). Now wired into CI before `npm run build`. Catches type errors in `scripts/generate-manifest.ts` which is critical for the publish pipeline.
@@ -396,6 +462,7 @@ CI hygiene release. No code changes, no breaking changes.
 - **CI now generates the manifest** before tests, and the tarball-verify step **fails if `dist/manifest.json` is missing** from the published artifact.
 
 ### Tests
+
 79 passing (was 74). +5 snapshot/invariant assertions.
 
 ## [0.4.0] - 2026-05-25
@@ -422,6 +489,7 @@ sensitive-class hiding for auth tools, fail-closed file-access guard for the mul
   ```
 
 ### Added
+
 - **New risk class `sensitive`** in addition to `read` / `write` / `money` / `public`. Used for tools that return credentials. Hidden by default at registration time regardless of mode. Opt-in via `AVITO_MCP_EXPOSE_AUTH_TOOLS=1`. Currently covers 3 tools: `auth_get_access_token`, `auth_get_access_token_authorization_code`, `auth_refresh_access_token_authorization_code`.
 - **`messenger_upload_images` hardening** with new env vars:
   - `AVITO_MCP_ALLOWED_UPLOAD_DIRS` (comma- or whitespace-separated) — without it the tool isn't registered at all. Validation uses `fs.realpath` on both file and directory to defeat symlink escape and `/safe-malicious` prefix attacks. Strict `dir + sep` startsWith.
@@ -442,6 +510,7 @@ sensitive-class hiding for auth tools, fail-closed file-access guard for the mul
 - New module `src/core/upload-guard.ts` (`validateUpload`, `UploadGuardError`).
 
 ### Changed
+
 - `ToolContext` now includes `pendingStore: PendingActionStore` (internal API; only domain authors affected).
 - `dist/manifest.json` now includes `counts_by_risk.sensitive` and the three new confirmation tools. With confirmation on, 142 tools total: 3 sensitive / 77 read / 43 write / 9 money / 10 public.
 - Server startup log adds `exposeAuthTools`, `uploadDirsCount`, `confirmationMode` fields so the active safety profile is auditable from the first line of stderr.
@@ -450,11 +519,14 @@ sensitive-class hiding for auth tools, fail-closed file-access guard for the mul
 - `docs/safety.md` rewritten — fixed `stock_get_stocks_info` typo (should have been `stock_update_stocks`), added confirmation flow explanation with explicit "what it isn't" disclaimer about autonomous agents.
 
 ### Fixed
+
 - `dist/manifest.json` generator now correctly counts `sensitive` (previously crashed on unknown risk).
 - `.github/ISSUE_TEMPLATE/bug_report.md` added — was missing in v0.3.x. Now asks reporters for their active safety env vars.
 
 ### Notes on the audit
+
 This release closes the high-priority items from the v0.3.0 audit: sensitive surface, upload hardening, confirmation. P1 items kept for follow-ups (v0.4.1 / v0.5.0):
+
 - `gitleaks` / secret scanning in CI
 - `npm audit` warning gate in CI
 - Type-check `scripts/` separately
@@ -468,9 +540,10 @@ This release closes the high-priority items from the v0.3.0 audit: sensitive sur
 "Defence in depth" — three safety modes, per-tool allowlist/denylist, generated tool manifest, and registry-invariant tests. Plus a `docs/safety.md` with ready-to-paste configurations for common agent personas.
 
 ### Added
+
 - **`AVITO_MCP_MODE`** env var with three values, replacing the binary `AVITO_SAFE_MODE`:
-  - `read_only`   — registers only `risk='read'` tools (~79 tools). Agent literally cannot see anything else in `tools/list`.
-  - `guarded`     — registers `read` + `write` (~120 tools); hides `money` and `public`. Agent can edit own data but can't spend or talk to customers.
+  - `read_only` — registers only `risk='read'` tools (~79 tools). Agent literally cannot see anything else in `tools/list`.
+  - `guarded` — registers `read` + `write` (~120 tools); hides `money` and `public`. Agent can edit own data but can't spend or talk to customers.
   - `full_access` — all 139 tools; legacy behaviour. **Default.**
 - **`AVITO_MCP_ALLOW_TOOLS`** — comma-separated tool names; if set, only these register, regardless of mode. Lets you build narrow agent personas.
 - **`AVITO_MCP_DENY_TOOLS`** — comma-separated tool names that are always hidden. Deny wins over allow.
@@ -487,6 +560,7 @@ This release closes the high-priority items from the v0.3.0 audit: sensitive sur
   - Every tool has both `readOnlyHint` and `destructiveHint` set explicitly
 
   Catches future regressions like the `messenger_upload_images` slip-through that affected v0.2.0.
+
 - **`docs/safety.md`** — long-form safety guide with four ready-to-paste agent personas:
   - Persona 1 (analytics-only): `AVITO_MCP_MODE=read_only`
   - Persona 2 (customer-support): guarded + allowlist with the messenger subset
@@ -494,12 +568,14 @@ This release closes the high-priority items from the v0.3.0 audit: sensitive sur
   - Persona 4 (full admin, interactive): defaults
 
 ### Changed
+
 - **`AVITO_SAFE_MODE=read-only`** is now deprecated. It still works (mapped to `AVITO_MCP_MODE=read_only`) and emits a one-line stderr warning at startup. Will be removed in v1.0.0.
 - Server startup log now records `mode`, `allowToolsCount`, `denyToolsCount` so you can verify policy at a glance.
 - `--help` documents all new env vars; `.env.example` documents all new env vars; both READMEs (EN + RU) Security sections document modes + allowlist/denylist and link to `docs/safety.md`.
 - `prepublishOnly` and `prepack` now run `generate:manifest` so the manifest in npm tarballs matches the source.
 
 ### Tests
+
 - 50 passing (up from 39 in v0.2.x): added 9 registry-invariants tests and refactored the safe-mode tests to use the new mode-based config instead of `process.env.AVITO_SAFE_MODE` mutation.
 
 ## [0.2.1] - 2026-05-25
@@ -507,9 +583,11 @@ This release closes the high-priority items from the v0.3.0 audit: sensitive sur
 Hotfix release: v0.2.0 missed one tool, plus several doc tune-ups.
 
 ### Fixed
+
 - **`messenger_upload_images`** — the only tool registered via `server.registerTool` directly (instead of `defineTool`), it slipped through the v0.2.0 risk classification and was **not blocked under `AVITO_SAFE_MODE=read-only`**. Now classified as `write`, gets MCP `ToolAnnotations`, and respects safe-mode like every other tool.
 
 ### Docs
+
 - `CONTRIBUTING.md` — documents the required `risk` field on every new tool, with explicit semantics for each of the four categories. Adds a note that custom tools using `server.registerTool` directly must implement the safe-mode guard themselves.
 - `.github/PULL_REQUEST_TEMPLATE.md` — new checklist item: every new tool must declare `risk` explicitly.
 - `SECURITY.md` — token cache file reference generalised (was tied to the old `cwd/.avito-token.json` filename).
@@ -521,6 +599,7 @@ Hotfix release: v0.2.0 missed one tool, plus several doc tune-ups.
 "Safe by default" — risk classification, safe-mode, and a real CLI.
 
 ### Added
+
 - **`AVITO_SAFE_MODE=read-only`** — env var that blocks every tool with risk other than `read`. Lets you hand the MCP server to an unattended agent (cron, multi-agent runtime) without it accidentally spending money, sending messages, or changing prices. Block fires before any HTTP request — Avito never sees the call.
 - **Tool risk classification** — every one of the 138 swagger-backed tools (and the `meta_get_rate_limits` tool) is now tagged with one of four risks: `read` (78), `write` (40), `money` (9), `public` (11). Default for unclassified tools is `write` (fail-closed).
 - **MCP `ToolAnnotations`** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) — derived from the risk field and sent to the MCP client on `tools/list`. Behaving clients (Claude Desktop, Cursor, etc.) can now warn users before destructive calls.
@@ -529,18 +608,21 @@ Hotfix release: v0.2.0 missed one tool, plus several doc tune-ups.
 - 8 new unit tests covering risk classification and the safe-mode guard (39 tests total, up from 31).
 
 ### Changed
+
 - **Breaking-ish: default OAuth token file location moved out of `process.cwd()`.** Previously `./.avito-token.json`, which leaked tokens into whatever directory the MCP client happened to spawn the server in (project dirs, IDE workspaces, sync folders). New default is a per-user state directory:
   - Linux: `$XDG_STATE_HOME/avito-mcp/token.json` (defaults to `~/.local/state/avito-mcp/token.json`)
   - macOS: `~/Library/Application Support/avito-mcp/token.json`
   - Windows: `%APPDATA%\avito-mcp\token.json`
-  Override with `AVITO_TOKEN_FILE`. If you had a token cached in cwd, the server will simply request a fresh one on first call (OAuth tokens are short-lived, no migration needed).
+    Override with `AVITO_TOKEN_FILE`. If you had a token cached in cwd, the server will simply request a fresh one on first call (OAuth tokens are short-lived, no migration needed).
 - `User-Agent` header on every outbound request now reads `avito-mcp/<actual-version>` instead of the previously hardcoded `avito-mcp/0.1.0`. Same fix in `scripts/list-tools.ts` and the MCP `serverInfo` block — all version drift between `package.json` and runtime is now eliminated.
 - `.env.example` documents `AVITO_SAFE_MODE`, `AVITO_BASE_URL`, and the new token file location.
 
 ### Fixed
+
 - **Version drift** between `package.json` and `src/server.ts` / `src/core/client.ts` / `scripts/list-tools.ts` (all three had `0.1.0` hardcoded since the original release). Fixes the misleading `serverInfo.version` field that broke issue triage.
 
 ### Notes
+
 - The `read` classification covers GETs and POST-as-query endpoints (analytics, statistics, balance, info). Anything that mutates state, costs money, or is visible to customers is `write` / `money` / `public` respectively.
 - `AVITO_SAFE_MODE` is opt-in. Without it, every tool runs as before — this is **not** a behavioural change for existing users.
 
@@ -549,16 +631,19 @@ Hotfix release: v0.2.0 missed one tool, plus several doc tune-ups.
 Community health files.
 
 ### Added
+
 - **`SECURITY.md`** — security policy with private vulnerability reporting via GitHub Security Advisories. Defines in-scope vs out-of-scope and coordinated disclosure expectations.
 - **`SUPPORT.md`** — where to go for bugs, questions, security issues, Avito-API problems, and MCP-client issues (RU + EN).
 - **`.github/PULL_REQUEST_TEMPLATE.md`** — what/why, type-of-change checkboxes, and a pre-merge checklist (lint / tsc / build / test / changelog / no real credentials).
 - **`.github/dependabot.yml`** — weekly grouped npm + GitHub Actions updates with conventional-commit prefixes.
 
 ### Changed
+
 - README (EN + RU): added **Community & support** section pointing at all community files; tightened Security section with a private-reporting pointer.
 - `CONTRIBUTING.md`: front-matter note linking to Code of Conduct, Support, and Security policy.
 
 ### Confirmed
+
 - No code, swagger, or test changes — community-files-only release. All 31 unit tests still pass; 139 tools still exposed.
 
 ## [0.1.0] - 2026-05-25
@@ -566,6 +651,7 @@ Community health files.
 Initial public release.
 
 ### Added
+
 - **139 MCP tools** covering 18 Avito API domains (138 endpoints + `meta_get_rate_limits`).
 - OAuth `client_credentials` flow with automatic token refresh on 401, exponential backoff on 429/5xx.
 - stdio transport — compatible with Claude Desktop, Claude Code, Cursor, Cline, Continue, Windsurf, Zed and any MCP-compatible client.
@@ -576,14 +662,17 @@ Initial public release.
 - 31 unit tests (vitest) covering core HTTP client, OAuth token store, URL builder.
 
 ### Domains covered (139 tools total)
+
 `auth` (3) · `user` (3) · `items` (11) · `messenger` (14) · `autoload` (17) · `orders` (12) · `delivery` (31) · `promotion` (7) · `cpa` (11) · `cpa_target` (5) · `cpa_auction` (2) · `stock` (2) · `hierarchy` (5) · `reviews` (4) · `tariffs` (1) · `trxpromo` (3) · `calltracking` (3) · `msg_discounts` (5) · `meta` (1).
 
 ### Not supported in this release
+
 Avito provides separate APIs for the following verticals; their swagger specs are not bundled: Auction, Autostrategy, Autoteka, Jobs/Vacancies, Realty Reports, Short-term rent (STR).
 
 ## [0.1.3] - 2026-05-25
 
 ### Changed
+
 - **README major rewrite (EN + RU)** for adoption. New collapsible `<details>` sections for every tool group and every supported AI client. Less technical jargon, more concrete use cases.
 - **Expanded AI client coverage from 8 to 16+**: added ChatGPT Desktop (Connectors), Codex CLI, VS Code (Copilot Chat), JetBrains AI Assistant, Goose, Roo Code, Kilo Code, LibreChat, Cherry Studio. Generic stdio fallback still listed.
 - Added **"Built for autonomous workflows"** section pointing at multi-agent runtimes and cron-scheduled agents as the intended deployment pattern.
@@ -591,19 +680,23 @@ Avito provides separate APIs for the following verticals; their swagger specs ar
 - Reworded tool descriptions to be action-oriented rather than implementation-oriented.
 
 ### Added
+
 - Documented the **Avito API snapshot date** (`2026-05-25`) in README header (badge) and in the "What's included" section, so users know which point-in-time of Avito's public spec the bundled swaggers reflect.
 
 ### Confirmed
+
 - 138/138 swagger endpoints remain fully covered as MCP tools (+1 meta tool = 139). No code, no swagger, no test changes in this release — docs only.
 
 ## [0.1.2] - 2026-05-25
 
 ### Fixed
+
 - README.ru.md: replaced broken 404 link `https://www.avito.ru/profile/settings/api` (used in the "How to get Profile_id" instructions) with a working description pointing to the main API page and to `user_get_user_info_self` as a programmatic alternative.
 
 ## [0.1.1] - 2026-05-25
 
 ### Fixed
+
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
 
 [0.9.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.9.0

@@ -62,7 +62,7 @@ export function registerPrompts(server: McpServer, ctx: ToolContext): void {
               `       dateFrom: "${dateFrom}",\n` +
               `       dateTo:   "${dateTo}",\n` +
               `       spendingTypes: ["vas","perf_vas","tariff","cpa"],\n` +
-              `       grouping: { period: "day" }\n` +
+              `       grouping: "day"\n` +
               `     }\n\n` +
               `Produce a summary: balance, number of active listings (by status), ` +
               `total spendings for the period broken down by type. No long tables.` +
@@ -75,7 +75,7 @@ export function registerPrompts(server: McpServer, ctx: ToolContext): void {
               `       dateFrom: "${dateFrom}",\n` +
               `       dateTo:   "${dateTo}",\n` +
               `       spendingTypes: ["vas","perf_vas","tariff","cpa"],\n` +
-              `       grouping: { period: "day" }\n` +
+              `       grouping: "day"\n` +
               `     }\n\n` +
               `Сформируй итог: баланс, количество активных объявлений (по статусам), ` +
               `сумма расходов за период с разбивкой по типам. Без длинных таблиц.`,

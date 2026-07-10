@@ -26,8 +26,9 @@ function printHelp(): void {
       `  --http | --both | --stdio  v0.9.0: same as AVITO_MCP_TRANSPORT=http|both|stdio\n` +
       `\n` +
       `Environment variables (see .env.example for the full list):\n` +
-      `  Client_id, Client_secret, Profile_id   Required Avito OAuth credentials\n` +
+      `  Client_id, Client_secret, Profile_id   Required for Avito API calls (not introspection)\n` +
       `  AVITO_BASE_URL          Override Avito API base URL (default: https://api.avito.ru)\n` +
+      `  AVITO_MCP_CPA_SOURCE    CPA X-Source value (default: avito-mcp)\n` +
       `  AVITO_TOKEN_FILE        Override OAuth token cache path\n` +
       `  AVITO_ENV_FILE          Path to .env file (default: ./.env)\n` +
       `  AVITO_MCP_MODE          read_only | guarded | full_access (default: full_access)\n` +
@@ -35,11 +36,11 @@ function printHelp(): void {
       `  AVITO_MCP_DENY_TOOLS    Comma-separated tool names; always blocked (wins over allow)\n` +
       `  AVITO_MCP_CONFIRMATION_MODE     off | money_public (default) | all_destructive\n` +
       `  AVITO_MCP_CONFIRMATION_TTL_SEC  Pending action TTL in seconds (default: 900)\n` +
-      `  AVITO_MCP_CONFIRMATION_SECRET   Enables hard-confirmation (v0.5.0)\n` +
+      `  AVITO_MCP_CONFIRMATION_SECRET   Enables hard-confirmation (minimum 32 characters)\n` +
       `  AVITO_MCP_EXPOSE_AUTH_TOOLS     1 to expose sensitive auth_* tools (default: hidden)\n` +
       `  AVITO_MCP_ALLOWED_UPLOAD_DIRS   Comma-separated dirs for messenger_upload_images\n` +
       `  AVITO_MCP_MAX_UPLOAD_MB         Max per-file upload size in MB (default: 15)\n` +
-      `  AVITO_MCP_MAX_BINARY_MB         Max binary response size in MB (default: 20)\n` +
+      `  AVITO_MCP_MAX_BINARY_MB         Max HTTP response body size in MB (default: 20)\n` +
       `  AVITO_MCP_DRY_RUN_DEFAULT       v0.7.0: default for dryRun on destructive tools\n` +
       `                                  (true|false; default: false)\n` +
       `  AVITO_MCP_IDEMPOTENCY_TTL_SEC   v0.7.0: TTL of idempotency ledger entries (default: 3600)\n` +
@@ -53,18 +54,21 @@ function printHelp(): void {
       `  AVITO_MCP_HTTP_PORT             listen port (default: 3000)\n` +
       `  AVITO_MCP_HTTP_PUBLIC_URL       public https URL for OAuth metadata, e.g. https://mcp.example.com\n` +
       `  AVITO_MCP_HTTP_AUTH             oauth (default) | bearer | none\n` +
-      `  AVITO_MCP_OAUTH_OWNER_PASSWORD  required in oauth mode — gates the /authorize consent\n` +
+      `  AVITO_MCP_OAUTH_OWNER_PASSWORD  required in oauth mode; minimum 32 bytes\n` +
       `  AVITO_MCP_OAUTH_TOKEN_TTL_SEC   access-token TTL (default: 3600)\n` +
+      `  AVITO_MCP_OAUTH_STORE_FILE      optional durable single-writer OAuth state file\n` +
       `  AVITO_MCP_HTTP_AUTH_TOKEN       bearer-mode shared secret(s), comma-separated\n` +
+      `  AVITO_MCP_HTTP_MAX_SESSIONS     concurrent MCP session cap (default: 100)\n` +
+      `  AVITO_MCP_HTTP_SESSION_IDLE_SEC idle session TTL (default: 1800)\n` +
       `  AVITO_MCP_HTTP_ALLOWED_HOSTS    CSV — DNS-rebinding protection (Host allowlist)\n` +
       `  AVITO_MCP_HTTP_ALLOWED_ORIGINS  CSV — DNS-rebinding protection (Origin allowlist)\n` +
       `\n` +
       `Avito webhook receiver (v0.9.0 — runs even in stdio mode):\n` +
-      `  AVITO_MCP_WEBHOOK_SECRET        enables the receiver; secret URL path segment\n` +
+      `  AVITO_MCP_WEBHOOK_SECRET        receiver path secret; minimum 32 bytes\n` +
       `  AVITO_MCP_WEBHOOK_PUBLIC_URL    public base Avito POSTs to (default: HTTP public URL)\n` +
       `  AVITO_MCP_WEBHOOK_PATH          mount path prefix (default: /avito/webhook)\n` +
       `  AVITO_MCP_WEBHOOK_BUFFER        retained events ring-buffer size (default: 100)\n` +
-      `  AVITO_MCP_WEBHOOK_LOG_FILE      optional JSONL file to append every event to\n` +
+      `  AVITO_MCP_WEBHOOK_LOG_FILE      optional rotating JSONL with normalized metadata\n` +
       `\n` +
       `Docs: https://github.com/elchin92/avito-mcp\n`,
   );

@@ -17,7 +17,10 @@ import express from 'express';
 import type { Router, RequestHandler } from 'express';
 import { rateLimit } from 'express-rate-limit';
 
-import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
+import {
+  mcpAuthRouter,
+  getOAuthProtectedResourceMetadataUrl,
+} from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 
 import type { HttpConfig } from '../../config.js';
@@ -27,6 +30,7 @@ export interface OAuthSubsystem {
   router: Router;
   requireAuth: RequestHandler;
   provider: AvitoOAuthProvider;
+  close(): Promise<void>;
 }
 
 /**
@@ -37,50 +41,76 @@ export interface OAuthSubsystem {
  */
 export function createOAuthSubsystem(httpConfig: HttpConfig): OAuthSubsystem {
   const provider = new AvitoOAuthProvider(httpConfig);
+  try {
+    const issuerUrl = new URL(httpConfig.publicUrl);
+    const resourceServerUrl = new URL(httpConfig.publicUrl + '/mcp');
 
-  const issuerUrl = new URL(httpConfig.publicUrl);
-  const resourceServerUrl = new URL(httpConfig.publicUrl + '/mcp');
+    const router = express.Router();
+    // The SDK's registration router has its own JSON parser, but the application
+    // used to pre-parse every JSON body with a 4 MiB limit. Parse DCR here first so
+    // recognized large fields such as software_statement cannot bypass a tight
+    // endpoint-specific cap.
+    router.post('/register', express.json({ limit: '32kb', strict: true }));
+    // Body parser for the consent POST (the SDK's own routers parse their own
+    // bodies; this one is ours). extended:false matches the SDK's usage.
+    //
+    // Rate limit: this endpoint verifies the OWNER PASSWORD — the single gate to
+    // minting tokens. The SDK rate-limits the endpoints it mounts (/authorize,
+    // /token, /register) but this custom route is ours to protect; without a
+    // limiter and with open DCR, the password is brute-forceable at line speed.
+    // 10 attempts / 15 min / IP mirrors the strictest SDK sibling.
+    router.post(
+      '/authorize/approve',
+      rateLimit({
+        windowMs: 15 * 60 * 1000,
+        limit: 10,
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: {
+          error: 'too_many_requests',
+          error_description: 'Too many consent attempts. Try again in 15 minutes.',
+        },
+      }),
+      express.urlencoded({ extended: false, limit: '16kb' }) as RequestHandler,
+      provider.approveConsent,
+    );
 
-  const router = express.Router();
-  // Body parser for the consent POST (the SDK's own routers parse their own
-  // bodies; this one is ours). extended:false matches the SDK's usage.
-  //
-  // Rate limit: this endpoint verifies the OWNER PASSWORD — the single gate to
-  // minting tokens. The SDK rate-limits the endpoints it mounts (/authorize,
-  // /token, /register) but this custom route is ours to protect; without a
-  // limiter and with open DCR, the password is brute-forceable at line speed.
-  // 10 attempts / 15 min / IP mirrors the strictest SDK sibling.
-  router.post(
-    '/authorize/approve',
-    rateLimit({
-      windowMs: 15 * 60 * 1000,
-      limit: 10,
-      standardHeaders: true,
-      legacyHeaders: false,
-      message: {
-        error: 'too_many_requests',
-        error_description: 'Too many consent attempts. Try again in 15 minutes.',
-      },
-    }),
-    express.urlencoded({ extended: false }) as RequestHandler,
-    provider.approveConsent,
-  );
+    router.use(
+      mcpAuthRouter({
+        provider,
+        issuerUrl,
+        resourceServerUrl,
+        scopesSupported: ['avito:mcp'],
+        resourceName: 'Avito MCP',
+      }),
+    );
 
-  router.use(
-    mcpAuthRouter({
-      provider,
-      issuerUrl,
-      resourceServerUrl,
-      scopesSupported: ['avito:mcp'],
-      resourceName: 'Avito MCP',
-    }),
-  );
+    const requireAuth = requireBearerAuth({
+      verifier: provider,
+      requiredScopes: ['avito:mcp'],
+      // Matches the path mcpAuthMetadataRouter serves for a resource server at /mcp.
+      resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
+    });
 
-  const requireAuth = requireBearerAuth({
-    verifier: provider,
-    // Matches the path mcpAuthMetadataRouter serves for a resource server at /mcp.
-    resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
-  });
+    // Convert parser failures on OAuth endpoints into a small OAuth-shaped error,
+    // never Express' HTML diagnostics.
+    router.use(((err, req, res, _next) => {
+      const status = (err as { status?: unknown }).status === 413 ? 413 : 400;
+      const registration = req.path === '/register';
+      res.status(status).json({
+        error: registration ? 'invalid_client_metadata' : 'invalid_request',
+        error_description:
+          status === 413
+            ? registration
+              ? 'Client metadata is too large'
+              : 'Request body is too large'
+            : 'Malformed request body',
+      });
+    }) as import('express').ErrorRequestHandler);
 
-  return { router, requireAuth, provider };
+    return { router, requireAuth, provider, close: () => provider.close() };
+  } catch (err) {
+    provider.abortStartup();
+    throw err;
+  }
 }

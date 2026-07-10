@@ -87,6 +87,8 @@ export const register: DomainRegister = (server, ctx) => {
     input: {
       itemIds: z
         .array(z.number().int().positive())
+        .min(1)
+        .max(100)
         .optional()
         .describe('Avito listing IDs (int64) for which budget options are needed. Up to 100.'),
     },
@@ -148,6 +150,8 @@ export const register: DomainRegister = (server, ctx) => {
     input: {
       itemIds: z
         .array(z.number().int().positive())
+        .min(1)
+        .max(100)
         .optional()
         .describe('Avito listing IDs (int64) for which active promotion services are needed. Up to 100.'),
     },

@@ -23,6 +23,17 @@ export const DOMAIN_PREFIXES = {
   msg_discounts: 'msg_discounts',
 } as const;
 
+export const TOOL_DOMAIN_PREFIXES = [...Object.values(DOMAIN_PREFIXES), 'meta'].sort(
+  (a, b) => b.length - a.length,
+);
+
+export function domainOfToolName(name: string): string {
+  for (const domain of TOOL_DOMAIN_PREFIXES) {
+    if (name === domain || name.startsWith(`${domain}_`)) return domain;
+  }
+  return 'unknown';
+}
+
 /**
  * camelCase / PascalCase / kebab-case → snake_case.
  *   "getUserBalance"      → "get_user_balance"

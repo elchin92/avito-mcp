@@ -13,7 +13,8 @@ src/domains/<name>.ts                  ← one file per swagger, declarative too
        ↓
 src/meta/domain-registry.ts            ← one line registers the domain
        ↓
-148 MCP tools (141 Avito API + 7 local/meta), served over stdio or Streamable HTTP
+148 MCP tools (138 Swagger operations + 3 local/convenience + 7 meta)
+served over stdio or Streamable HTTP
 ```
 
 Run `npm run generate:manifest` to produce an up-to-date `dist/manifest.json` with the
@@ -50,27 +51,23 @@ One `defineTool(server, ctx, { ... })` call in the appropriate `src/domains/<nam
   The factory derives the MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`) from `risk` automatically — well-behaved MCP clients use these to warn users before destructive calls.
 - **Warn on write methods in the description** — prefix with `⚠️` for `money`/`public` tools as a belt-and-suspenders signal alongside the annotations.
 - **Path parameters with `{user_id}` or `{userId}`** — use `injectProfileId: 'user_id' | 'userId'` so the user's profile id is auto-filled if the agent doesn't pass it.
-- **Complex nested bodies** — `z.record(z.string(), z.unknown())` with a `.describe()` pointing to the swagger file is acceptable for rarely-used fields. Don't write 200 lines of Zod for every nested DTO.
-- **Custom tools via `server.registerTool` directly** (instead of `defineTool`) must implement the safe-mode guard themselves — `defineTool` does it for you, so prefer the factory unless you genuinely need a non-HTTP handler (e.g. `messenger_upload_images` reads files from disk).
+- **Complex nested bodies** — model the bundled OpenAPI contract with explicit Zod schemas. Use `z.unknown()` only when the upstream schema is genuinely unconstrained, and document that exception in `test/openapi-contract.test.ts`.
+- **Custom execution still goes through `defineTool`** via `customExecute` / `buildDryRunPreview`. Do not register a business tool directly with `server.registerTool`: that bypasses the shared policy, confirmation, dry-run, idempotency, and error pipeline.
 
 ## Tests
 
 - Unit tests (`vitest`) are required for anything in `src/core/`. Run: `npm test`.
-- Tools themselves are smoke-tested manually via `npm run smoke` (uses real Avito API — set up your `.env` first) or via `npm run inspect` (the MCP Inspector UI).
-- Don't add integration tests that hit the live Avito API in CI — there's no sandbox.
+- Every Swagger wrapper is checked against its bundled OpenAPI operation by `test/openapi-contract.test.ts`; update schemas and the reviewed exception list deliberately.
+- `npm run smoke` uses the real Avito API, is read-only, and refuses production unless `AVITO_MCP_SMOKE_ALLOW_PRODUCTION=true` is explicit. The manual `live-smoke.yml` workflow owns this check; normal CI never calls Avito.
 
 ## Before you open a PR
 
 ```bash
-npm run lint
-npm run typecheck
-npm run typecheck:scripts
-npm run build
-npm run generate:manifest
-npm test
+npm run verify:release
+npm audit --omit=dev --audit-level=high
 ```
 
-All of these must pass — they mirror the CI gate (CI additionally runs a non-blocking `npm audit` and a secret scan). If you added or renamed a tool, the manifest snapshot test will flag it; update the snapshot deliberately (`npx vitest run -u`) and commit it together with your change.
+These commands cover lint, strict source/script/test typechecks, all-source coverage thresholds, tests, the deterministic manifest, and the release build. CI also installs the actual npm tarball, runs container/restart deployment gates, blocks on `npm audit`, and scans git history for secrets. If you added or renamed a tool, the manifest snapshot test will flag it; update the snapshot deliberately (`npx vitest run -u`) and commit it together with your change.
 
 ## Filing issues
 

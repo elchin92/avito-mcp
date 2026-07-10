@@ -23,6 +23,7 @@ export const register: DomainRegister = (server, ctx) => {
     method: 'GET',
     path: '/trx-promo/1/commissions',
     domain: 'trx-promo',
+    allowGetBody: true,
     input: {
       itemIDs: z
         .array(z.number().int().positive())
@@ -45,7 +46,14 @@ export const register: DomainRegister = (server, ctx) => {
     domain: 'trx-promo',
     input: {
       items: z
-        .array(z.record(z.string(), z.unknown()))
+        .array(
+          z.object({
+            itemID: z.number().int(),
+            commission: z.number().int(),
+            dateFrom: z.string(),
+            dateTo: z.string().optional(),
+          }),
+        )
         .min(1)
         .describe(
           'Array of listings to promote. Each element: itemID (number, listing ID, required), ' +

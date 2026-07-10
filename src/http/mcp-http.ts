@@ -18,25 +18,30 @@
  *
  * Express applies express.json() upstream, so req.body is already parsed; we pass
  * it as the 3rd arg to handleRequest so the transport doesn't try to re-read the
- * stream.
+ * stream. Rebinding protection is always enabled; startup fails when complete
+ * Host and Origin allowlists cannot be derived.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestHandler } from 'express';
+import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 
 import type { HttpConfig } from '../config.js';
 import { buildMcpServer } from '../build-server.js';
 import type { ToolContext } from '../core/tool-factory.js';
-import { logger } from '../logger.js';
+import { bindMcpLogger, logger, runWithMcpLogger } from '../logger.js';
 
 /** A live MCP session: the per-session server, its HTTP transport, last activity. */
 interface Session {
   server: McpServer;
   transport: StreamableHTTPServerTransport;
   lastSeenAt: number;
+  activeRequests: number;
+  principal: string;
+  unbindLogger: () => void;
 }
 
 /** 400: request carries no session id where one is required. */
@@ -72,58 +77,124 @@ function hostHeader(host: string, port: number): string {
   return host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`;
 }
 
+function normalizeAllowedHost(value: string): string {
+  try {
+    if (!value || value.trim() !== value || value.includes('*')) throw new Error('invalid host');
+    const parsed = new URL(`http://${value}`);
+    if (
+      parsed.username ||
+      parsed.password ||
+      parsed.pathname !== '/' ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      throw new Error('host must not contain credentials, a path, query or fragment');
+    }
+    return parsed.host;
+  } catch (err) {
+    throw new Error(`Invalid AVITO_MCP_HTTP_ALLOWED_HOSTS entry: ${value}`, { cause: err });
+  }
+}
+
+function normalizeAllowedOrigin(value: string): { origin: string; host: string } {
+  try {
+    const parsed = new URL(value);
+    if (
+      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+      parsed.username ||
+      parsed.password ||
+      parsed.pathname !== '/' ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      throw new Error('origin must be an HTTP(S) scheme + authority only');
+    }
+    return { origin: parsed.origin, host: parsed.host };
+  } catch (err) {
+    throw new Error(`Invalid AVITO_MCP_HTTP_ALLOWED_ORIGINS entry: ${value}`, { cause: err });
+  }
+}
+
 /**
  * Resolves the DNS-rebinding protection setup (exported for tests). Explicit
  * allowlists win. When
  * none are configured we DERIVE them from the public URL and the bind address —
  * protection must default to ON (the MCP spec's Origin-validation MUST; the
  * classic attack is a malicious site rebinding its hostname to 127.0.0.1 and
- * driving a localhost MCP server from the victim's browser). The single case
- * with nothing to derive from — a wildcard bind with no explicit public URL —
- * keeps protection off with a loud warning rather than guessing and locking
- * LAN clients out.
+ * driving a localhost MCP server from the victim's browser). A wildcard bind
+ * without a usable public URL or complete explicit lists fails startup.
  */
 export function resolveRebindingProtection(h: HttpConfig): {
   enabled: boolean;
-  allowedHosts?: string[];
-  allowedOrigins?: string[];
+  allowedHosts: string[];
+  allowedOrigins: string[];
 } {
-  if (h.allowedHosts.length > 0 || h.allowedOrigins.length > 0) {
-    return {
-      enabled: true,
-      allowedHosts: h.allowedHosts.length ? h.allowedHosts : undefined,
-      allowedOrigins: h.allowedOrigins.length ? h.allowedOrigins : undefined,
-    };
-  }
   const wildcardBind = h.host === '0.0.0.0' || h.host === '::';
-  const explicitPublicUrl = !!process.env.AVITO_MCP_HTTP_PUBLIC_URL?.trim();
-  if (wildcardBind && !explicitPublicUrl) {
-    logger.warn(
-      { host: h.host },
-      'DNS-rebinding protection is OFF: wildcard bind with no AVITO_MCP_HTTP_PUBLIC_URL — ' +
-        'nothing to derive an allowlist from. Set AVITO_MCP_HTTP_ALLOWED_HOSTS to enable it.',
-    );
-    return { enabled: false };
-  }
   const hosts = new Set<string>();
   const origins = new Set<string>();
+  const explicitHosts = h.allowedHosts.map(normalizeAllowedHost);
+  const explicitOrigins = h.allowedOrigins.map(normalizeAllowedOrigin);
   try {
     const pub = new URL(h.publicUrl);
-    hosts.add(pub.host);
-    origins.add(pub.origin);
-  } catch {
-    /* unparseable public URL — fall through to the bind-address entries */
+    if (pub.protocol !== 'http:' && pub.protocol !== 'https:') {
+      throw new Error('public URL must use HTTP(S)');
+    }
+    if (pub.hostname !== '0.0.0.0' && pub.hostname !== '[::]' && pub.hostname !== '::') {
+      hosts.add(pub.host);
+      origins.add(pub.origin);
+    }
+  } catch (err) {
+    throw new Error(`Invalid AVITO_MCP_HTTP_PUBLIC_URL: ${(err as Error).message}`, { cause: err });
   }
   if (!wildcardBind) {
     hosts.add(hostHeader(h.host, h.port));
     origins.add(`http://${hostHeader(h.host, h.port)}`);
   }
-  // Local clients address a loopback bind either way.
-  hosts.add(`localhost:${h.port}`);
-  hosts.add(`127.0.0.1:${h.port}`);
-  origins.add(`http://localhost:${h.port}`);
-  origins.add(`http://127.0.0.1:${h.port}`);
-  return { enabled: true, allowedHosts: [...hosts], allowedOrigins: [...origins] };
+  if (isLoopbackBind(h.host)) {
+    hosts.add(`localhost:${h.port}`);
+    hosts.add(`127.0.0.1:${h.port}`);
+    origins.add(`http://localhost:${h.port}`);
+    origins.add(`http://127.0.0.1:${h.port}`);
+  }
+
+  // An explicit origin can safely supply its own Host counterpart. The reverse
+  // is not true because a Host value does not say whether its origin is HTTP or
+  // HTTPS, so explicit hosts alone still require a derivable public URL/origin.
+  if (explicitHosts.length === 0) {
+    for (const { host } of explicitOrigins) hosts.add(host);
+  }
+
+  const allowedHosts = explicitHosts.length > 0 ? [...new Set(explicitHosts)] : [...hosts];
+  const allowedOrigins =
+    explicitOrigins.length > 0
+      ? [...new Set(explicitOrigins.map(({ origin }) => origin))]
+      : [...origins];
+  if (allowedHosts.length === 0 || allowedOrigins.length === 0) {
+    throw new Error(
+      'DNS-rebinding protection cannot derive both Host and Origin allowlists. ' +
+        'Set AVITO_MCP_HTTP_PUBLIC_URL to the external URL or configure both ' +
+        'AVITO_MCP_HTTP_ALLOWED_HOSTS and AVITO_MCP_HTTP_ALLOWED_ORIGINS.',
+    );
+  }
+  return { enabled: true, allowedHosts, allowedOrigins };
+}
+
+function isLoopbackBind(host: string): boolean {
+  return host === '127.0.0.1' || host === '::1' || host === 'localhost';
+}
+
+/** Stable, non-secret identity used to bind a session to its authenticated caller. */
+function requestPrincipal(req: Parameters<RequestHandler>[0]): string {
+  const auth = (req as typeof req & { auth?: AuthInfo }).auth;
+  if (auth) {
+    return `oauth:${auth.clientId}:${auth.resource?.href ?? ''}`;
+  }
+  const header = req.headers.authorization ?? '';
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  if (match?.[1]) {
+    return `bearer:${createHash('sha256').update(match[1]).digest('base64url')}`;
+  }
+  return 'anonymous';
 }
 
 /**
@@ -137,6 +208,10 @@ export function createMcpHttpHandler(
   httpConfig: HttpConfig,
 ): { handleRequest: RequestHandler; closeAll(): Promise<void> } {
   const sessions = new Map<string, Session>();
+  const initializations = new Set<Promise<void>>();
+  let initializingSessions = 0;
+  let closing = false;
+  let shutdownPromise: Promise<void> | undefined;
 
   const rebinding = resolveRebindingProtection(httpConfig);
   if (rebinding.enabled) {
@@ -151,6 +226,7 @@ export function createMcpHttpHandler(
     const existing = sessions.get(sid);
     if (!existing) return;
     sessions.delete(sid);
+    existing.unbindLogger();
     logger.debug({ sessionId: sid, active: sessions.size }, 'mcp http session closed');
     // The transport is already closing (that's why we're here); close the server
     // so its resources/subscriptions are released. Errors here are non-fatal.
@@ -163,28 +239,42 @@ export function createMcpHttpHandler(
   // change): without this each abandoned session pins a full McpServer forever.
   // transport.close() fires onclose → dropSession, releasing both halves.
   const idleMs = httpConfig.sessionIdleSec * 1000;
-  const reaper = setInterval(() => {
-    const cutoff = Date.now() - idleMs;
-    for (const [sid, session] of sessions) {
-      if (session.lastSeenAt < cutoff) {
-        logger.info({ sessionId: sid, idleSec: httpConfig.sessionIdleSec }, 'reaping idle mcp http session');
-        void session.transport.close().catch(() => dropSession(sid));
+  const reaper = setInterval(
+    () => {
+      const cutoff = Date.now() - idleMs;
+      for (const [sid, session] of sessions) {
+        if (session.activeRequests === 0 && session.lastSeenAt < cutoff) {
+          logger.info(
+            { sessionId: sid, idleSec: httpConfig.sessionIdleSec },
+            'reaping idle mcp http session',
+          );
+          void session.transport.close().catch(() => dropSession(sid));
+        }
       }
-    }
-  }, 60_000);
+    },
+    Math.min(60_000, Math.max(1_000, idleMs)),
+  );
   reaper.unref();
 
   async function createSession(
     req: Parameters<RequestHandler>[0],
     res: Parameters<RequestHandler>[1],
   ): Promise<void> {
+    const principal = requestPrincipal(req);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       enableDnsRebindingProtection: rebinding.enabled,
       allowedHosts: rebinding.allowedHosts,
       allowedOrigins: rebinding.allowedOrigins,
       onsessioninitialized: (sid) => {
-        sessions.set(sid, { server, transport, lastSeenAt: Date.now() });
+        sessions.set(sid, {
+          server,
+          transport,
+          lastSeenAt: Date.now(),
+          activeRequests: 1,
+          principal,
+          unbindLogger: () => undefined,
+        });
         logger.debug({ sessionId: sid, active: sessions.size }, 'mcp http session initialized');
       },
       onsessionclosed: (sid) => {
@@ -200,8 +290,33 @@ export function createMcpHttpHandler(
     };
 
     const server = buildMcpServer(baseCtx);
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
+    const unbindLogger = bindMcpLogger(server, { background: false });
+    try {
+      await runWithMcpLogger(server, async () => {
+        await server.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+      });
+      // A malformed initialize can be answered without creating a session. Do
+      // not leave its connected server/transport resident.
+      const sessionId = transport.sessionId;
+      if (!sessionId) {
+        unbindLogger();
+        await Promise.allSettled([transport.close(), server.close()]);
+      } else {
+        const session = sessions.get(sessionId);
+        if (session) {
+          session.unbindLogger = unbindLogger;
+          session.activeRequests = Math.max(0, session.activeRequests - 1);
+          session.lastSeenAt = Date.now();
+        } else {
+          unbindLogger();
+        }
+      }
+    } catch (err) {
+      unbindLogger();
+      await Promise.allSettled([transport.close(), server.close()]);
+      throw err;
+    }
   }
 
   const handleRequest: RequestHandler = (req, res, next) => {
@@ -217,15 +332,37 @@ export function createMcpHttpHandler(
             unknownSessionError(res);
             return;
           }
+          if (session.principal !== requestPrincipal(req)) {
+            logger.warn({ sessionId: sid }, 'mcp http session principal mismatch');
+            // Use the same answer as an unknown ID so a foreign principal cannot
+            // use the endpoint as a session-existence oracle.
+            unknownSessionError(res);
+            return;
+          }
           session.lastSeenAt = Date.now();
-          await session.transport.handleRequest(req, res, req.body);
+          session.activeRequests += 1;
+          try {
+            await runWithMcpLogger(session.server, () =>
+              session.transport.handleRequest(req, res, req.body),
+            );
+          } finally {
+            session.activeRequests = Math.max(0, session.activeRequests - 1);
+            session.lastSeenAt = Date.now();
+          }
           return;
         }
 
         // No session id: only an `initialize` POST may open one.
         if (req.method === 'POST' && isInitializeRequest(req.body)) {
-          if (sessions.size >= httpConfig.maxSessions) {
-            logger.warn({ active: sessions.size, max: httpConfig.maxSessions }, 'mcp http session limit reached');
+          if (closing || sessions.size + initializingSessions >= httpConfig.maxSessions) {
+            logger.warn(
+              {
+                active: sessions.size,
+                initializing: initializingSessions,
+                max: httpConfig.maxSessions,
+              },
+              'mcp http session limit reached',
+            );
             res.status(503).json({
               jsonrpc: '2.0',
               error: { code: -32000, message: 'Too many concurrent sessions, try again later' },
@@ -233,7 +370,17 @@ export function createMcpHttpHandler(
             });
             return;
           }
-          await createSession(req, res);
+          // Reserve synchronously, before createSession reaches its first await.
+          // Without this, concurrent initialize calls all observe the same size.
+          initializingSessions += 1;
+          const initialization = createSession(req, res);
+          initializations.add(initialization);
+          try {
+            await initialization;
+          } finally {
+            initializations.delete(initialization);
+            initializingSessions -= 1;
+          }
           return;
         }
 
@@ -256,15 +403,20 @@ export function createMcpHttpHandler(
     })();
   };
 
-  async function closeAll(): Promise<void> {
-    clearInterval(reaper);
-    // Snapshot BEFORE clearing: dropSession no-ops once the map is empty, so
-    // both halves must be closed explicitly here.
-    const snapshot = [...sessions.values()];
-    sessions.clear();
-    await Promise.allSettled(
-      snapshot.flatMap((s) => [s.transport.close(), s.server.close()]),
-    );
+  function closeAll(): Promise<void> {
+    if (shutdownPromise) return shutdownPromise;
+    closing = true;
+    shutdownPromise = (async () => {
+      clearInterval(reaper);
+      await Promise.allSettled([...initializations]);
+      // Snapshot BEFORE clearing: dropSession no-ops once the map is empty, so
+      // both halves must be closed explicitly here.
+      const snapshot = [...sessions.values()];
+      sessions.clear();
+      for (const session of snapshot) session.unbindLogger();
+      await Promise.allSettled(snapshot.flatMap((s) => [s.transport.close(), s.server.close()]));
+    })();
+    return shutdownPromise;
   }
 
   return { handleRequest, closeAll };

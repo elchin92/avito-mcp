@@ -1,10 +1,7 @@
-import { logger } from '../logger.js';
 import type { Config } from '../config.js';
 import type { ToolRisk } from './tool-factory.js';
 
-export type PolicyDecision =
-  | { allowed: true }
-  | { allowed: false; reason: string };
+export type PolicyDecision = { allowed: true } | { allowed: false; reason: string };
 
 /**
  * Decides whether a tool with the given risk should be registered for the current server.
@@ -25,11 +22,7 @@ export type PolicyDecision =
  *
  * The confirmation flow is a separate layer on top of this policy, in `tool-factory.ts`.
  */
-export function evaluatePolicy(
-  toolName: string,
-  risk: ToolRisk,
-  cfg: Config,
-): PolicyDecision {
+export function evaluatePolicy(toolName: string, risk: ToolRisk, cfg: Config): PolicyDecision {
   if (risk === 'sensitive' && !cfg.exposeAuthTools) {
     return {
       allowed: false,
@@ -63,25 +56,4 @@ export function requiresConfirmation(risk: ToolRisk, cfg: Config): boolean {
   }
   // all_destructive
   return risk === 'money' || risk === 'public' || risk === 'write';
-}
-
-/**
- * Logs once at startup — the user sees which tools were hidden by the policy.
- * Takes an array of hidden names + risks and prints them compactly, grouped.
- */
-export function logHiddenTools(hidden: Array<{ name: string; risk: ToolRisk; reason: string }>): void {
-  if (hidden.length === 0) return;
-  const byReason = new Map<string, string[]>();
-  for (const h of hidden) {
-    const key = h.reason;
-    const list = byReason.get(key) ?? [];
-    list.push(h.name);
-    byReason.set(key, list);
-  }
-  for (const [reason, names] of byReason) {
-    logger.info(
-      { count: names.length, reason, sample: names.slice(0, 5) },
-      'tools hidden by policy',
-    );
-  }
 }

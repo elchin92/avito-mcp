@@ -6,30 +6,57 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [20.x, 22.x]
+        node-version: [22.x, 24.x]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
       - run: npm ci
       - run: npm run lint
-      - run: npx tsc --noEmit
+      - run: npm run typecheck
       - run: npm run typecheck:scripts
-      - run: npm run build
-      - run: npm run generate:manifest
+      - run: npm run typecheck:tests
       - run: npm test
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24.x
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:coverage
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24.x
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build:release
       - name: Verify npm tarball contents
         run: |
-          npm pack --dry-run 2>&1 | tee /tmp/pack.log
+          npm pack --json >/tmp/npm-pack.json
+          TARBALL="$(node -e "const result=require('/tmp/npm-pack.json'); process.stdout.write(result[0].filename)")"
+          tar -tf "$TARBALL" | tee /tmp/pack.log
           # Fail if any sensitive file slipped into the tarball
-          if grep -E '\.env(\s|$)|\.avito-token\.json|\.mcp\.json[^.]' /tmp/pack.log; then
+          if grep -E '(^|/)(\.env[^/]*|\.remote\.env[^/]*|\.avito-token\.json[^/]*|\.mcp\.json[^/]*|\.npmrc[^/]*|[^/]*\.jsonl(\.[^/]*)?|[^/]*\.(pem|key)(\.[^/]*)?|PROJECT_AUDIT\.md|AUDIT-[^/]*\.md)$' /tmp/pack.log \
+            | grep -vE '/\.env\.example$'; then
             echo "ERROR: sensitive file would be published to npm"
             exit 1
           fi
@@ -38,32 +65,214 @@ jobs:
             echo "ERROR: dist/manifest.json missing from tarball"
             exit 1
           fi
+          mkdir /tmp/avito-mcp-package-smoke
+          cd /tmp/avito-mcp-package-smoke
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE/$TARBALL"
+          ./node_modules/.bin/avito-mcp --version
+          ./node_modules/.bin/avito-mcp --health >/tmp/installed-health.json
+          node -e "const h=require('/tmp/installed-health.json'); if(!h.ok) process.exit(1)"
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Build and smoke-test image
+        run: |
+          docker build --tag avito-mcp:ci .
+          docker run --rm avito-mcp:ci --version
+          docker run --rm avito-mcp:ci --health >/tmp/container-health.json
+          node -e "const h=require('/tmp/container-health.json'); if(!h.ok) process.exit(1)"
+          docker run --rm --entrypoint sh avito-mcp:ci -c 'test ! -w /app/dist/server.js && test ! -w /app/node_modules'
+          container_id="$(docker run -d \
+            -e Client_id=ci-client \
+            -e Client_secret=ci-client-secret \
+            -e Profile_id=123456 \
+            -e AVITO_MCP_TRANSPORT=http \
+            -e AVITO_MCP_HTTP_HOST=0.0.0.0 \
+            -e AVITO_MCP_HTTP_PUBLIC_URL=https://mcp.example.com \
+            -e AVITO_MCP_HTTP_AUTH=bearer \
+            -e AVITO_MCP_HTTP_AUTH_TOKEN=ci-only-bearer-token-at-least-32-bytes \
+            avito-mcp:ci)"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          healthy=0
+          for _attempt in $(seq 1 30); do
+            if [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = healthy ]]; then
+              healthy=1
+              break
+            fi
+            sleep 1
+          done
+          test "$healthy" = 1
+          docker exec "$container_id" wget -q -O - http://127.0.0.1:3000/readyz | grep -q '"ok":true'
+          docker rm -f "$container_id" >/dev/null
+          container_id="$(docker run -d \
+            -e Client_id=ci-client \
+            -e Client_secret=ci-client-secret \
+            -e Profile_id=123456 \
+            -e AVITO_MCP_TRANSPORT=http \
+            -e AVITO_MCP_HTTP_HOST=::1 \
+            -e AVITO_MCP_HTTP_PUBLIC_URL=https://mcp.example.com \
+            -e AVITO_MCP_HTTP_AUTH=bearer \
+            -e AVITO_MCP_HTTP_AUTH_TOKEN=ci-only-bearer-token-at-least-32-bytes \
+            avito-mcp:ci)"
+          healthy=0
+          for _attempt in $(seq 1 30); do
+            if [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = healthy ]]; then
+              healthy=1
+              break
+            fi
+            sleep 1
+          done
+          test "$healthy" = 1
+
+  deploy-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24.x
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build:release
+      - name: Run the systemd installer, restart, and rollback
+        run: |
+          set -Eeuo pipefail
+          bash -n deploy/install-services.sh
+          node --check deploy/render-service-env.mjs
+          sudo rm -f /usr/local/bin/caddy
+          sudo ln -sf "$(command -v node)" /usr/local/bin/node
+
+          cat >.env <<'EOF'
+          Client_id=ci-client
+          Client_secret='ci\secret"$#value'
+          Profile_id=123456
+          NPM_TOKEN=must-not-enter-service-env
+          EOF
+          cat >.remote.env <<'EOF'
+          AVITO_MCP_TRANSPORT=http
+          AVITO_MCP_HTTP_HOST=127.0.0.1
+          AVITO_MCP_HTTP_PORT=3101
+          AVITO_MCP_HTTP_PUBLIC_URL=https://mcp.example.com
+          AVITO_MCP_HTTP_AUTH=bearer
+          AVITO_MCP_HTTP_AUTH_TOKEN=ci-only-bearer-token-at-least-32-bytes
+          EOF
+
+          cleanup() {
+            sudo systemctl disable --now avito-mcp.service >/dev/null 2>&1 || true
+            rm -f .env .remote.env
+          }
+          trap cleanup EXIT
+
+          sudo env PATH="$PATH" AVITO_MCP_SOURCE_ROOT="$GITHUB_WORKSPACE" \
+            bash deploy/install-services.sh --start
+          curl --fail --silent --connect-timeout 1 --max-time 3 \
+            http://127.0.0.1:3101/readyz | grep -q '"ok":true'
+          curl --fail --silent --connect-timeout 1 --max-time 3 \
+            http://127.0.0.1:3101/healthz >/tmp/systemd-health.json
+          node -e "const p=require('./package.json');const h=require('/tmp/systemd-health.json');if(!h.ok||h.version!==p.version)process.exit(1)"
+          test "$(readlink -f /opt/avito-mcp/current)" = "/opt/avito-mcp/releases/$(node -p "require('./package.json').version")"
+          test "$(stat -c %U /opt/avito-mcp/current/dist/server.js)" = root
+          sudo -u avito-mcp test -x /opt/avito-mcp/current
+          sudo -u avito-mcp test -r /opt/avito-mcp/current/package.json
+          sudo -u avito-mcp test ! -w /opt/avito-mcp/current/dist/server.js
+          if sudo grep -q 'must-not-enter-service-env' /etc/avito-mcp/avito-mcp.env; then
+            echo 'ERROR: non-runtime secret entered the systemd environment'
+            exit 1
+          fi
+
+          expected_secret_hash="$(node -e "const{createHash}=require('node:crypto');const{readFileSync}=require('node:fs');const{parse}=require('dotenv');process.stdout.write(createHash('sha256').update(parse(readFileSync('.env')).Client_secret).digest('hex'))")"
+          actual_secret_hash="$(sudo systemd-run --quiet --wait --pipe \
+            --property=EnvironmentFile=/etc/avito-mcp/avito-mcp.env \
+            /usr/local/bin/node -e "const{createHash}=require('node:crypto');process.stdout.write(createHash('sha256').update(process.env.Client_secret).digest('hex'))")"
+          test "$actual_secret_hash" = "$expected_secret_hash"
+
+          sudo systemctl restart avito-mcp.service
+          curl --retry 10 --retry-delay 1 --retry-connrefused --fail --silent \
+            --connect-timeout 1 --max-time 3 http://127.0.0.1:3101/readyz | grep -q '"ok":true'
+
+          cat >.remote.env <<'EOF'
+          AVITO_MCP_TRANSPORT=http
+          AVITO_MCP_HTTP_HOST=127.0.0.1
+          AVITO_MCP_HTTP_PORT=3102
+          AVITO_MCP_HTTP_PUBLIC_URL=https://mcp.example.com
+          AVITO_MCP_HTTP_AUTH=bearer
+          AVITO_MCP_HTTP_AUTH_TOKEN=too-short
+          EOF
+          if sudo env PATH="$PATH" AVITO_MCP_SOURCE_ROOT="$GITHUB_WORKSPACE" \
+            bash deploy/install-services.sh --start; then
+            echo 'ERROR: invalid redeploy unexpectedly succeeded'
+            exit 1
+          fi
+          curl --retry 10 --retry-delay 1 --retry-connrefused --fail --silent \
+            --connect-timeout 1 --max-time 3 http://127.0.0.1:3101/readyz | grep -q '"ok":true'
+
+      - name: Verify deployment artifacts
+        run: |
+          sudo install -d /usr/local/bin /etc/caddy
+          sudo install -m 0755 /bin/true /usr/local/bin/caddy
+          systemd-analyze verify deploy/avito-mcp.service deploy/caddy.service
+      - name: Start, probe, stop, and restart the HTTP artifact
+        env:
+          Client_id: ci-client
+          Client_secret: ci-client-secret
+          Profile_id: '123456'
+          AVITO_MCP_TRANSPORT: http
+          AVITO_MCP_HTTP_AUTH: bearer
+          AVITO_MCP_HTTP_AUTH_TOKEN: ci-only-bearer-token-at-least-32-bytes
+          AVITO_MCP_HTTP_HOST: 127.0.0.1
+          AVITO_MCP_HTTP_PORT: '3100'
+          AVITO_MCP_HTTP_PUBLIC_URL: https://127.0.0.1:3100
+          AVITO_ENV_FILE: /dev/null
+        run: |
+          set -euo pipefail
+          server_pid=''
+          stop_server() {
+            if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
+              kill -TERM "$server_pid"
+              wait "$server_pid"
+            fi
+          }
+          trap stop_server EXIT
+          for _attempt in 1 2; do
+            node dist/server.js >/tmp/avito-mcp-http.log 2>&1 &
+            server_pid=$!
+            ready=0
+            for _ in $(seq 1 30); do
+              if curl --fail --silent http://127.0.0.1:3100/readyz >/tmp/ready.json; then
+                ready=1
+                break
+              fi
+              sleep 1
+            done
+            test "$ready" = 1
+            curl --fail --silent http://127.0.0.1:3100/healthz >/tmp/health.json
+            node -e "const p=require('./package.json');const h=require('/tmp/health.json');if(!h.ok||h.version!==p.version)process.exit(1)"
+            stop_server
+            server_pid=''
+          done
 
   audit:
     runs-on: ubuntu-latest
-    # Non-blocking — supply-chain warning, not gate. Run only on push to main
-    # to avoid blocking external PRs on transient registry/dep issues.
-    if: github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 22.x
+          node-version: 24.x
           cache: 'npm'
       - run: npm ci
-      - name: npm audit (production deps)
+      - name: npm audit (all dependencies)
+        run: npm audit --audit-level=high
+      - name: npm audit (production dependencies)
         run: npm audit --omit=dev --audit-level=high
-        continue-on-error: true
 
   secret-scan:
     runs-on: ubuntu-latest
-    # Light secret scan on every push and PR — catches credentials accidentally
-    # committed to source. Uses gitleaks-action which is widely used and free.
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v3
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
