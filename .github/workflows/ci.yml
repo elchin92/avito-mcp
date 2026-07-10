@@ -155,8 +155,13 @@ jobs:
           AVITO_MCP_HTTP_HOST=127.0.0.1
           AVITO_MCP_HTTP_PORT=3101
           AVITO_MCP_HTTP_PUBLIC_URL=https://mcp.example.com
-          AVITO_MCP_HTTP_AUTH=bearer
-          AVITO_MCP_HTTP_AUTH_TOKEN=ci-only-bearer-token-at-least-32-bytes
+          AVITO_MCP_HTTP_AUTH=oauth
+          AVITO_MCP_OAUTH_OWNER_PASSWORD=ci-only-owner-password-at-least-32-bytes
+          AVITO_MCP_OAUTH_STORE_FILE=/var/lib/avito-mcp/oauth-state.json
+          AVITO_MCP_WEBHOOK_ENABLED=true
+          AVITO_MCP_WEBHOOK_SECRET=ci-webhook-secret-at-least-32-bytes
+          AVITO_MCP_WEBHOOK_PUBLIC_URL=https://mcp.example.com
+          AVITO_MCP_WEBHOOK_LOG_FILE=/var/lib/avito-mcp/webhook-events.jsonl
           EOF
 
           cleanup() {
@@ -164,6 +169,63 @@ jobs:
             rm -f .env .remote.env
           }
           trap cleanup EXIT
+
+          # Reject hostile legacy state without following or changing its targets.
+          sudo install -d -o root -g root -m 0700 /var/lib/avito-mcp
+          sudo ln -s /etc/passwd /var/lib/avito-mcp/unsafe-link
+          if sudo env PATH="$PATH" AVITO_MCP_SOURCE_ROOT="$GITHUB_WORKSPACE" \
+            bash deploy/install-services.sh --start; then
+            echo 'ERROR: state symlink unexpectedly migrated'
+            exit 1
+          fi
+          test "$(stat -c %U /etc/passwd)" = root
+          sudo rm -f /var/lib/avito-mcp/unsafe-link
+
+          sudo install -o root -g root -m 0600 /dev/null /var/tmp/avito-mcp-hardlink-target
+          sudo ln /var/tmp/avito-mcp-hardlink-target /var/lib/avito-mcp/unsafe-hardlink
+          if sudo env PATH="$PATH" AVITO_MCP_SOURCE_ROOT="$GITHUB_WORKSPACE" \
+            bash deploy/install-services.sh --start; then
+            echo 'ERROR: state hardlink unexpectedly migrated'
+            exit 1
+          fi
+          test "$(stat -c %U /var/tmp/avito-mcp-hardlink-target)" = root
+          sudo rm -f /var/lib/avito-mcp/unsafe-hardlink /var/tmp/avito-mcp-hardlink-target
+
+          # Reproduce the production root-to-service-user ownership migration.
+          sudo install -o root -g root -m 0600 /dev/null \
+            /var/lib/avito-mcp/webhook-events.jsonl
+          printf '{"legacy":true}\n' | sudo tee \
+            /var/lib/avito-mcp/webhook-events.jsonl >/dev/null
+          legacy_state_hash="$(sudo sha256sum /var/lib/avito-mcp/webhook-events.jsonl | cut -d ' ' -f 1)"
+
+          # Run a real active legacy root unit so the installer must quiesce it,
+          # migrate its open persistent stores, and preserve rollback behavior.
+          sudo tee /etc/systemd/system/avito-mcp.service >/dev/null <<EOF
+          [Unit]
+          Description=legacy avito-mcp CI fixture
+          [Service]
+          Type=simple
+          WorkingDirectory=$GITHUB_WORKSPACE
+          EnvironmentFile=$GITHUB_WORKSPACE/.remote.env
+          Environment=AVITO_ENV_FILE=$GITHUB_WORKSPACE/.env
+          ExecStart=/usr/local/bin/node $GITHUB_WORKSPACE/dist/server.js
+          User=root
+          EOF
+          sudo systemctl daemon-reload
+          sudo systemctl start avito-mcp.service
+          curl --retry 10 --retry-delay 1 --retry-connrefused --fail --silent \
+            --connect-timeout 1 --max-time 3 http://127.0.0.1:3101/readyz | grep -q '"ok":true'
+          test "$(systemctl show avito-mcp.service --property=User --value)" = root
+
+          if sudo env PATH="$PATH" AVITO_MCP_SOURCE_ROOT="$GITHUB_WORKSPACE" \
+            AVITO_MCP_DEPLOY_HEALTH_URL=http://127.0.0.1:3199 \
+            bash deploy/install-services.sh --start; then
+            echo 'ERROR: unreachable readiness probe unexpectedly succeeded'
+            exit 1
+          fi
+          test "$(systemctl show avito-mcp.service --property=User --value)" = root
+          curl --retry 10 --retry-delay 1 --retry-connrefused --fail --silent \
+            --connect-timeout 1 --max-time 3 http://127.0.0.1:3101/readyz | grep -q '"ok":true'
 
           sudo env PATH="$PATH" AVITO_MCP_SOURCE_ROOT="$GITHUB_WORKSPACE" \
             bash deploy/install-services.sh --start
@@ -177,6 +239,34 @@ jobs:
           sudo -u avito-mcp test -x /opt/avito-mcp/current
           sudo -u avito-mcp test -r /opt/avito-mcp/current/package.json
           sudo -u avito-mcp test ! -w /opt/avito-mcp/current/dist/server.js
+          test "$(sudo stat -c %U:%G /var/lib/avito-mcp/webhook-events.jsonl)" = avito-mcp:avito-mcp
+          test "$(sudo stat -c %a /var/lib/avito-mcp/webhook-events.jsonl)" = 600
+          sudo -u avito-mcp test -r /var/lib/avito-mcp/webhook-events.jsonl
+          sudo -u avito-mcp test -w /var/lib/avito-mcp/webhook-events.jsonl
+          test "$(sudo sha256sum /var/lib/avito-mcp/webhook-events.jsonl | cut -d ' ' -f 1)" = "$legacy_state_hash"
+          test "$(systemctl show avito-mcp.service --property=User --value)" = avito-mcp
+
+          curl --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            --data '{"id":"ci-event","payload":{"type":"message","value":{"chat_id":"ci"}}}' \
+            http://127.0.0.1:3101/avito/webhook/ci-webhook-secret-at-least-32-bytes \
+            >/tmp/webhook-response.json
+          curl --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            -H 'Origin: https://mcp.example.com' \
+            --data '{"redirect_uris":["https://client.example/callback"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"],"scope":"avito:mcp"}' \
+            http://127.0.0.1:3101/register >/tmp/dcr-response.json
+          persisted=0
+          for _ in $(seq 1 30); do
+            if sudo test -s /var/lib/avito-mcp/oauth-state.json && \
+              [[ "$(sudo sha256sum /var/lib/avito-mcp/webhook-events.jsonl | cut -d ' ' -f 1)" != "$legacy_state_hash" ]]; then
+              persisted=1
+              break
+            fi
+            sleep 1
+          done
+          test "$persisted" = 1
+          test "$(sudo stat -c %U:%G /var/lib/avito-mcp/oauth-state.json)" = avito-mcp:avito-mcp
           if sudo grep -q 'must-not-enter-service-env' /etc/avito-mcp/avito-mcp.env; then
             echo 'ERROR: non-runtime secret entered the systemd environment'
             exit 1
@@ -192,6 +282,7 @@ jobs:
           curl --retry 10 --retry-delay 1 --retry-connrefused --fail --silent \
             --connect-timeout 1 --max-time 3 http://127.0.0.1:3101/readyz | grep -q '"ok":true'
 
+          state_hash="$(sudo sha256sum /var/lib/avito-mcp/webhook-events.jsonl | cut -d ' ' -f 1)"
           cat >.remote.env <<'EOF'
           AVITO_MCP_TRANSPORT=http
           AVITO_MCP_HTTP_HOST=127.0.0.1
@@ -207,6 +298,8 @@ jobs:
           fi
           curl --retry 10 --retry-delay 1 --retry-connrefused --fail --silent \
             --connect-timeout 1 --max-time 3 http://127.0.0.1:3101/readyz | grep -q '"ok":true'
+          test "$(sudo sha256sum /var/lib/avito-mcp/webhook-events.jsonl | cut -d ' ' -f 1)" = "$state_hash"
+          test "$(sudo stat -c %U:%G /var/lib/avito-mcp)" = avito-mcp:avito-mcp
 
       - name: Verify deployment artifacts
         run: |

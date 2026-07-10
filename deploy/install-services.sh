@@ -10,11 +10,17 @@ RELEASES_DIR=$INSTALL_ROOT/releases
 CURRENT_LINK=$INSTALL_ROOT/current
 CONFIG_DIR=/etc/avito-mcp
 SERVICE_ENV=$CONFIG_DIR/avito-mcp.env
+STATE_DIR=/var/lib/avito-mcp
 HEALTH_BASE_URL=${AVITO_MCP_DEPLOY_HEALTH_URL:-}
 START_SERVICES=0
 STAGING_DIR=
 READY_FILE=
 BACKUP_DIR=
+STATE_CREATED=0
+STATE_FROZEN=0
+STATE_ORIGINAL_UID=
+STATE_ORIGINAL_GID=
+STATE_ORIGINAL_MODE=
 TRANSACTION_ACTIVE=0
 caddy_managed=0
 
@@ -87,7 +93,123 @@ ensure_user() {
   if ! id -u "$user" >/dev/null 2>&1; then
     useradd --system --gid "$user" --home-dir "$home" --shell /usr/sbin/nologin "$user"
   fi
+}
+
+prepare_private_home() {
+  local user=$1
+  local home=$2
+  if [[ -L "$home" || ( -e "$home" && ! -d "$home" ) ]]; then
+    printf 'Unsafe service home: %s\n' "$home" >&2
+    return 1
+  fi
   install -d -o "$user" -g "$user" -m 0700 "$home"
+}
+
+validate_private_state() {
+  local user=$1
+  local state_dir=$2
+  local allow_root=$3
+  local app_uid app_gid entries state_dev path dev mode links uid gid type
+
+  app_uid=$(id -u "$user")
+  app_gid=$(id -g "$user")
+  state_dev=$(stat -c %d -- "$state_dir")
+  entries=$BACKUP_DIR/state.entries
+  find -P "$state_dir" -xdev -print0 >"$entries"
+  while IFS= read -r -d '' path; do
+    IFS=: read -r dev mode links uid gid < <(stat -c '%d:%f:%h:%u:%g' -- "$path")
+    type=$((16#$mode & 0170000))
+    if [[ "$dev" != "$state_dev" ]]; then
+      printf 'Application state has a foreign device\n' >&2
+      return 1
+    fi
+    if [[ $allow_root -eq 1 ]]; then
+      if [[ ! ( "$uid" == 0 || "$uid" == "$app_uid" ) || \
+        ! ( "$gid" == 0 || "$gid" == "$app_gid" ) ]]; then
+        printf 'Application state has a foreign owner\n' >&2
+        return 1
+      fi
+    elif [[ "$uid" != "$app_uid" || "$gid" != "$app_gid" ]]; then
+      printf 'Application state ownership migration is incomplete\n' >&2
+      return 1
+    fi
+    case "$type" in
+      16384) ;;
+      32768)
+        if [[ "$links" != 1 ]]; then
+          printf 'Application state contains a hard-linked file\n' >&2
+          return 1
+        fi
+        ;;
+      *)
+        printf 'Application state contains a symlink or special file\n' >&2
+        return 1
+        ;;
+    esac
+  done <"$entries"
+}
+
+migrate_private_state() {
+  local user=$1
+  local state_dir=$2
+  local app_uid app_gid mount_match
+
+  if [[ -L "$state_dir" || ( -e "$state_dir" && ! -d "$state_dir" ) ]]; then
+    printf 'Unsafe application state path: %s\n' "$state_dir" >&2
+    return 1
+  fi
+  if [[ ! -e "$state_dir" ]]; then
+    STATE_CREATED=1
+    install -d -o root -g root -m 0700 "$state_dir"
+  fi
+
+  # Recursive ownership must never cross an exact/nested mount or touch an
+  # inode outside the dedicated state filesystem.
+  if ! mount_match=$(awk -v root="$state_dir" \
+    '$5 == root || index($5, root "/") == 1 { print "mounted"; exit }' \
+    /proc/self/mountinfo); then
+    printf 'Unable to validate application state mounts\n' >&2
+    return 1
+  fi
+  if [[ -n "$mount_match" ]]; then
+    printf 'Application state tree contains a mount: %s\n' "$state_dir" >&2
+    return 1
+  fi
+
+  app_uid=$(id -u "$user")
+  app_gid=$(id -g "$user")
+  STATE_ORIGINAL_UID=$(stat -c %u -- "$state_dir")
+  STATE_ORIGINAL_GID=$(stat -c %g -- "$state_dir")
+  STATE_ORIGINAL_MODE=$(stat -c %a -- "$state_dir")
+  if [[ ! ( "$STATE_ORIGINAL_UID" == 0 || "$STATE_ORIGINAL_UID" == "$app_uid" ) || \
+    ! ( "$STATE_ORIGINAL_GID" == 0 || "$STATE_ORIGINAL_GID" == "$app_gid" ) ]]; then
+    printf 'Application state has a foreign owner\n' >&2
+    return 1
+  fi
+
+  # systemctl stop quiesces the service cgroup. Freezing the top directory before
+  # the recursive scan also blocks new pathname access; processes outside that
+  # cgroup with a pre-opened dirfd are outside the deployment trust boundary.
+  STATE_FROZEN=1
+  chown root:root "$state_dir"
+  chmod 0700 "$state_dir"
+  validate_private_state "$user" "$state_dir" 1
+
+  find -P "$state_dir" -xdev -mindepth 1 \
+    -exec chown --no-dereference "$app_uid:$app_gid" {} +
+  find -P "$state_dir" -xdev -mindepth 1 -type d -exec chmod 0700 {} +
+  find -P "$state_dir" -xdev -mindepth 1 -type f -exec chmod 0600 {} +
+
+  # Change the top directory last. A crash before this point leaves root as the
+  # owner, so StateDirectory= completes any partial recursive migration on boot.
+  chown "$app_uid:$app_gid" "$state_dir"
+  chmod 0700 "$state_dir"
+  validate_private_state "$user" "$state_dir" 0
+
+  # Ownership-only migration is compatible with both the legacy root unit and
+  # the hardened service user, so content is never rolled back or replaced.
+  STATE_FROZEN=0
+  STATE_CREATED=0
 }
 
 restore_file() {
@@ -104,6 +226,18 @@ rollback_release() {
   [[ $TRANSACTION_ACTIVE -eq 1 ]] || return 0
   TRANSACTION_ACTIVE=0
   set +e
+
+  # Stop the new process before restoring unit files/current release.
+  systemctl stop avito-mcp.service >/dev/null 2>&1
+  if [[ $STATE_CREATED -eq 1 ]]; then
+    rm -rf --one-file-system -- "$STATE_DIR"
+    STATE_CREATED=0
+  fi
+  if [[ $STATE_FROZEN -eq 1 && -d "$STATE_DIR" ]]; then
+    chown "$STATE_ORIGINAL_UID:$STATE_ORIGINAL_GID" "$STATE_DIR"
+    chmod "$STATE_ORIGINAL_MODE" "$STATE_DIR"
+    STATE_FROZEN=0
+  fi
 
   restore_file "$had_app_unit" "$BACKUP_DIR/avito-mcp.service" \
     /etc/systemd/system/avito-mcp.service
@@ -144,7 +278,7 @@ rollback_release() {
 
 on_error() {
   local status=$?
-  trap - ERR
+  trap - ERR HUP INT TERM
   rollback_release
   exit "$status"
 }
@@ -162,7 +296,7 @@ trap 'on_signal 129' HUP
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
-ensure_user avito-mcp /var/lib/avito-mcp
+ensure_user avito-mcp "$STATE_DIR"
 install -d -o root -g root -m 0755 "$INSTALL_ROOT" "$RELEASES_DIR"
 
 # A version is immutable once installed. Re-running the installer reuses the
@@ -233,6 +367,7 @@ install -o root -g root -m 0644 \
 if [[ -x /usr/local/bin/caddy && -f "$SOURCE_ROOT/deploy/Caddyfile" ]]; then
   caddy_managed=1
   ensure_user caddy /var/lib/caddy
+  prepare_private_home caddy /var/lib/caddy
   if [[ -d /root/.local/share/caddy && ! -e /var/lib/caddy/.local/share/caddy ]]; then
     install -d -o caddy -g caddy -m 0700 /var/lib/caddy/.local/share
     cp -a /root/.local/share/caddy /var/lib/caddy/.local/share/caddy
@@ -250,6 +385,13 @@ if [[ $caddy_managed -eq 1 ]]; then
   systemd-analyze verify /etc/systemd/system/caddy.service
   /usr/local/bin/caddy validate --config /etc/caddy/avito-mcp.Caddyfile --adapter caddyfile
 fi
+
+# Freeze the legacy writer before validating and migrating its state ownership.
+# systemctl still has the old unit definition because daemon-reload happens below.
+if [[ $app_was_active -eq 1 ]]; then
+  systemctl stop avito-mcp.service
+fi
+migrate_private_state avito-mcp "$STATE_DIR"
 systemctl daemon-reload
 
 # Switch only after config, units, and release layout pass static validation.
@@ -258,8 +400,10 @@ rm -f -- "$next_link"
 ln -s "$release_dir" "$next_link"
 mv -Tf "$next_link" "$CURRENT_LINK"
 
-if [[ ${START_SERVICES} -eq 1 ]]; then
-  systemctl enable avito-mcp.service
+start_app=$START_SERVICES
+if [[ $app_was_active -eq 1 ]]; then start_app=1; fi
+if [[ $start_app -eq 1 ]]; then
+  if [[ $START_SERVICES -eq 1 ]]; then systemctl enable avito-mcp.service; fi
   systemctl restart avito-mcp.service
 
   READY_FILE=$(mktemp)
@@ -288,12 +432,14 @@ if [[ ${START_SERVICES} -eq 1 ]]; then
     false
   fi
 
-  if [[ $caddy_managed -eq 1 ]]; then
-    systemctl enable caddy.service
+  if [[ $caddy_managed -eq 1 && ( $START_SERVICES -eq 1 || $caddy_was_active -eq 1 ) ]]; then
+    if [[ $START_SERVICES -eq 1 ]]; then systemctl enable caddy.service; fi
     systemctl restart caddy.service
   fi
 fi
 
 TRANSACTION_ACTIVE=0
+STATE_CREATED=0
+STATE_FROZEN=0
 printf 'Immutable release %s installed at %s (start=%s)\n' \
   "$version" "$release_dir" "$START_SERVICES"
