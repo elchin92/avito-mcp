@@ -165,7 +165,9 @@ async function main(): Promise<void> {
   writeFileSync(OUT_PATH, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 
   const unknownCount = byRisk.unknown.length;
-  process.stdout.write(
+  // Diagnostics belong on stderr so callers such as `npm pack --json` can keep
+  // stdout machine-readable while prepack regenerates the manifest.
+  process.stderr.write(
     `Wrote ${OUT_PATH}\n` +
       `  tools:     ${tools.length}\n` +
       `  sensitive: ${byRisk.sensitive.length}\n` +

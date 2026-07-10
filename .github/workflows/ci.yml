@@ -174,6 +174,8 @@ jobs:
           node -e "const p=require('./package.json');const h=require('/tmp/systemd-health.json');if(!h.ok||h.version!==p.version)process.exit(1)"
           test "$(readlink -f /opt/avito-mcp/current)" = "/opt/avito-mcp/releases/$(node -p "require('./package.json').version")"
           test "$(stat -c %U /opt/avito-mcp/current/dist/server.js)" = root
+          sudo -u avito-mcp test -x /opt/avito-mcp/current
+          sudo -u avito-mcp test -r /opt/avito-mcp/current/package.json
           sudo -u avito-mcp test ! -w /opt/avito-mcp/current/dist/server.js
           if sudo grep -q 'must-not-enter-service-env' /etc/avito-mcp/avito-mcp.env; then
             echo 'ERROR: non-runtime secret entered the systemd environment'

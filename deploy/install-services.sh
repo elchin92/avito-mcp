@@ -174,7 +174,9 @@ if [[ ! -d "$release_dir" ]]; then
   cp -a "$SOURCE_ROOT/dist" "$SOURCE_ROOT/docs" "$SOURCE_ROOT/swaggers" "$STAGING_DIR/"
   npm ci --prefix "$STAGING_DIR" --omit=dev --ignore-scripts --no-audit --no-fund
   chown -R root:root "$STAGING_DIR"
-  chmod -R a-w "$STAGING_DIR"
+  # npm and mktemp inherit umask 077. Grant the service account read/traverse
+  # access while keeping every release artifact root-owned and immutable.
+  chmod -R a+rX,a-w "$STAGING_DIR"
   mv "$STAGING_DIR" "$release_dir"
   STAGING_DIR=
 fi
@@ -272,6 +274,7 @@ if [[ ${START_SERVICES} -eq 1 ]]; then
   done
   if [[ $ready -ne 1 ]]; then
     printf 'Post-deploy readiness check failed\n' >&2
+    systemctl --no-pager --full status avito-mcp.service >&2 || true
     false
   fi
 

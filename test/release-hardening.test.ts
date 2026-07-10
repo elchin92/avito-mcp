@@ -50,6 +50,8 @@ describe('release and deployment hardening', () => {
     expect(installer).toContain("trap 'on_signal 143' TERM");
     expect(installer).toContain('mv -Tf "$next_link" "$CURRENT_LINK"');
     expect(installer).toContain('npm ci --prefix "$STAGING_DIR" --omit=dev');
+    expect(installer).toContain('chmod -R a+rX,a-w "$STAGING_DIR"');
+    expect(installer).not.toContain('chmod -R a-w "$STAGING_DIR"');
     expect(installer).toContain('rollback_release');
     expect(installer).not.toContain('app_was_active -eq 1 &&');
     expect(installer).not.toContain('caddy_was_active -eq 1 &&');
@@ -72,6 +74,7 @@ describe('release and deployment hardening', () => {
     expect(ci).toContain('bash deploy/install-services.sh --start');
     expect(ci).toContain('invalid redeploy unexpectedly succeeded');
     expect(ci).toContain('systemctl restart avito-mcp.service');
+    expect(ci).toContain('sudo -u avito-mcp test -x /opt/avito-mcp/current');
     expect(ci).toContain('PROJECT_AUDIT\\.md');
     expect(ci).toContain('\\.remote\\.env[^/]*');
     expect(ci).toContain('\\.mcp\\.json[^/]*');
@@ -84,6 +87,8 @@ describe('release and deployment hardening', () => {
 
     const release = read('.github/workflows/release.yml');
     expect(release).toContain('id-token: write');
+    expect(release).toContain('fetch-depth: 0');
+    expect(release).toContain('git merge-base --is-ancestor "$GITHUB_SHA" origin/main');
     expect(release).toContain('npm@11.15.0');
     expect(release).toContain('npm audit --audit-level=high');
     expect(read('package.json')).toContain('check:release-version');
