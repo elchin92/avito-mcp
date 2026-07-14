@@ -15,7 +15,7 @@
  *   - WebhookStore JSONL log: parent directory is created automatically.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
@@ -519,7 +519,7 @@ describe('Streamable HTTP session contract + app surface', () => {
     expect(await response.json()).toEqual({ ok: true });
   });
 
-  it('/readyz fails closed for incomplete credentials or unusable token state', async () => {
+  it('/readyz fails closed for incomplete credentials or unusable durable state', async () => {
     const missing = await startRig({ clientSecret: '' });
     handle = missing.handle;
     expect((await fetch(`${missing.base}/readyz`)).status).toBe(503);
@@ -534,6 +534,18 @@ describe('Streamable HTTP session contract + app surface', () => {
       expect((await fetch(`${unusable.base}/readyz`)).status).toBe(503);
     } finally {
       await fs.rm(root, { force: true });
+    }
+
+    await handle?.close();
+    handle = undefined;
+    const runtimeRoot = join(tmpdir(), `http-unusable-runtime-${randomBytes(6).toString('hex')}`);
+    await fs.writeFile(runtimeRoot, 'not a directory');
+    try {
+      const unusable = await startRig({ runtimeStateDir: join(runtimeRoot, 'runtime') });
+      handle = unusable.handle;
+      expect((await fetch(`${unusable.base}/readyz`)).status).toBe(503);
+    } finally {
+      await fs.rm(runtimeRoot, { force: true });
     }
   });
 
@@ -729,7 +741,7 @@ describe('Streamable HTTP session contract + app surface', () => {
   });
 });
 
-describe('webhook config semantics (buildWebhookConfig via env)', () => {
+describe('environment-backed config semantics', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
@@ -745,6 +757,8 @@ describe('webhook config semantics (buildWebhookConfig via env)', () => {
       'AVITO_MCP_WEBHOOK_PATH',
       'AVITO_MCP_HTTP_MAX_SESSIONS',
       'AVITO_MCP_HTTP_SESSION_IDLE_SEC',
+      'AVITO_TOKEN_FILE',
+      'AVITO_MCP_RUNTIME_STATE_DIR',
     ]) {
       vi.stubEnv(k, '');
     }
@@ -790,6 +804,20 @@ describe('webhook config semantics (buildWebhookConfig via env)', () => {
     });
     expect(custom.http.maxSessions).toBe(7);
     expect(custom.http.sessionIdleSec).toBe(60);
+  });
+
+  it('derives runtime state beside the effective AVITO_TOKEN_FILE', async () => {
+    const tokenFile = join(tmpdir(), 'custom-avito-state', 'token.json');
+    const derived = await loadConfigWith({ AVITO_TOKEN_FILE: tokenFile });
+    expect(derived.tokenFile).toBe(tokenFile);
+    expect(derived.runtimeStateDir).toBe(join(dirname(tokenFile), 'runtime'));
+
+    const explicit = join(tmpdir(), 'explicit-avito-runtime');
+    const overridden = await loadConfigWith({
+      AVITO_TOKEN_FILE: tokenFile,
+      AVITO_MCP_RUNTIME_STATE_DIR: explicit,
+    });
+    expect(overridden.runtimeStateDir).toBe(explicit);
   });
 });
 

@@ -2,9 +2,9 @@
 import { createRequire } from 'node:module';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { isIP } from 'node:net';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
-const [packageJson, baseEnv, remoteEnv, outputFile] = process.argv.slice(2);
+const [packageJson, baseEnv, remoteEnv, outputFile, runtimeStateOutput] = process.argv.slice(2);
 if (!packageJson || !baseEnv || !remoteEnv || !outputFile) {
   process.stderr.write(
     'Usage: render-service-env.mjs <release-package.json> <base.env> <remote.env> <output>\n',
@@ -64,6 +64,30 @@ for (const key of [
   }
 }
 
+// The systemd unit grants write access only below StateDirectory=avito-mcp.
+// Resolve the same runtime-state default as config.ts so the installer can
+// create it and verify access as the service user before switching releases.
+const effectiveTokenFile =
+  typeof merged.AVITO_TOKEN_FILE === 'string' && merged.AVITO_TOKEN_FILE.trim() !== ''
+    ? resolve(merged.AVITO_TOKEN_FILE)
+    : join(serviceStateDirectory, 'avito-mcp', 'token.json');
+const runtimeStateDirectory =
+  typeof merged.AVITO_MCP_RUNTIME_STATE_DIR === 'string' &&
+  merged.AVITO_MCP_RUNTIME_STATE_DIR.trim() !== ''
+    ? resolve(merged.AVITO_MCP_RUNTIME_STATE_DIR)
+    : join(dirname(effectiveTokenFile), 'runtime');
+const runtimeRel = relative(serviceStateDirectory, runtimeStateDirectory);
+if (
+  (merged.AVITO_MCP_RUNTIME_STATE_DIR && !isAbsolute(merged.AVITO_MCP_RUNTIME_STATE_DIR)) ||
+  runtimeRel === '..' ||
+  runtimeRel.startsWith(`..${sep}`) ||
+  isAbsolute(runtimeRel)
+) {
+  throw new Error(
+    `AVITO_MCP_RUNTIME_STATE_DIR must be an absolute directory at or inside ${serviceStateDirectory}`,
+  );
+}
+
 const exactKeys = new Set([
   'Client_id',
   'Client_secret',
@@ -103,5 +127,12 @@ const lines = Object.entries(merged)
   .sort(([left], [right]) => left.localeCompare(right))
   .map(([key, value]) => `${key}=${quote(value, key)}`);
 writeFileSync(outputFile, `${lines.join('\n')}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+if (runtimeStateOutput) {
+  writeFileSync(runtimeStateOutput, `${runtimeStateDirectory}\n`, {
+    encoding: 'utf8',
+    flag: 'wx',
+    mode: 0o600,
+  });
+}
 
 process.stdout.write(`http://${urlHost}:${portValue}`);

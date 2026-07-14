@@ -99,4 +99,15 @@ describe('strict environment parsing', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('AVITO_MCP_WEBHOOK_ENABLED must be one of');
   });
+
+  it('documents approval and runtime-state settings in --help', () => {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/server.ts', '--help'], {
+      cwd: resolve(import.meta.dirname, '..'),
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('AVITO_MCP_APPROVAL_MODE');
+    expect(result.stdout).toContain('AVITO_MCP_RUNTIME_STATE_DIR');
+  });
 });

@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-07-14
+
+Patch release for runtime-state placement and deployment readiness. The release gate passes **338 tests across 31 files** with **80.95% statements / 71.91% branches / 81.86% functions / 83.83% lines** coverage.
+
+### Fixed
+
+- The default durable runtime-state directory is now derived from the effective `AVITO_TOKEN_FILE`, so a custom token location keeps idempotency, pending approvals, and shared rate-limit state beside that token unless `AVITO_MCP_RUNTIME_STATE_DIR` is set explicitly.
+- `/readyz` now fails closed when the runtime-state directory cannot be created or accessed for reading, writing, and traversal.
+- The systemd installer validates `AVITO_MCP_RUNTIME_STATE_DIR`, creates it with private service ownership, and verifies access as the `avito-mcp` user before switching releases.
+- `--help` now documents `AVITO_MCP_APPROVAL_MODE` and `AVITO_MCP_RUNTIME_STATE_DIR`.
+
 ## [1.3.0] - 2026-07-14
 
 **Reliability release for autonomous Avito agents.** The destructive-operation pipeline now has durable, account-scoped coordination across stdio processes; the generated contract surface exposes a reproducible schema hash; and BBIP purchases return a verified item-level outcome instead of trusting the order-level HTTP/status alone. Existing 1.x tool names remain unchanged (148 tools). The release gate passes **335 tests across 31 files** with **80.89% statements / 71.74% branches / 81.83% functions / 83.81% lines** coverage.

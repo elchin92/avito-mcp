@@ -20,6 +20,7 @@ import type { Server as HttpServer } from 'node:http';
 import type { Config, HttpConfig } from '../config.js';
 import type { ToolContext } from '../core/tool-factory.js';
 import { hasConfiguredCredentials } from '../core/credentials.js';
+import { isRuntimeStateReady, runtimeStateDirectory } from '../core/runtime-state.js';
 import { logger } from '../logger.js';
 import { PACKAGE_NAME, VERSION } from '../version.js';
 import { createOAuthSubsystem } from './oauth/index.js';
@@ -133,8 +134,9 @@ export async function startHttpServer(
     const apiReady =
       !httpMcpEnabled ||
       (hasConfiguredCredentials(config) && (await baseCtx.client.tokenStore.isStorageReady()));
+    const runtimeReady = await isRuntimeStateReady(runtimeStateDirectory(config));
     const webhookReady = baseCtx.webhookStore?.isReady() ?? true;
-    const ready = !closing && apiReady && webhookReady && (oauthReady?.() ?? true);
+    const ready = !closing && apiReady && runtimeReady && webhookReady && (oauthReady?.() ?? true);
     res.status(ready ? 200 : 503).json({ ok: ready });
   });
 

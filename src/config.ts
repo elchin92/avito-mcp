@@ -396,13 +396,14 @@ export type Config = Omit<ParsedConfig, 'approvalMode' | 'runtimeStateDir'> & {
 };
 
 function loadUnchecked(): Config {
+  const tokenFile = process.env.AVITO_TOKEN_FILE?.trim() || defaultTokenFile();
   const raw = {
     clientId: process.env.Client_id ?? process.env.CLIENT_ID,
     clientSecret: process.env.Client_secret ?? process.env.CLIENT_SECRET,
     profileId: process.env.Profile_id ?? process.env.PROFILE_ID,
     baseUrl: process.env.AVITO_BASE_URL,
     cpaSource: process.env.AVITO_MCP_CPA_SOURCE,
-    tokenFile: process.env.AVITO_TOKEN_FILE,
+    tokenFile,
     logLevel: process.env.LOG_LEVEL,
     mode: resolveMode(),
     allowTools: parseToolList(process.env.AVITO_MCP_ALLOW_TOOLS),
@@ -453,7 +454,7 @@ function loadUnchecked(): Config {
       604_800,
     ),
     runtimeStateDir:
-      process.env.AVITO_MCP_RUNTIME_STATE_DIR?.trim() || join(dirname(defaultTokenFile()), 'runtime'),
+      process.env.AVITO_MCP_RUNTIME_STATE_DIR?.trim() || join(dirname(tokenFile), 'runtime'),
     tokenLockTimeoutMs: parsePositiveInt(
       process.env.AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS,
       30_000,
