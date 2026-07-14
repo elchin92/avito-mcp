@@ -15,6 +15,7 @@ HEALTH_BASE_URL=${AVITO_MCP_DEPLOY_HEALTH_URL:-}
 START_SERVICES=0
 STAGING_DIR=
 READY_FILE=
+RUNTIME_STATE_FILE=
 BACKUP_DIR=
 STATE_CREATED=0
 STATE_FROZEN=0
@@ -78,6 +79,9 @@ cleanup() {
   fi
   if [[ -n "$READY_FILE" ]]; then
     rm -f -- "$READY_FILE"
+  fi
+  if [[ -n "$RUNTIME_STATE_FILE" ]]; then
+    rm -f -- "$RUNTIME_STATE_FILE"
   fi
   if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
     rm -rf -- "$BACKUP_DIR"
@@ -357,8 +361,15 @@ fi
 TRANSACTION_ACTIVE=1
 install -d -o root -g root -m 0700 "$CONFIG_DIR"
 filtered_env=$BACKUP_DIR/new-avito-mcp.env
+RUNTIME_STATE_FILE=$BACKUP_DIR/runtime-state-dir
 rendered_health_url=$(node "$SOURCE_ROOT/deploy/render-service-env.mjs" \
-  "$release_dir/package.json" "$SOURCE_ROOT/.env" "$SOURCE_ROOT/.remote.env" "$filtered_env")
+  "$release_dir/package.json" "$SOURCE_ROOT/.env" "$SOURCE_ROOT/.remote.env" "$filtered_env" \
+  "$RUNTIME_STATE_FILE")
+runtime_state_dir=$(tr -d '\n' <"$RUNTIME_STATE_FILE")
+if [[ -z "$runtime_state_dir" ]]; then
+  printf 'Unable to resolve AVITO_MCP_RUNTIME_STATE_DIR\n' >&2
+  false
+fi
 if [[ -z "$HEALTH_BASE_URL" ]]; then HEALTH_BASE_URL=$rendered_health_url; fi
 install -o root -g root -m 0600 "$filtered_env" "$SERVICE_ENV"
 install -o root -g root -m 0644 \
@@ -392,6 +403,14 @@ if [[ $app_was_active -eq 1 ]]; then
   systemctl stop avito-mcp.service
 fi
 migrate_private_state avito-mcp "$STATE_DIR"
+install -d -o avito-mcp -g avito-mcp -m 0700 "$runtime_state_dir"
+if ! runuser -u avito-mcp -- test -r "$runtime_state_dir" || \
+  ! runuser -u avito-mcp -- test -w "$runtime_state_dir" || \
+  ! runuser -u avito-mcp -- test -x "$runtime_state_dir"; then
+  printf 'AVITO_MCP_RUNTIME_STATE_DIR is not accessible to avito-mcp: %s\n' \
+    "$runtime_state_dir" >&2
+  false
+fi
 systemctl daemon-reload
 
 # Switch only after config, units, and release layout pass static validation.

@@ -35,6 +35,7 @@ function printHelp(): void {
       `  AVITO_MCP_ALLOW_TOOLS   Comma-separated tool names; if set, only these register\n` +
       `  AVITO_MCP_DENY_TOOLS    Comma-separated tool names; always blocked (wins over allow)\n` +
       `  AVITO_MCP_CONFIRMATION_MODE     off | money_public (default) | all_destructive\n` +
+      `  AVITO_MCP_APPROVAL_MODE         self (default) | external\n` +
       `  AVITO_MCP_CONFIRMATION_TTL_SEC  Pending action TTL in seconds (default: 900)\n` +
       `  AVITO_MCP_CONFIRMATION_SECRET   Enables hard-confirmation (minimum 32 characters)\n` +
       `  AVITO_MCP_EXPOSE_AUTH_TOOLS     1 to expose sensitive auth_* tools (default: hidden)\n` +
@@ -44,6 +45,7 @@ function printHelp(): void {
       `  AVITO_MCP_DRY_RUN_DEFAULT       v0.7.0: default for dryRun on destructive tools\n` +
       `                                  (true|false; default: false)\n` +
       `  AVITO_MCP_IDEMPOTENCY_TTL_SEC   v0.7.0: TTL of idempotency ledger entries (default: 3600)\n` +
+      `  AVITO_MCP_RUNTIME_STATE_DIR      Shared durable state directory (default: beside AVITO_TOKEN_FILE)\n` +
       `  AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS v0.7.0: max wait for cross-process token lock (default: 30000)\n` +
       `  AVITO_SAFE_MODE         DEPRECATED: use AVITO_MCP_MODE=read_only instead\n` +
       `  LOG_LEVEL               pino log level (default: info)\n` +
@@ -155,7 +157,8 @@ async function startServer(): Promise<void> {
   // v0.7.4: credentials are optional at startup. If absent, we still register the full
   // catalogue (tools/list works) but warn loudly — any API call will fail with CONFIG_ERROR
   // until Client_id/Client_secret/Profile_id are set.
-  const credentialsConfigured = !!config.clientId && !!config.clientSecret && config.profileId !== undefined;
+  const credentialsConfigured =
+    !!config.clientId && !!config.clientSecret && config.profileId !== undefined;
 
   const transportMode = config.http.transport;
   const runStdio = transportMode === 'stdio' || transportMode === 'both';

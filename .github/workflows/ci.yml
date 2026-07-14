@@ -158,6 +158,7 @@ jobs:
           AVITO_MCP_HTTP_AUTH=oauth
           AVITO_MCP_OAUTH_OWNER_PASSWORD=ci-only-owner-password-at-least-32-bytes
           AVITO_MCP_OAUTH_STORE_FILE=/var/lib/avito-mcp/oauth-state.json
+          AVITO_MCP_RUNTIME_STATE_DIR=/var/lib/avito-mcp/runtime-state
           AVITO_MCP_WEBHOOK_ENABLED=true
           AVITO_MCP_WEBHOOK_SECRET=ci-webhook-secret-at-least-32-bytes
           AVITO_MCP_WEBHOOK_PUBLIC_URL=https://mcp.example.com
@@ -243,6 +244,10 @@ jobs:
           test "$(sudo stat -c %a /var/lib/avito-mcp/webhook-events.jsonl)" = 600
           sudo -u avito-mcp test -r /var/lib/avito-mcp/webhook-events.jsonl
           sudo -u avito-mcp test -w /var/lib/avito-mcp/webhook-events.jsonl
+          test "$(sudo stat -c %U:%G /var/lib/avito-mcp/runtime-state)" = avito-mcp:avito-mcp
+          sudo -u avito-mcp test -r /var/lib/avito-mcp/runtime-state
+          sudo -u avito-mcp test -w /var/lib/avito-mcp/runtime-state
+          sudo -u avito-mcp test -x /var/lib/avito-mcp/runtime-state
           test "$(sudo sha256sum /var/lib/avito-mcp/webhook-events.jsonl | cut -d ' ' -f 1)" = "$legacy_state_hash"
           test "$(systemctl show avito-mcp.service --property=User --value)" = avito-mcp
 

@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **New in v1.3.0** — durable account-scoped idempotency and pending approvals shared by stdio processes, a shared endpoint limiter, external approval mode, BBIP item-level terminal outcomes, generated schema hashes, and corrected spendings/shallow-stat contracts. See the [CHANGELOG](./CHANGELOG.md) for migration notes.
+> **New in v1.3.1** — runtime state now follows a custom `AVITO_TOKEN_FILE`; `/readyz` and the systemd installer verify that shared durable state is accessible. See the [CHANGELOG](./CHANGELOG.md) for details.
 
 ---
 
@@ -346,7 +346,7 @@ avito-mcp --health               # print JSON health snapshot and exit
 
 `--health` does not start the server; it is a local configuration/capability diagnostic, not a liveness probe for an already running process. The bundled Docker image checks PID 1 in stdio mode and the live `/readyz` endpoint in HTTP/webhook mode. For Kubernetes or a supervisor, probe:
 
-`/readyz` returns 200 only while the listener is open, HTTP-mode Avito credentials are complete, the token state directory is writable, the OAuth store lease is healthy, and configured webhook persistence has not failed. Its public body remains only `{ "ok": boolean }`.
+`/readyz` returns 200 only while the listener is open, HTTP-mode Avito credentials are complete, the token and runtime-state directories are writable, the OAuth store lease is healthy, and configured webhook persistence has not failed. Its public body remains only `{ "ok": boolean }`.
 
 ```yaml
 httpGet:

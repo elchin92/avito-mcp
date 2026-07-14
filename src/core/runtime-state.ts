@@ -1,10 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { constants } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import type { Config } from '../config.js';
 
-export function runtimeNamespace(config: Pick<Config, 'baseUrl' | 'clientId' | 'profileId'>): string {
+export function runtimeNamespace(
+  config: Pick<Config, 'baseUrl' | 'clientId' | 'profileId'>,
+): string {
   return createHash('sha256')
     .update('avito-mcp:runtime:v1\0')
     .update(config.baseUrl)
@@ -15,8 +18,23 @@ export function runtimeNamespace(config: Pick<Config, 'baseUrl' | 'clientId' | '
     .digest('hex');
 }
 
-export function runtimeStateDirectory(config: Pick<Config, 'runtimeStateDir' | 'tokenFile'>): string {
+export function runtimeStateDirectory(
+  config: Pick<Config, 'runtimeStateDir' | 'tokenFile'>,
+): string {
   return config.runtimeStateDir ?? join(dirname(config.tokenFile), 'runtime');
+}
+
+/** Minimal readiness check for the shared idempotency/pending/limiter directory. */
+export async function isRuntimeStateReady(directory: string): Promise<boolean> {
+  try {
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    const stat = await fs.lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+    await fs.access(directory, constants.R_OK | constants.W_OK | constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function safeStatePart(value: string): string {
@@ -26,7 +44,8 @@ export function safeStatePart(value: string): string {
 export async function readJsonFile<T>(path: string): Promise<T | undefined> {
   try {
     const stat = await fs.lstat(path);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Unsafe runtime state file: ${path}`);
+    if (!stat.isFile() || stat.isSymbolicLink())
+      throw new Error(`Unsafe runtime state file: ${path}`);
     return JSON.parse(await fs.readFile(path, 'utf8')) as T;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;

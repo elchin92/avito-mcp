@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **Новое в v1.3.0** — persistent account-scoped idempotency и pending approvals для нескольких stdio-процессов, общий endpoint limiter, external approval, item-level terminal outcome BBIP, schema hash и исправленные contracts spendings/shallow stats. Миграционные детали — в [CHANGELOG](./CHANGELOG.md).
+> **Новое в v1.3.1** — runtime state теперь следует за пользовательским `AVITO_TOKEN_FILE`; `/readyz` и systemd installer проверяют доступность общего durable state. Подробности — в [CHANGELOG](./CHANGELOG.md).
 
 ---
 
@@ -346,7 +346,7 @@ avito-mcp --health               # print JSON health snapshot and exit
 
 `--health` не запускает сервер: это локальная диагностика config/capabilities, а не liveness уже работающего процесса. Встроенный Docker HEALTHCHECK проверяет PID 1 в stdio и живой `/readyz` в HTTP/webhook режиме. Для Kubernetes/supervisor используйте:
 
-`/readyz` возвращает 200, только пока listener открыт, HTTP credentials Avito заполнены полностью, token state directory доступен для записи, lease OAuth store исправен и настроенная webhook persistence не завершалась ошибкой. Публичное тело остается только `{ "ok": boolean }`.
+`/readyz` возвращает 200, только пока listener открыт, HTTP credentials Avito заполнены полностью, token и runtime-state directories доступны для записи, lease OAuth store исправен и настроенная webhook persistence не завершалась ошибкой. Публичное тело остается только `{ "ok": boolean }`.
 
 ```yaml
 httpGet:

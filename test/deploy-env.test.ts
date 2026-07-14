@@ -17,16 +17,17 @@ async function render(base: string, remote: string) {
   const baseFile = join(cleanupRoot, 'base.env');
   const remoteFile = join(cleanupRoot, 'remote.env');
   const output = join(cleanupRoot, 'service.env');
+  const runtimeStateOutput = join(cleanupRoot, 'runtime-state-dir');
   await fs.writeFile(baseFile, base);
   await fs.writeFile(remoteFile, remote);
   const result = spawnSync(
     process.execPath,
-    [renderer, packageJson, baseFile, remoteFile, output],
+    [renderer, packageJson, baseFile, remoteFile, output, runtimeStateOutput],
     {
       encoding: 'utf8',
     },
   );
-  return { result, output };
+  return { result, output, runtimeStateOutput };
 }
 
 afterEach(async () => {
@@ -36,7 +37,7 @@ afterEach(async () => {
 
 describe('systemd deployment environment renderer', () => {
   it('parses dotenv syntax, allowlists runtime keys, and keeps remote overrides', async () => {
-    const { result, output } = await render(
+    const { result, output, runtimeStateOutput } = await render(
       'Client_id = "client id"\nClient_secret = "secret value"\nProfile_id = 123\nNPM_TOKEN=publish-canary\n',
       'AVITO_MCP_TRANSPORT = http\nAVITO_MCP_HTTP_HOST=0.0.0.0\nAVITO_MCP_HTTP_PORT=3456\nLOG_LEVEL=warn\nAVITO_TOKEN_FILE=/var/lib/avito-mcp/token.json\nAVITO_MCP_OAUTH_STORE_FILE=/var/lib/avito-mcp/oauth.json\nAVITO_MCP_WEBHOOK_LOG_FILE=/var/lib/avito-mcp/webhook.jsonl\nNPM_CONFIG_USERCONFIG=/secret/npmrc\n',
     );
@@ -56,6 +57,7 @@ describe('systemd deployment environment renderer', () => {
     });
     expect(raw).not.toContain('publish-canary');
     expect(raw).not.toContain('NPM_CONFIG_USERCONFIG');
+    expect(await fs.readFile(runtimeStateOutput, 'utf8')).toBe('/var/lib/avito-mcp/runtime\n');
     if (process.platform !== 'win32') expect((await fs.stat(output)).mode & 0o077).toBe(0);
 
     for (const [key, value] of [
@@ -75,6 +77,28 @@ describe('systemd deployment environment renderer', () => {
         `${key} must be an absolute file path inside /var/lib/avito-mcp`,
       );
     }
+  });
+
+  it('validates and resolves the configured runtime state directory', async () => {
+    const valid = await render(
+      'Client_id=id\nClient_secret=secret\nProfile_id=100\n',
+      'AVITO_MCP_RUNTIME_STATE_DIR=/var/lib/avito-mcp/shared-runtime\n',
+    );
+    expect(valid.result.status, valid.result.stderr).toBe(0);
+    expect(await fs.readFile(valid.runtimeStateOutput, 'utf8')).toBe(
+      '/var/lib/avito-mcp/shared-runtime\n',
+    );
+
+    await fs.rm(cleanupRoot!, { recursive: true, force: true });
+    cleanupRoot = undefined;
+    const invalid = await render(
+      'Client_id=id\nClient_secret=secret\nProfile_id=100\n',
+      'AVITO_MCP_RUNTIME_STATE_DIR=/tmp/outside-state\n',
+    );
+    expect(invalid.result.status).not.toBe(0);
+    expect(invalid.result.stderr).toContain(
+      'AVITO_MCP_RUNTIME_STATE_DIR must be an absolute directory at or inside /var/lib/avito-mcp',
+    );
   });
 
   it('fails closed instead of deploying without the full credential tuple', async () => {
