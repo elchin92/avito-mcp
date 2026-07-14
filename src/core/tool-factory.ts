@@ -18,8 +18,9 @@ import {
   type IdempotencyStore,
   IdempotencyConflictError,
   IdempotencyLimitError,
+  IdempotencyRecoveryRequiredError,
 } from './idempotency.js';
-import type { PendingActionStore } from './pending-actions.js';
+import { callerPrincipal, type CallerExtra, type PendingActionStore } from './pending-actions.js';
 import { evaluatePolicy, requiresConfirmation } from './policy.js';
 import type { Primitive, QueryValue } from './url.js';
 import type { WebhookStore } from './webhook-store.js';
@@ -287,9 +288,30 @@ export function defineTool<I extends ZodRawShape>(
     }
   };
 
+  const executePending = async (
+    pendingArgs: Record<string, unknown>,
+    pendingIdempotencyKey?: string,
+    pendingArgsHash?: string,
+  ): Promise<CallToolResult> => {
+    const result = await execute(pendingArgs);
+    if (pendingIdempotencyKey && pendingArgsHash && ctx.idempotencyStore) {
+      await ctx.idempotencyStore.rememberPersistent(
+        pendingIdempotencyKey,
+        spec.name,
+        pendingArgsHash,
+        result,
+      );
+    }
+    return result;
+  };
+  if (isDestructive(risk)) ctx.pendingStore.registerExecutor(spec.name, executePending);
+
   const destructive = isDestructive(risk);
 
-  const handler = async (rawArgs: Record<string, unknown>): Promise<CallToolResult> => {
+  const handler = async (
+    rawArgs: Record<string, unknown>,
+    extra?: CallerExtra,
+  ): Promise<CallToolResult> => {
     const args = rawArgs ?? {};
     const cleanArgs = destructive ? stripMeta(args) : args;
 
@@ -354,18 +376,15 @@ export function defineTool<I extends ZodRawShape>(
 
     if (requiresConfirmation(risk, ctx.config)) {
       const createPending = async (): Promise<CallToolResult> => {
-        const pending = ctx.pendingStore.create({
+        const pending = await ctx.pendingStore.createPersistent({
           toolName: spec.name,
           risk,
           summary: summarisePending(spec, cleanArgs),
           args: cleanArgs,
-          execute: async () => {
-            const r = await execute(cleanArgs);
-            if (idempotencyKey && ctx.idempotencyStore && argsHash) {
-              ctx.idempotencyStore.remember(idempotencyKey, spec.name, argsHash, r);
-            }
-            return r;
-          },
+          initiator: callerPrincipal(extra),
+          idempotencyKey,
+          argsHash,
+          execute: () => executePending(cleanArgs, idempotencyKey, argsHash),
         });
         return {
           content: [
@@ -437,7 +456,11 @@ export function defineTool<I extends ZodRawShape>(
         );
         return replay ? annotateReplay(entry.result) : entry.result;
       } catch (err) {
-        if (err instanceof IdempotencyConflictError || err instanceof IdempotencyLimitError) {
+        if (
+          err instanceof IdempotencyConflictError ||
+          err instanceof IdempotencyLimitError ||
+          err instanceof IdempotencyRecoveryRequiredError
+        ) {
           return errorToMcpContent(err);
         }
         throw err;

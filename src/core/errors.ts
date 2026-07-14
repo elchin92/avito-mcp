@@ -83,6 +83,8 @@ export type ErrorType =
   | 'INTERNAL_ERROR';
 
 export interface ErrorEnvelope {
+  /** Stable machine-readable code. `type` is retained as a 1.x compatibility alias. */
+  code?: ErrorType | string;
   type: ErrorType;
   message: string;
   retryable: boolean;
@@ -146,8 +148,13 @@ export function errorToMcpContent(err: unknown): CallToolResult {
     // v0.7.0: new structure — `error: { type, message, retryable, ... }`.
     // The old error_kind field is kept for backwards-compat: code that read
     // structuredContent.error_kind in v0.6.0 will keep working.
-    structuredContent: {
-      error: envelope,
+  structuredContent: {
+      error: {
+        ...envelope,
+        code: envelope.code ?? envelope.type,
+        http_status: envelope.httpStatus,
+        retry_after_seconds: envelope.retryAfter ?? null,
+      },
       error_kind: legacyKindFromType(envelope.type),
     },
   };

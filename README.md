@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **New in v1.2.0** — full security and contract hardening: account-bound tokens, mutation-safe retries, strict OAuth scope/resource and session ownership, operator-locked webhooks, race-safe confirmation/idempotency, descriptor-safe uploads, bounded response/state stores, all-source coverage, and generated OpenAPI contract checks for all 138 endpoint wrappers. See the [CHANGELOG](./CHANGELOG.md) for migration notes.
+> **New in v1.3.0** — durable account-scoped idempotency and pending approvals shared by stdio processes, a shared endpoint limiter, external approval mode, BBIP item-level terminal outcomes, generated schema hashes, and corrected spendings/shallow-stat contracts. See the [CHANGELOG](./CHANGELOG.md) for migration notes.
 
 ---
 
@@ -286,13 +286,13 @@ You can flip the default for the entire server: `AVITO_MCP_DRY_RUN_DEFAULT=true`
 
 ### Idempotency
 
-Every destructive tool also accepts an optional `idempotencyKey: string`. The server keeps an in-memory ledger keyed by bounded SHA-256 fingerprints of `(tool, key)` plus `hash(args)`; long keys are never retained verbatim:
+Every destructive tool also accepts an optional `idempotencyKey: string`. The server keeps a durable account-scoped ledger keyed by bounded SHA-256 fingerprints of `(tool, key)` plus `hash(args)`; long keys are never retained verbatim:
 
 - First call with a key: executes, caches the result.
 - Repeat call with the same key + identical args within TTL: returns the cached result, marked `structuredContent.idempotent_replay: true`. No second HTTP call.
 - Repeat call with the same key + different args: returns a structured `IdempotencyConflictError` (the dedupe contract was violated).
 
-This is the simplest reliable defence against duplicate sends after retries, crashes, or race conditions between concurrent agents. TTL via `AVITO_MCP_IDEMPOTENCY_TTL_SEC` (default 1 hour).
+The reservation is written before the upstream mutation. A completed result replays after restart and across stdio processes; an abandoned reservation fails closed for remote reconciliation instead of repeating a possibly charged action. TTL via `AVITO_MCP_IDEMPOTENCY_TTL_SEC` (default 1 hour), storage via `AVITO_MCP_RUNTIME_STATE_DIR`.
 
 ### Structured error taxonomy
 
@@ -792,7 +792,7 @@ Also out of scope: the `authorization_code` OAuth flow against Avito itself (no 
 - **Three-layer safety model** (every layer opt-in via env vars; the defaults keep trivial reads frictionless but harden everything destructive):
   - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — registration-time gate. Hidden tools never appear in `tools/list`. `read_only` exposes 80 tools, `guarded` exposes 120, and `full_access` exposes 145 ordinary tools (plus the 3 explicitly opt-in sensitive tools).
   - **`AVITO_MCP_ALLOW_TOOLS` / `AVITO_MCP_DENY_TOOLS`** — per-tool gating. Deny wins over allow.
-  - **`AVITO_MCP_CONFIRMATION_MODE`** (`off` / `money_public` (default) / `all_destructive`) — runtime gate. Destructive tools return `{requires_confirmation: true, confirmation_id: ...}`; the agent must call `meta_confirm_action` to execute. Pending state is in-memory, TTL'd (default 15 min), one-shot. `AVITO_MCP_CONFIRMATION_SECRET` upgrades this to **hard confirmation** — only a human who knows the secret can approve. Hard-confirm calls are limited to 20 per minute per authenticated principal; five wrong or missing secrets delete that pending action.
+  - **`AVITO_MCP_CONFIRMATION_MODE`** (`off` / `money_public` (default) / `all_destructive`) — runtime gate. Destructive tools return `{requires_confirmation: true, confirmation_id: ...}`; pending state is durable, account-scoped, TTL'd (default 15 min), and one-shot. `AVITO_MCP_CONFIRMATION_SECRET` enables hard confirmation; `AVITO_MCP_APPROVAL_MODE=external` additionally requires that secret-provider identity to differ from the initiator.
   - **`AVITO_MCP_EXPOSE_AUTH_TOOLS`** (default: `0`) — `auth_*` tools return OAuth tokens; classed as `sensitive` and hidden by default even in `full_access`.
   - **`AVITO_MCP_ALLOWED_UPLOAD_DIRS`** — `messenger_upload_images` reads files from disk; without an explicit directory allowlist it doesn't register at all. It opens and validates the same file descriptor, rejects parent/final symlink races, enforces file-count and aggregate-size limits, checks jpg/jpeg/png/webp magic bytes, and redacts local paths from errors.
 - Every tool is tagged with one of five risks (`sensitive: 3` / `read: 80` / `write: 40` / `money: 9` / `public: 16`), exposed as MCP `ToolAnnotations` and `_meta.risk`, and listed in [`dist/manifest.json`](./dist/manifest.json). The default `money_public` confirmation mode covers all externally visible, paid, and irreversible public actions, including webhook registration, blacklist changes, and CPA complaints.

@@ -160,7 +160,7 @@ export const register: DomainRegister = (server, ctx) => {
         )
         .optional()
         .describe(
-          'Which metrics (counters) to return: uniqViews (unique views), uniqContacts (unique contacts), uniqFavorites (unique favorites added), calls. If unspecified, all available ones are returned.',
+          'Which metrics to return: views, uniqViews, contacts, uniqContacts, favorites, uniqFavorites. Calls are not supported here; use items_post_calls_stats. If omitted, all supported counters are returned.',
         ),
       user_id: z.number().int().positive().optional().describe('ID of the owner user. Defaults to Profile_id from .env.'),
     },
@@ -224,7 +224,7 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Profile spendings',
     risk: 'read',
     description:
-      'Returns a REPORT of the profile\'s spendings over a period by service type (post_account_spendings) — how much was spent on vas/cpa/tariff, etc. ' +
+      'Returns a REPORT of the profile\'s spendings over a period by Avito spending category: all, promotion, presence, commission, or rest. ' +
       'Read-only, spends no money (only shows already incurred spending). Period dateFrom..dateTo (YYYY-MM-DD). ' +
       'Note: grouping here is a STRING "day"|"week"|"month" (NOT an object, unlike items_post_item_analytics). Data depth no more than 270 days, no more than 1 request per minute. Required: dateFrom, dateTo, spendingTypes, grouping.',
     method: 'POST',
@@ -234,9 +234,9 @@ export const register: DomainRegister = (server, ctx) => {
       dateFrom: z.string().describe('Start of the period, inclusive (YYYY-MM-DD); no more than 270 days back.'),
       dateTo: z.string().describe('End of the period, inclusive (YYYY-MM-DD).'),
       spendingTypes: z
-        .array(z.string())
+        .array(z.enum(['all', 'promotion', 'presence', 'commission', 'rest']))
         .min(1)
-        .describe('Spending types for the report (at least 1): vas, perf_vas, lf, cv, tariff, subscription, cpa, bundle.'),
+        .describe('Spending categories from the Avito contract (at least 1): all, promotion, presence, commission, rest.'),
       grouping: z
         .enum(['day', 'week', 'month'])
         .describe('Group spendings by period — a string (required): day (by day), week (by week), month (by month).'),

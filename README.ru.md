@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **Новое в v1.2.0** — полный security- и contract-hardening: token cache привязан к аккаунту, mutation-safe retry, строгие OAuth scope/resource и ownership сессий, webhook только на URL оператора, race-safe confirmation/idempotency, descriptor-safe upload, ограниченные response/state stores, coverage всего `src` и OpenAPI contract check всех 138 endpoint wrappers. Миграционные детали — в [CHANGELOG](./CHANGELOG.md).
+> **Новое в v1.3.0** — persistent account-scoped idempotency и pending approvals для нескольких stdio-процессов, общий endpoint limiter, external approval, item-level terminal outcome BBIP, schema hash и исправленные contracts spendings/shallow stats. Миграционные детали — в [CHANGELOG](./CHANGELOG.md).
 
 ---
 
@@ -286,13 +286,13 @@ Opt-in примитивы, чтобы пакет безопасно жил в **
 
 ### Idempotency
 
-Каждый destructive tool принимает опциональный `idempotencyKey: string`. Сервер хранит in-memory ledger по bounded SHA-256 fingerprint от `(tool, key)` и `hash(args)`; длинные ключи не сохраняются дословно:
+Каждый destructive tool принимает опциональный `idempotencyKey: string`. Сервер хранит persistent account-scoped ledger по bounded SHA-256 fingerprint от `(tool, key)` и `hash(args)`; длинные ключи не сохраняются дословно:
 
 - Первый вызов: исполнение, кеш результата.
 - Повтор с тем же ключом и теми же args в течение TTL: возвращается кеш с пометкой `structuredContent.idempotent_replay: true`. Второй HTTP-вызов НЕ делается.
 - Повтор с тем же ключом и ДРУГИМИ args: structured-ошибка `IdempotencyConflictError` (нарушен контракт дедупа).
 
-Простейшая надёжная защита от дублей при retries, crashes, race conditions между параллельными агентами. TTL — `AVITO_MCP_IDEMPOTENCY_TTL_SEC` (default 1 час).
+Reservation записывается до upstream mutation. Завершённый результат replay-ится после restart и между stdio-процессами; брошенная reservation fail-closed требует remote reconciliation и не повторяет потенциальное списание. TTL — `AVITO_MCP_IDEMPOTENCY_TTL_SEC`, storage — `AVITO_MCP_RUNTIME_STATE_DIR`.
 
 ### Структурированная таксономия ошибок
 
@@ -792,7 +792,7 @@ Settings → MCP Servers → Add. Поля UI: name `avito`, command `npx`, args
 - **Три слоя безопасности** (каждый opt-in через env vars; defaults не мешают тривиальным чтениям, но харднят всё destructive):
   - **`AVITO_MCP_MODE`** (`read_only` / `guarded` / `full_access`) — фильтр на регистрации. Скрытые tools не появляются в `tools/list`. `read_only` отдаёт 80 tools, `guarded` — 120, `full_access` — 145 обычных tools (плюс 3 sensitive только по явному opt-in).
   - **`AVITO_MCP_ALLOW_TOOLS` / `AVITO_MCP_DENY_TOOLS`** — per-tool фильтр. Deny всегда побеждает allow.
-  - **`AVITO_MCP_CONFIRMATION_MODE`** (`off` / `money_public` (default) / `all_destructive`) — runtime gate. Destructive tools возвращают `{requires_confirmation: true, confirmation_id: ...}`; агент должен вызвать `meta_confirm_action` чтобы выполнить. Pending хранится in-memory, с TTL (default 15 мин), одноразовый. `AVITO_MCP_CONFIRMATION_SECRET` апгрейдит это до **hard confirmation** — подтвердить может только человек, знающий секрет. Hard-confirm ограничен 20 вызовами в минуту на аутентифицированного principal; пять неверных или отсутствующих секретов удаляют конкретный pending action.
+  - **`AVITO_MCP_CONFIRMATION_MODE`** (`off` / `money_public` (default) / `all_destructive`) — runtime gate. Pending state persistent, account-scoped, с TTL (default 15 мин) и one-shot. `AVITO_MCP_CONFIRMATION_SECRET` включает hard confirmation; `AVITO_MCP_APPROVAL_MODE=external` дополнительно отделяет secret-provider identity от инициатора.
   - **`AVITO_MCP_EXPOSE_AUTH_TOOLS`** (default: `0`) — `auth_*` tools возвращают OAuth токены; помечены как `sensitive` и скрыты по default даже в `full_access`.
   - **`AVITO_MCP_ALLOWED_UPLOAD_DIRS`** — `messenger_upload_images` читает файлы с диска; без явного списка директорий tool не регистрируется. Открывается и проверяется один descriptor, parent/final symlink race отклоняется, действуют лимиты количества и общего размера, magic-byte check jpg/jpeg/png/webp, локальные пути редактируются в ошибках.
 - Каждый tool помечен одной из пяти категорий риска (`sensitive: 3` / `read: 80` / `write: 40` / `money: 9` / `public: 16`), отдаётся клиенту как MCP `ToolAnnotations` и `_meta.risk`, плюс перечислен в [`dist/manifest.json`](./dist/manifest.json). Default `money_public` confirmation покрывает все внешне видимые, платные и необратимые public actions, включая webhook registration, blacklist и CPA complaints.

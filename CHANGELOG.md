@@ -3,6 +3,32 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-07-14
+
+**Reliability release for autonomous Avito agents.** The destructive-operation pipeline now has durable, account-scoped coordination across stdio processes; the generated contract surface exposes a reproducible schema hash; and BBIP purchases return a verified item-level outcome instead of trusting the order-level HTTP/status alone. Existing 1.x tool names remain unchanged (148 tools). The release gate passes **335 tests across 31 files** with **80.89% statements / 71.74% branches / 81.83% functions / 83.81% lines** coverage.
+
+### Reliability and safety
+
+- **Durable idempotency reservations.** Destructive calls reserve `(API origin + client id + profile id + tool + idempotency key)` in private runtime state before the upstream call. Completed results replay after process restart and in another stdio process. A process death between reservation and result leaves a fail-closed recovery record, preventing an automatic duplicate charge.
+- **Persistent pending approvals.** Pending payloads are stored with `0600` files below an account-isolated `0700` namespace and can be listed, cancelled, claimed once, and executed after a restart. `AVITO_MCP_RUNTIME_STATE_DIR` overrides the default state location next to the token cache.
+- **External approval mode.** `AVITO_MCP_APPROVAL_MODE=external` requires a strong `AVITO_MCP_CONFIRMATION_SECRET`; the secret-provider approval identity is distinct from the initiating MCP principal. Existing `self` mode remains the default for compatibility.
+- **Cross-process endpoint limiter.** Avito `X-RateLimit-*` observations and local request reservations are shared by account/credential namespace and method/path. `meta_get_rate_limits` reads the shared view. Existing bounded 429/5xx backoff and `Retry-After` handling remain in place.
+- **Reusable backend topology.** The existing Streamable HTTP `http`/`both` transport is documented and reported by `meta_capabilities` as the long-lived shared backend: sessions reuse one Avito client, token store, limiter and state stores, with bounded sessions and idle cleanup. stdio remains the default.
+
+### Contracts and results
+
+- Fixed `items_post_account_spendings.spendingTypes` to the bundled Avito contract: `all`, `promotion`, `presence`, `commission`, `rest`; prompts now use the same values.
+- Removed the false `calls` claim from `items_post_item_stats_shallow`; supported fields are exactly `views`, `uniqViews`, `contacts`, `uniqContacts`, `favorites`, `uniqFavorites`, with calls delegated to `items_post_calls_stats`.
+- BBIP creation now polls the remote order and normalizes every item into `success`, `partial`, `failed`, `pending`, or `unknown`. Accepted/failed item ids and confirmed kopeck cost are separate; conflicting services expose `PROMOTION_CONFLICT`.
+- Generated manifest schema revision 2 includes every tool input schema plus a SHA-256 `schema_hash`. `meta_capabilities` now returns that hash, account fingerprint, active availability/risk metadata, approval/storage features, and explicit BBIP/wallet money units.
+- Structured errors add stable `code`, `http_status`, and `retry_after_seconds` fields while retaining the 1.x `type`, `httpStatus`, and `retryAfter` aliases.
+
+### Compatibility and upgrade
+
+- No tools were added, removed, or renamed. Existing configurations default to the previous approval behavior.
+- Runtime state is enabled by default. Operators running several credential sets must keep distinct `Client_id`/`Profile_id` values; the server derives isolated namespaces automatically. State files may contain destructive request/result data and must remain private.
+- Portfolio cursor tools, business snapshots, ID bridge, economics adapters, and a dedicated Unix-socket stdio shim remain planned for 1.4.x; they are intentionally not represented as completed in this release.
+
 ## [1.2.0] - 2026-07-10
 
 **End-to-end audit remediation release.** A multi-agent review covered the token client, destructive-operation pipeline, OAuth 2.1/HTTP transport, webhook receiver, all bundled OpenAPI contracts, tests, packaging, CI, Docker and systemd deployment. The implementation was then cross-reviewed with deterministic race reproductions. The resulting suite has **331 tests** across 30 files; whole-source coverage is **82.32% statements / 72.79% branches / 83.59% functions / 85.04% lines**. The manifest remains 148 tools, with corrected risk totals: `read:80 / write:40 / money:9 / public:16 / sensitive:3`.
