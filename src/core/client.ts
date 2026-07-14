@@ -14,6 +14,7 @@ import { TokenStore } from './token-store.js';
 import { RateLimiter, sleep } from './rate-limiter.js';
 import { buildUrl, type Primitive, type QueryValue } from './url.js';
 import { hasConfiguredCredentials } from './credentials.js';
+import { runtimeNamespace, runtimeStateDirectory } from './runtime-state.js';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 export type BodyContentType =
@@ -83,7 +84,7 @@ export const DEFAULT_RETRY: RetryConfig = {
 };
 
 export class AvitoClient {
-  readonly rateLimiter = new RateLimiter();
+  readonly rateLimiter: RateLimiter;
   readonly tokenStore: TokenStore;
   private readonly retry: RetryConfig;
 
@@ -91,6 +92,11 @@ export class AvitoClient {
     private readonly config: Config,
     opts: { retry?: Partial<RetryConfig> } = {},
   ) {
+    this.rateLimiter = new RateLimiter({
+      stateDir: runtimeStateDirectory(config),
+      namespace: runtimeNamespace(config),
+      lockTimeoutMs: config.tokenLockTimeoutMs,
+    });
     this.tokenStore = new TokenStore(
       config.tokenFile,
       () => this.fetchTokenViaClientCredentials(),
@@ -107,12 +113,13 @@ export class AvitoClient {
   async request<T = unknown>(opts: RequestOptions): Promise<RequestResponse<T>> {
     const url = buildUrl(this.config.baseUrl, opts.path, opts.pathParams, opts.query);
     const domain = opts.domain ?? extractDomain(opts.path);
+    const rateKey = `${domain}:${opts.method}:${opts.path}`;
     const reqInfo: RequestInfo = { method: opts.method, url, domain };
     const deadline = Date.now() + (opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
-    await this.awaitBeforeDeadline(this.rateLimiter.waitIfNeeded(domain), deadline, reqInfo);
+    await this.awaitBeforeDeadline(this.rateLimiter.waitIfNeeded(rateKey), deadline, reqInfo);
 
-    return this.doRequest<T>(opts, url, reqInfo, deadline);
+    return this.doRequest<T>(opts, url, reqInfo, deadline, rateKey);
   }
 
   private async doRequest<T>(
@@ -120,6 +127,7 @@ export class AvitoClient {
     url: string,
     reqInfo: RequestInfo,
     deadline: number,
+    rateKey: string,
   ): Promise<RequestResponse<T>> {
     let allowRefresh = true;
     let retries429 = 0;
@@ -144,7 +152,7 @@ export class AvitoClient {
             ? await fetchGetWithBody(url, requestInit, opts.allowGetBody === true)
             : await fetch(url, requestInit);
 
-        this.rateLimiter.observe(reqInfo.domain ?? 'default', resp.headers);
+        this.rateLimiter.observe(rateKey, resp.headers, reqInfo.domain ?? 'default');
 
         if (resp.status === 401 && allowRefresh && opts.auth !== false) {
           await discardResponse(resp);

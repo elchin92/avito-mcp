@@ -16,7 +16,11 @@
  * We document this as an extension point.
  */
 import { createHash } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { withFileLock } from './file-lock.js';
+import { readJsonFile, safeStatePart, writeJsonAtomic } from './runtime-state.js';
 
 export interface IdempotencyEntry {
   key: string;
@@ -30,6 +34,24 @@ export interface IdempotencyEntry {
 interface IdempotencyReservation {
   argsHash: string;
   promise: Promise<IdempotencyEntry>;
+}
+
+interface PersistentRecord {
+  version: 1;
+  state: 'in_flight' | 'completed';
+  key: string;
+  toolName: string;
+  argsHash: string;
+  createdAt: number;
+  expiresAt: number;
+  ownerPid?: number;
+  result?: CallToolResult;
+}
+
+export interface IdempotencyStoreOptions {
+  stateDir?: string;
+  namespace?: string;
+  lockTimeoutMs?: number;
 }
 
 export interface IdempotencyRetentionOptions {
@@ -58,6 +80,16 @@ export class IdempotencyLimitError extends Error {
   }
 }
 
+export class IdempotencyRecoveryRequiredError extends Error {
+  constructor(key: string, toolName: string) {
+    super(
+      `Idempotency key '${storedIdempotencyKey(key)}' for '${toolName}' has an unfinished durable reservation. ` +
+        'The previous process may have received an upstream result before it stopped. Refusing to repeat the action; reconcile the remote operation first.',
+    );
+    this.name = 'IdempotencyRecoveryRequiredError';
+  }
+}
+
 export class IdempotencyStore {
   private entries = new Map<string, IdempotencyEntry>();
   private reservations = new Map<string, IdempotencyReservation>();
@@ -69,10 +101,32 @@ export class IdempotencyStore {
   constructor(
     private readonly ttlMs: number,
     private readonly maxEntries: number = 10_000,
+    private readonly options: IdempotencyStoreOptions = {},
   ) {
     if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) {
       throw new RangeError('IdempotencyStore maxEntries must be a positive safe integer');
     }
+  }
+
+  async rememberPersistent(
+    key: string,
+    toolName: string,
+    argsHash: string,
+    result: CallToolResult,
+    options: IdempotencyRetentionOptions = {},
+  ): Promise<IdempotencyEntry> {
+    const entry = this.remember(key, toolName, argsHash, result, options);
+    const path = this.persistentPath(toolName, key);
+    if (path) {
+      await withFileLock(
+        path,
+        async () => {
+          await writeJsonAtomic(path, this.toPersistent(entry));
+        },
+        { timeoutMs: this.options.lockTimeoutMs ?? 30_000 },
+      );
+    }
+    return entry;
   }
 
   /**
@@ -134,6 +188,53 @@ export class IdempotencyStore {
     execute: () => Promise<CallToolResult>,
     options: IdempotencyRetentionOptions = {},
   ): Promise<{ entry: IdempotencyEntry; replay: boolean }> {
+    const persistentPath = this.persistentPath(toolName, key);
+    if (persistentPath) {
+      return withFileLock(
+        persistentPath,
+        async () => {
+          const record = await readJsonFile<PersistentRecord>(persistentPath);
+          const now = Date.now();
+          if (record && record.argsHash !== argsHash) {
+            throw new IdempotencyConflictError(key, toolName);
+          }
+          if (record?.state === 'completed' && record.result && record.expiresAt >= now) {
+            const entry = this.fromPersistent(record);
+            this.entries.set(this.composeKey(toolName, key), entry);
+            return { entry, replay: true };
+          }
+          if (record?.state === 'in_flight') {
+            throw new IdempotencyRecoveryRequiredError(key, toolName);
+          }
+          if (record) await fs.rm(persistentPath, { force: true });
+
+          const reservation: PersistentRecord = {
+            version: 1,
+            state: 'in_flight',
+            key: storedIdempotencyKey(key),
+            toolName,
+            argsHash,
+            createdAt: now,
+            expiresAt: now + this.ttlMs,
+            ownerPid: process.pid,
+          };
+          await writeJsonAtomic(persistentPath, reservation);
+          try {
+            const result = await execute();
+            const entry = this.remember(key, toolName, argsHash, result, options);
+            await writeJsonAtomic(persistentPath, this.toPersistent(entry));
+            return { entry, replay: false };
+          } catch (error) {
+            // A caught application failure means no usable result was produced. A hard
+            // process stop never reaches this branch, leaving the reservation fail-closed.
+            await fs.rm(persistentPath, { force: true });
+            throw error;
+          }
+        },
+        { timeoutMs: this.options.lockTimeoutMs ?? 30_000 },
+      );
+    }
+
     const composed = this.composeKey(toolName, key);
     this.cleanupExpired();
 
@@ -195,6 +296,32 @@ export class IdempotencyStore {
 
   private composeKey(toolName: string, key: string): string {
     return `${toolName}::${fingerprintIdempotencyKey(key)}`;
+  }
+
+  private persistentPath(toolName: string, key: string): string | undefined {
+    if (!this.options.stateDir || !this.options.namespace) return undefined;
+    return join(
+      this.options.stateDir,
+      this.options.namespace,
+      'idempotency',
+      safeStatePart(toolName),
+      `${fingerprintIdempotencyKey(key)}.json`,
+    );
+  }
+
+  private toPersistent(entry: IdempotencyEntry): PersistentRecord {
+    return { version: 1, state: 'completed', ...entry };
+  }
+
+  private fromPersistent(record: PersistentRecord): IdempotencyEntry {
+    return {
+      key: record.key,
+      toolName: record.toolName,
+      argsHash: record.argsHash,
+      createdAt: record.createdAt,
+      expiresAt: record.expiresAt,
+      result: record.result!,
+    };
   }
 
   private cleanupExpired(): void {

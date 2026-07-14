@@ -15,7 +15,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import { AvitoClient } from '../src/core/client.js';
 import { domains } from '../src/meta/domain-registry.js';
@@ -111,6 +111,7 @@ async function main(): Promise<void> {
     accessesLocalFiles?: boolean;
     description: string;
     annotations: unknown;
+    inputSchema: unknown;
   }> = [];
 
   for (const t of tools) {
@@ -132,6 +133,7 @@ async function main(): Promise<void> {
       environment,
       description: t.description ?? '',
       annotations: t.annotations ?? null,
+      inputSchema: t.inputSchema,
     };
     // v0.6.0: title — an optional human-readable name.
     if (typeof t.title === 'string' && t.title.length > 0) entry.title = t.title;
@@ -142,8 +144,8 @@ async function main(): Promise<void> {
   for (const arr of Object.values(byDomain)) arr.sort();
   flat.sort((a, b) => (a.name < b.name ? -1 : 1));
 
-  const manifest = {
-    schema_version: 1,
+  const manifestBase = {
+    schema_version: 2,
     name: PACKAGE_NAME,
     version: VERSION,
     tool_count: tools.length,
@@ -160,6 +162,10 @@ async function main(): Promise<void> {
     by_domain: byDomain,
     tools: flat,
   };
+  const schemaHash = createHash('sha256')
+    .update(JSON.stringify(flat.map(({ name, risk, environment, inputSchema }) => ({ name, risk, environment, inputSchema }))))
+    .digest('hex');
+  const manifest = { ...manifestBase, schema_hash: schemaHash };
 
   mkdirSync(dirname(OUT_PATH), { recursive: true });
   writeFileSync(OUT_PATH, JSON.stringify(manifest, null, 2) + '\n', 'utf8');

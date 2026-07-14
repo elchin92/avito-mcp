@@ -8,6 +8,51 @@ import { z } from 'zod';
 
 import { defineTool, type DomainRegister } from '../core/tool-factory.js';
 
+interface BbipItemStatus {
+  itemId?: number | string;
+  status?: string;
+  price?: number;
+  errorReason?: string | null;
+  [key: string]: unknown;
+}
+
+export function normalizeBbipResult(
+  data: unknown,
+  requestedItemIds?: Array<number | string>,
+): Record<string, unknown> {
+  const source = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+  const items = Array.isArray(source.items) ? (source.items as BbipItemStatus[]) : [];
+  const successful = items.filter((item) => item.status === 'processed' || item.status === 'active');
+  const failed = items.filter((item) => item.status === 'error' || item.status === 'canceled');
+  const pending = items.filter((item) => ['initialized', 'waiting', 'in_process'].includes(item.status ?? ''));
+  const normalizedItems = items.map((item) => ({
+    ...item,
+    error_code:
+      item.status === 'error' && /конфликт|conflict/i.test(item.errorReason ?? '')
+        ? 'PROMOTION_CONFLICT'
+        : item.status === 'error'
+          ? 'PROMOTION_ITEM_FAILED'
+          : null,
+  }));
+  let outcome: 'success' | 'partial' | 'failed' | 'pending' | 'unknown' = 'unknown';
+  if (pending.length > 0 || ['initialized', 'waiting', 'in_process'].includes(String(source.status ?? ''))) outcome = 'pending';
+  else if (failed.length > 0 && successful.length > 0) outcome = 'partial';
+  else if (failed.length > 0) outcome = 'failed';
+  else if (items.length > 0 && successful.length === items.length) outcome = 'success';
+  return {
+    ...source,
+    items: normalizedItems,
+    outcome,
+    requested_item_ids: requestedItemIds ?? null,
+    accepted_item_ids: successful.map((item) => item.itemId),
+    failed_item_ids: failed.map((item) => item.itemId),
+    confirmed_cost_kopecks:
+      typeof source.totalPrice === 'number'
+        ? source.totalPrice
+        : successful.reduce((sum, item) => sum + (typeof item.price === 'number' ? item.price : 0), 0),
+  };
+}
+
 // Actual Avito BBIP contract: both forecasts (BbipForecastRequestByItemV1) and create
 // (BbipOrderByItemV1) require the SAME set of itemId+duration+oldPrice+price.
 // Values come from promotion_get_bbip_suggests_by_items_v1: budgets[].{oldPrice,price}
@@ -120,6 +165,35 @@ export const register: DomainRegister = (server, ctx) => {
         ),
     },
     body: { contentType: 'application/json', fields: ['items'] },
+    customExecute: async (args, toolCtx) => {
+      const created = await toolCtx.client.request<Record<string, unknown>>({
+        method: 'PUT',
+        path: '/promotion/v1/items/services/bbip/orders/create',
+        domain: 'promotion',
+        body: { items: args.items },
+      });
+      const orderId = typeof created.data.orderId === 'string' ? created.data.orderId : undefined;
+      const requested = Array.isArray(args.items)
+        ? args.items
+            .map((item) => (item as { itemId?: number | string }).itemId)
+            .filter((id): id is number | string => id !== undefined)
+        : [];
+      if (!orderId) return { ...created, data: normalizeBbipResult(created.data, requested) };
+      let last: Record<string, unknown> = created.data;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const status = await toolCtx.client.request<Record<string, unknown>>({
+          method: 'POST',
+          path: '/promotion/v1/items/services/orders/status',
+          domain: 'promotion',
+          body: { orderId },
+        });
+        last = status.data;
+        const normalized = normalizeBbipResult(last, requested);
+        if (normalized.outcome !== 'pending') return { ...status, data: normalized };
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      return { ...created, data: normalizeBbipResult(last, requested) };
+    },
   });
 
   defineTool(server, ctx, {
@@ -205,5 +279,14 @@ export const register: DomainRegister = (server, ctx) => {
         .describe('Promotion order identifier in UUID format, obtained from promotion_create_bbip_order_for_items_v1.'),
     },
     body: { contentType: 'application/json', fields: ['orderId'] },
+    customExecute: async (args, toolCtx) => {
+      const response = await toolCtx.client.request<Record<string, unknown>>({
+        method: 'POST',
+        path: '/promotion/v1/items/services/orders/status',
+        domain: 'promotion',
+        body: { orderId: args.orderId },
+      });
+      return { ...response, data: normalizeBbipResult(response.data) };
+    },
   });
 };

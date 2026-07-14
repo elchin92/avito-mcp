@@ -105,7 +105,7 @@ This is the closest to the v0.1.x default behaviour. **Don't use this for unatte
 
 ## On the confirmation flow — what it is and isn't
 
-The confirmation flow (`AVITO_MCP_CONFIRMATION_MODE != off`) is a **server-side two-step safety guard against accidental one-shot execution**. It's also an **audit layer** — every destructive action shows up as a pending entry, and there's a paper trail.
+The confirmation flow (`AVITO_MCP_CONFIRMATION_MODE != off`) is a **server-side two-step safety guard against accidental one-shot execution**. Pending actions and idempotency results are durable and account-scoped. Set `AVITO_MCP_APPROVAL_MODE=external` together with a separate `AVITO_MCP_CONFIRMATION_SECRET` when the initiator must not self-approve.
 
 It is **not a cryptographic human-approval mechanism by itself.** An autonomous agent can theoretically:
 

@@ -119,6 +119,7 @@ async function startServer(): Promise<void> {
     { PendingActionStore },
     { IdempotencyStore },
     { WebhookStore },
+    { runtimeNamespace, runtimeStateDirectory },
     { buildMcpServer },
   ] = await Promise.all([
     import('./config.js'),
@@ -128,14 +129,24 @@ async function startServer(): Promise<void> {
     import('./core/pending-actions.js'),
     import('./core/idempotency.js'),
     import('./core/webhook-store.js'),
+    import('./core/runtime-state.js'),
     import('./build-server.js'),
   ]);
 
   // Shared singletons. They back the stdio server AND every Streamable HTTP session,
   // so the Avito client and token cache are never duplicated across sessions.
   const client = new AvitoClient(config);
-  const pendingStore = new PendingActionStore(config.confirmationTtlSec * 1000);
-  const idempotencyStore = new IdempotencyStore(config.idempotencyTtlSec * 1000);
+  const namespace = runtimeNamespace(config);
+  const pendingStore = new PendingActionStore(config.confirmationTtlSec * 1000, 1000, {
+    stateDir: runtimeStateDirectory(config),
+    namespace,
+    lockTimeoutMs: config.tokenLockTimeoutMs,
+  });
+  const idempotencyStore = new IdempotencyStore(config.idempotencyTtlSec * 1000, 10_000, {
+    stateDir: runtimeStateDirectory(config),
+    namespace,
+    lockTimeoutMs: config.tokenLockTimeoutMs,
+  });
   const webhookStore = config.webhook.enabled
     ? new WebhookStore(config.webhook.bufferSize, config.webhook.logFile)
     : undefined;

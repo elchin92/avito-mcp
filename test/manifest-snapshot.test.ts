@@ -47,7 +47,7 @@ beforeAll(() => {
 
 describe('manifest snapshot', () => {
   it('uses the deterministic manifest schema version', () => {
-    expect(manifest.schema_version).toBe(1);
+    expect(manifest.schema_version).toBe(2);
     expect(manifest).not.toHaveProperty('$schema');
     expect(manifest).not.toHaveProperty('generated_at');
   });

@@ -1,7 +1,7 @@
 import { config as loadDotenv } from 'dotenv';
 import { z } from 'zod';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const envFile = process.env.AVITO_ENV_FILE ?? resolve(process.cwd(), '.env');
 loadDotenv({ path: envFile, quiet: true });
@@ -30,6 +30,7 @@ function defaultTokenFile(): string {
 
 export type SafetyMode = 'read_only' | 'guarded' | 'full_access';
 export type ConfirmationMode = 'off' | 'money_public' | 'all_destructive';
+export type ApprovalMode = 'self' | 'external';
 
 // ───────────────────────── v0.9.0: HTTP transport + webhook ─────────────────────────
 
@@ -251,12 +252,14 @@ const ConfigSchema = z.object({
     .string()
     .min(32, 'AVITO_MCP_CONFIRMATION_SECRET must be at least 32 characters')
     .optional(),
+  approvalMode: z.enum(['self', 'external']).default('self'),
   maxBinaryMb: z.number().int().positive().default(20),
   // v0.7.0 ───────────────────────────────────────────────────
   /** Default for `dryRun` parameter on write/money/public tools. */
   dryRunDefault: z.boolean().default(false),
   /** TTL for idempotency ledger entries, seconds. */
   idempotencyTtlSec: z.number().int().positive().default(3600),
+  runtimeStateDir: z.string().min(1),
   /** Max wait for cross-process token file lock, ms. */
   tokenLockTimeoutMs: z.number().int().positive().default(30_000),
 });
@@ -382,7 +385,12 @@ function buildWebhookConfig(httpPublicUrl: string): WebhookConfig {
   };
 }
 
-export type Config = z.infer<typeof ConfigSchema> & {
+type ParsedConfig = z.infer<typeof ConfigSchema>;
+export type Config = Omit<ParsedConfig, 'approvalMode' | 'runtimeStateDir'> & {
+  /** Optional in programmatic Config fixtures; environment-loaded config always sets it. */
+  approvalMode?: ApprovalMode;
+  /** Optional in programmatic Config fixtures; environment-loaded config always sets it. */
+  runtimeStateDir?: string;
   http: HttpConfig;
   webhook: WebhookConfig;
 };
@@ -420,6 +428,12 @@ function loadUnchecked(): Config {
       86_400,
     ),
     confirmationSecret: process.env.AVITO_MCP_CONFIRMATION_SECRET,
+    approvalMode: parseChoice(
+      process.env.AVITO_MCP_APPROVAL_MODE,
+      'self',
+      'AVITO_MCP_APPROVAL_MODE',
+      ['self', 'external'] as const,
+    ),
     maxBinaryMb: parsePositiveInt(
       process.env.AVITO_MCP_MAX_BINARY_MB,
       20,
@@ -438,6 +452,8 @@ function loadUnchecked(): Config {
       'AVITO_MCP_IDEMPOTENCY_TTL_SEC',
       604_800,
     ),
+    runtimeStateDir:
+      process.env.AVITO_MCP_RUNTIME_STATE_DIR?.trim() || join(dirname(defaultTokenFile()), 'runtime'),
     tokenLockTimeoutMs: parsePositiveInt(
       process.env.AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS,
       30_000,
@@ -452,6 +468,11 @@ function loadUnchecked(): Config {
       .map((i) => `  - ${i.path.join('.')}: ${i.message}`)
       .join('\n');
     throw new EnvValidationError(issues);
+  }
+  if (parsed.data.approvalMode === 'external' && !parsed.data.confirmationSecret) {
+    throw new EnvValidationError(
+      'AVITO_MCP_APPROVAL_MODE=external requires AVITO_MCP_CONFIRMATION_SECRET (at least 32 characters)',
+    );
   }
   // HTTP + webhook config are computed in JS because several defaults depend on
   // other fields. Syntax, bounds, and applicable secret requirements fail here;

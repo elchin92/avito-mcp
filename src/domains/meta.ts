@@ -10,14 +10,16 @@
  * which optionally attempts a ping via a client_credentials refresh).
  */
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 
 import { logger } from '../logger.js';
 import { hasConfiguredCredentials } from '../core/credentials.js';
 import { evaluatePolicy, requiresConfirmation } from '../core/policy.js';
 import type { DomainRegister } from '../core/tool-factory.js';
-import { PACKAGE_NAME, VERSION } from '../version.js';
+import { PACKAGE_NAME, VERSION, readManifestMetadata } from '../version.js';
+import { callerPrincipal } from '../core/pending-actions.js';
+import { runtimeNamespace } from '../core/runtime-state.js';
 
 /**
  * Constant-time secret comparison. Equal-length buffers required by Node's
@@ -28,21 +30,6 @@ function secretsMatch(provided: string, expected: string): boolean {
   const b = Buffer.from(expected, 'utf8');
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
-}
-
-function confirmationPrincipal(extra: {
-  authInfo?: { clientId?: string };
-  sessionId?: string;
-  requestInfo?: { headers?: Record<string, string | string[] | undefined> };
-}): string {
-  if (extra.authInfo?.clientId) return `oauth:${extra.authInfo.clientId}`;
-  const raw = extra.requestInfo?.headers?.authorization;
-  const authorization = Array.isArray(raw) ? raw[0] : raw;
-  const bearer = /^Bearer\s+(.+)$/i.exec(authorization ?? '')?.[1];
-  if (bearer) {
-    return `bearer:${createHash('sha256').update(bearer).digest('base64url')}`;
-  }
-  return `session:${extra.sessionId ?? 'local-stdio'}`;
 }
 
 export const register: DomainRegister = (server, ctx) => {
@@ -61,7 +48,7 @@ export const register: DomainRegister = (server, ctx) => {
         title: 'Rate-limit status',
         description:
           'Returns the most recently observed X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset values, ' +
-          'grouped by logical API domain (core, messenger, items, etc.). ' +
+          'grouped by logical API domain (core, messenger, items, etc.) across all processes in the current account namespace. ' +
           'Useful for diagnosing "why am I being throttled" — Avito enforces a per-minute limit.',
         inputSchema: {},
         annotations: {
@@ -73,7 +60,7 @@ export const register: DomainRegister = (server, ctx) => {
         _meta: { risk: 'read', environment: 'local' },
       },
       async (): Promise<CallToolResult> => {
-        const snaps = ctx.client.rateLimiter.getStatus();
+        const snaps = await ctx.client.rateLimiter.getSharedStatus();
         if (snaps.length === 0) {
           return {
             content: [{ type: 'text', text: 'No data: no requests to Avito have been made yet.' }],
@@ -273,6 +260,7 @@ export const register: DomainRegister = (server, ctx) => {
         outputSchema: {
           name: z.string(),
           version: z.string(),
+          schemaHash: z.string().nullable(),
           mode: z.string(),
           allowToolsCount: z.number().int(),
           denyToolsCount: z.number().int(),
@@ -283,17 +271,47 @@ export const register: DomainRegister = (server, ctx) => {
             hardConfirmation: z.boolean(),
             fileUploads: z.boolean(),
             sensitiveAuthTools: z.boolean(),
+            persistentState: z.boolean(),
+            sharedRateLimiter: z.boolean(),
+            reusableHttpBroker: z.boolean(),
           }),
           confirmationMode: z.string(),
+          approvalMode: z.string(),
           dryRunDefault: z.boolean(),
           idempotencyTtlSec: z.number().int(),
+          account: z.object({ profileId: z.string().nullable(), namespace: z.string() }),
+          tools: z.array(
+            z.object({
+              name: z.string(),
+              domain: z.string(),
+              risk: z.string(),
+              environment: z.string(),
+              available: z.boolean(),
+              requiredScopes: z.array(z.string()),
+            }),
+          ),
+          moneyUnits: z.object({ default: z.string(), bbip: z.string(), wallet: z.string() }),
         },
         _meta: { risk: 'read', environment: 'local' },
       },
       async (): Promise<CallToolResult> => {
+        const manifest = readManifestMetadata();
+        const tools = manifest.tools.map((value) => {
+          const tool = value as { name?: string; domain?: string; risk?: string; environment?: string };
+          const risk = (tool.risk ?? 'write') as 'read' | 'write' | 'money' | 'public' | 'sensitive';
+          return {
+            name: tool.name ?? 'unknown',
+            domain: tool.domain ?? 'unknown',
+            risk,
+            environment: tool.environment ?? 'prod',
+            available: evaluatePolicy(tool.name ?? 'unknown', risk, ctx.config).allowed,
+            requiredScopes: [],
+          };
+        });
         const payload = {
           name: PACKAGE_NAME,
           version: VERSION,
+          schemaHash: manifest.schemaHash,
           mode: ctx.config.mode,
           allowToolsCount: ctx.config.allowTools.length,
           denyToolsCount: ctx.config.denyTools.length,
@@ -304,10 +322,21 @@ export const register: DomainRegister = (server, ctx) => {
             hardConfirmation: !!ctx.config.confirmationSecret,
             fileUploads: ctx.config.allowedUploadDirs.length > 0,
             sensitiveAuthTools: ctx.config.exposeAuthTools,
+            persistentState: true,
+            sharedRateLimiter: true,
+            reusableHttpBroker:
+              ctx.config.http.transport === 'http' || ctx.config.http.transport === 'both',
           },
           confirmationMode: ctx.config.confirmationMode,
+          approvalMode: ctx.config.approvalMode ?? 'self',
           dryRunDefault: ctx.config.dryRunDefault,
           idempotencyTtlSec: ctx.config.idempotencyTtlSec,
+          account: {
+            profileId: ctx.config.profileId === undefined ? null : String(ctx.config.profileId),
+            namespace: runtimeNamespace(ctx.config).slice(0, 16),
+          },
+          tools,
+          moneyUnits: { default: 'documented-per-field', bbip: 'kopecks', wallet: 'rubles' },
         };
         return {
           content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
@@ -399,7 +428,7 @@ export const register: DomainRegister = (server, ctx) => {
         const id = String(args.confirmation_id ?? '');
 
         if (requireSecret) {
-          const rate = ctx.pendingStore.checkConfirmationRateLimit(confirmationPrincipal(extra));
+          const rate = ctx.pendingStore.checkConfirmationRateLimit(callerPrincipal(extra));
           if (!rate.allowed) {
             logger.warn(
               { retryAfterMs: rate.retryAfterMs },
@@ -420,7 +449,7 @@ export const register: DomainRegister = (server, ctx) => {
           }
         }
 
-        const pending = ctx.pendingStore.get(id);
+        const pending = await ctx.pendingStore.getPersistent(id);
         if (!pending) {
           return {
             isError: true,
@@ -478,10 +507,29 @@ export const register: DomainRegister = (server, ctx) => {
           }
           ctx.pendingStore.resetConfirmationFailures(id);
         }
+        const confirmer = requireSecret ? 'external:secret-provider' : callerPrincipal(extra);
+        if (ctx.config.approvalMode === 'external' && confirmer === pending.initiator) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: 'Confirmation rejected: external approval requires an identity different from the action initiator.',
+              },
+            ],
+            structuredContent: {
+              error: {
+                code: 'APPROVER_MUST_DIFFER',
+                message: 'The initiator cannot approve this action in external approval mode.',
+                retryable: false,
+              },
+            },
+          };
+        }
         // Re-evaluate policy — the user may have changed the config between create and confirm.
         const decision = evaluatePolicy(pending.toolName, pending.risk, ctx.config);
         if (!decision.allowed) {
-          ctx.pendingStore.delete(id);
+          await ctx.pendingStore.deletePersistent(id);
           return {
             isError: true,
             content: [
@@ -494,7 +542,7 @@ export const register: DomainRegister = (server, ctx) => {
         }
         // Atomically claim before execution. A concurrent session that passed
         // the checks above must not execute the same pending mutation twice.
-        const claimed = ctx.pendingStore.take(id);
+        const claimed = await ctx.pendingStore.takePersistent(id);
         if (!claimed) {
           return {
             isError: true,
@@ -555,7 +603,7 @@ export const register: DomainRegister = (server, ctx) => {
       },
       async (args): Promise<CallToolResult> => {
         const id = String(args.confirmation_id ?? '');
-        const existed = ctx.pendingStore.delete(id);
+        const existed = await ctx.pendingStore.deletePersistent(id);
         return {
           content: [
             {
@@ -598,7 +646,7 @@ export const register: DomainRegister = (server, ctx) => {
         _meta: { risk: 'read', environment: 'local' },
       },
       async (): Promise<CallToolResult> => {
-        const items = ctx.pendingStore.list();
+        const items = await ctx.pendingStore.listPersistent();
         if (items.length === 0) {
           return {
             content: [{ type: 'text', text: 'No pending actions.' }],
