@@ -72,10 +72,13 @@ function makeConfig(): Config {
   };
 }
 
-async function makeRig(configure: (cfg: Config) => void = () => {}) {
+async function makeRig(
+  configure: (cfg: Config) => void = () => {},
+  persistent?: { stateDir: string; namespace: string },
+) {
   const cfg = makeConfig();
   configure(cfg);
-  const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
+  const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000, 1000, persistent);
   const webhookStore = new WebhookStore(cfg.webhook.bufferSize);
   const avito = new AvitoClient(cfg);
   const server = new McpServer(
@@ -212,6 +215,35 @@ describe('MCP resources — listing & static reads', () => {
     expect(body2.pending[0].risk).toBe('public');
     // args / execute did not leak:
     expect(body2.pending[0].args).toBeUndefined();
+  });
+
+  it('does not show an action claimed by another persistent store', async () => {
+    const stateDir = await fs.mkdtemp(join(tmpdir(), 'avito-resource-pending-'));
+    const persistent = { stateDir, namespace: 'account-a' };
+    const { client, ctx, cfg } = await makeRig(() => undefined, persistent);
+    cleanup = async () => {
+      await client.close();
+      await fs.rm(cfg.tokenFile, { force: true });
+      await fs.rm(stateDir, { recursive: true, force: true });
+    };
+    const action = await ctx.pendingStore.createPersistent({
+      toolName: 'items_update_price',
+      risk: 'public',
+      summary: 'test',
+      args: {},
+      execute: async () => ({ content: [{ type: 'text', text: 'local' }] }),
+    });
+    const claimingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000, 1000, persistent);
+    claimingStore.registerExecutor('items_update_price', async () => ({
+      content: [{ type: 'text', text: 'claimed' }],
+    }));
+
+    expect(await claimingStore.takePersistent(action.id)).toMatchObject({ id: action.id });
+    const resource = await client.readResource({ uri: PENDING_ACTIONS_URI });
+    const body = JSON.parse((resource.contents[0] as { text: string }).text);
+
+    expect(body.count).toBe(0);
+    expect(body.pending).toEqual([]);
   });
 
   it('hides pending-actions resource when meta_list_pending_actions is denied', async () => {

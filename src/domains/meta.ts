@@ -297,8 +297,14 @@ export const register: DomainRegister = (server, ctx) => {
       async (): Promise<CallToolResult> => {
         const manifest = readManifestMetadata();
         const tools = manifest.tools.map((value) => {
-          const tool = value as { name?: string; domain?: string; risk?: string; environment?: string };
-          const risk = (tool.risk ?? 'write') as 'read' | 'write' | 'money' | 'public' | 'sensitive';
+          const tool = value as {
+            name?: string;
+            domain?: string;
+            risk?: string;
+            environment?: string;
+          };
+          const risk = (tool.risk ?? 'write') as
+            'read' | 'write' | 'money' | 'public' | 'sensitive';
           return {
             name: tool.name ?? 'unknown',
             domain: tool.domain ?? 'unknown',
@@ -469,7 +475,7 @@ export const register: DomainRegister = (server, ctx) => {
           const provided =
             typeof args.confirmation_secret === 'string' ? args.confirmation_secret : '';
           if (!provided || !secretsMatch(provided, ctx.config.confirmationSecret!)) {
-            const attempt = ctx.pendingStore.recordFailedConfirmation(
+            const attempt = await ctx.pendingStore.recordFailedConfirmationPersistent(
               id,
               maxFailedConfirmationAttempts,
             );
@@ -565,11 +571,15 @@ export const register: DomainRegister = (server, ctx) => {
         );
         try {
           // claimed.execute() records the final idempotency result before it
-          // resolves. Keep the claim active until then so the original tool call
-          // cannot treat its confirmation id as stale and create a second action.
-          return await claimed.execute();
-        } finally {
+          // resolves. Remove the durable claimed marker only after that succeeds.
+          const result = await claimed.execute();
+          await ctx.pendingStore.completePersistent(id);
+          return result;
+        } catch (error) {
+          // Keep the durable marker fail-closed when result persistence is unknown,
+          // but do not pin the process-local in-flight map forever.
           ctx.pendingStore.complete(id);
+          throw error;
         }
       },
     );

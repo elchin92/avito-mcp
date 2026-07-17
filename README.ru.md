@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **Новое в v1.3.1** — runtime state теперь следует за пользовательским `AVITO_TOKEN_FILE`; `/readyz` и systemd installer проверяют доступность общего durable state. Подробности — в [CHANGELOG](./CHANGELOG.md).
+> **Новое в v1.3.2** — блокировка hard-confirmation теперь переживает рестарт и атомарно работает между MCP-процессами; подтверждение, отмена и финальная блокировка не могут одновременно забрать одно pending action. Подробности — в [CHANGELOG](./CHANGELOG.md).
 
 ---
 

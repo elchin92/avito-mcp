@@ -1,6 +1,6 @@
 {
   "name": "avito-mcp",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "mcpName": "io.github.elchin92/avito-mcp",
   "description": "Universal MCP server for the Avito API — 148 tools across 18 domains, safe-by-default with dry-run, durable idempotency, external approval, shared rate limits and structured errors. Runs over stdio or a reusable OAuth 2.1-secured HTTP backend, with a built-in Avito webhook receiver.",
   "type": "module",

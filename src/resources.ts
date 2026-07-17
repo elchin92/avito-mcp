@@ -338,7 +338,7 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
         mimeType: 'application/json',
       },
       async (uri): Promise<ReadResourceResult> => {
-        const items = ctx.pendingStore.list();
+        const items = await ctx.pendingStore.listPersistent();
         return jsonResource(uri.toString(), {
           count: items.length,
           confirmation_mode: ctx.config.confirmationMode,

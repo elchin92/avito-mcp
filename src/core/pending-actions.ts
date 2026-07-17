@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import type { ToolRisk } from './tool-factory.js';
 import { withFileLock } from './file-lock.js';
-import { readJsonFile, writeJsonAtomic } from './runtime-state.js';
+import { readJsonFile, removeFileDurable, writeJsonAtomic } from './runtime-state.js';
 
 /**
  * Executor function for a pending action. Returned within the pending action
@@ -40,17 +40,13 @@ export interface PendingActionInfo {
 }
 
 /**
- * In-memory TTL'd store of pending actions awaiting confirmation.
+ * TTL'd store of pending actions awaiting confirmation. It can be process-local
+ * or backed by locked, durable records shared across stdio processes.
  *
- * Deliberately NOT persisted to disk:
- *   - after a restart the pending entries are lost, which is better than accidentally confirming a stale action
- *   - a stdio MCP server is usually ephemeral
- *   - smaller surface for leaks
+ * Confirmation is one-time: a durable claim is published before execution and
+ * removed only after the executor and result persistence succeed. Cancellation,
+ * expiry, and hard-confirmation lockout remove unclaimed entries.
  *
- * Confirmation is one-time: after a successful confirm the entry is removed.
- * Cancel and expiry remove it too. Cleanup is lazy — on every get/list.
- */
-/**
  * Subscriber for store changes. v0.6.0 — needed for the MCP resource
  * `avito://state/pending-actions`, so that clients can subscribe via
  * resources/subscribe and receive notifications/resources/updated.
@@ -94,13 +90,21 @@ export class PendingActionStore {
   private listeners: PendingChangeListener[] = [];
   private executors = new Map<
     string,
-    (args: Record<string, unknown>, idempotencyKey?: string, argsHash?: string) => Promise<CallToolResult>
+    (
+      args: Record<string, unknown>,
+      idempotencyKey?: string,
+      argsHash?: string,
+    ) => Promise<CallToolResult>
   >();
 
   constructor(
     private readonly ttlMs: number,
     private readonly maxActions: number = 1000,
-    private readonly persistent?: { stateDir: string; namespace: string; lockTimeoutMs?: number },
+    private readonly persistent?: {
+      stateDir: string;
+      namespace: string;
+      lockTimeoutMs?: number;
+    },
   ) {}
 
   registerExecutor(
@@ -146,7 +150,9 @@ export class PendingActionStore {
     return action;
   }
 
-  async createPersistent(input: Parameters<PendingActionStore['create']>[0]): Promise<PendingAction> {
+  async createPersistent(
+    input: Parameters<PendingActionStore['create']>[0],
+  ): Promise<PendingAction> {
     const action = this.create(input);
     const path = this.actionPath(action.id);
     if (path) {
@@ -169,12 +175,25 @@ export class PendingActionStore {
   }
 
   async getPersistent(id: string): Promise<PendingAction | undefined> {
-    const local = this.get(id);
-    if (local) return local;
     const path = this.actionPath(id);
-    if (!path) return undefined;
+    if (!path) return this.get(id);
+    this.cleanupExpired();
     const record = await readJsonFile<PersistentPendingRecord>(path);
-    return record ? this.rehydrate(record) : undefined;
+    if (!record) {
+      // The durable record is authoritative in persistent mode. Another
+      // process may have claimed, cancelled, expired, or locked the action.
+      this.delete(id);
+      return undefined;
+    }
+    if ((record.state ?? 'pending') !== 'pending') {
+      this.delete(id);
+      return undefined;
+    }
+    if (record.expiresAt < Date.now()) {
+      await this.removeExpiredPersistent(id, path);
+      return undefined;
+    }
+    return this.actions.get(id) ?? this.rehydrate(record);
   }
 
   /** Returns true if the entry existed and was removed, false if it never existed. */
@@ -187,15 +206,23 @@ export class PendingActionStore {
   }
 
   async deletePersistent(id: string): Promise<boolean> {
-    const local = this.delete(id);
     const path = this.actionPath(id);
-    if (!path) return local;
+    if (!path) return this.delete(id);
     return withFileLock(
       path,
       async () => {
-        const existed = (await readJsonFile<PersistentPendingRecord>(path)) !== undefined;
-        await fs.rm(path, { force: true });
-        return local || existed;
+        const record = await readJsonFile<PersistentPendingRecord>(path);
+        const existed =
+          record !== undefined &&
+          record.expiresAt >= Date.now() &&
+          (record.state ?? 'pending') === 'pending';
+        if (record && (record.state ?? 'pending') !== 'claimed') {
+          await removeFileDurable(path);
+        }
+        // A process-local entry may be stale after another process claimed or
+        // cancelled the action. Clear it, but never use it to report success.
+        this.delete(id);
+        return existed;
       },
       { timeoutMs: this.persistent?.lockTimeoutMs ?? 30_000 },
     );
@@ -227,16 +254,27 @@ export class PendingActionStore {
           this.actions.delete(id);
           return undefined;
         }
+        if ((record.state ?? 'pending') !== 'pending') {
+          this.delete(id);
+          return undefined;
+        }
         const local = this.actions.get(id);
         const action = local ?? this.rehydrate(record);
         if (!action || action.expiresAt < Date.now()) {
-          await fs.rm(path, { force: true });
+          await removeFileDurable(path);
+          this.delete(id);
           return undefined;
         }
+        // Publish the claimed state before returning the executor. Other
+        // processes must see that this id is executing, not cancelled.
+        await writeJsonAtomic(path, {
+          ...record,
+          state: 'claimed',
+          claimedAt: Date.now(),
+        });
         this.actions.delete(id);
         this.inFlight.set(id, action);
         this.failedConfirmationAttempts.delete(id);
-        await fs.rm(path, { force: true });
         this.emit('deleted', action);
         return action;
       },
@@ -252,6 +290,23 @@ export class PendingActionStore {
     return this.inFlight.delete(id);
   }
 
+  /** Removes the durable claimed marker only after execution/result persistence succeeds. */
+  async completePersistent(id: string): Promise<boolean> {
+    const completed = this.complete(id);
+    const path = this.actionPath(id);
+    if (!path || !completed) return completed;
+    return withFileLock(
+      path,
+      async () => {
+        const record = await readJsonFile<PersistentPendingRecord>(path);
+        if (!record || (record.state ?? 'pending') !== 'claimed') return false;
+        await removeFileDurable(path);
+        return true;
+      },
+      { timeoutMs: this.persistent?.lockTimeoutMs ?? 30_000 },
+    );
+  }
+
   /**
    * True while the action can still be confirmed OR is already executing. This
    * is intentionally wider than get(): confirmation callers must not be able to
@@ -260,6 +315,24 @@ export class PendingActionStore {
   isActive(id: string): boolean {
     this.cleanupExpired();
     return this.actions.has(id) || this.inFlight.has(id);
+  }
+
+  /** Durable lifecycle check for callers that may run in another process. */
+  async isActivePersistent(id: string): Promise<boolean> {
+    if (this.inFlight.has(id)) return true;
+    const path = this.actionPath(id);
+    if (!path) return this.isActive(id);
+    const record = await readJsonFile<PersistentPendingRecord>(path);
+    if (!record) {
+      this.delete(id);
+      return false;
+    }
+    if ((record.state ?? 'pending') === 'claimed') return true;
+    if (record.expiresAt < Date.now()) {
+      await this.removeExpiredPersistent(id, path);
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -281,6 +354,56 @@ export class PendingActionStore {
       this.failedConfirmationAttempts.set(id, failedAttempts);
     }
     return { found: true, failedAttempts, locked };
+  }
+
+  /** Atomically shares the failure counter and final lockout across processes. */
+  async recordFailedConfirmationPersistent(
+    id: string,
+    maxAttempts: number = 5,
+  ): Promise<ConfirmationFailureResult> {
+    const path = this.actionPath(id);
+    if (!path) return this.recordFailedConfirmation(id, maxAttempts);
+
+    this.cleanupExpired();
+    return withFileLock(
+      path,
+      async () => {
+        const record = await readJsonFile<PersistentPendingRecord>(path);
+        if (!record) {
+          this.delete(id);
+          return { found: false, failedAttempts: 0, locked: false };
+        }
+        if ((record.state ?? 'pending') !== 'pending') {
+          this.delete(id);
+          return { found: false, failedAttempts: 0, locked: false };
+        }
+        if (record.expiresAt < Date.now()) {
+          if (record) await removeFileDurable(path);
+          // Another process may already have claimed, cancelled, or locked the
+          // durable action. Drop any stale process-local copy as well.
+          this.delete(id);
+          return { found: false, failedAttempts: 0, locked: false };
+        }
+        const previousFailures = record.failedConfirmationAttempts ?? 0;
+        if (!Number.isSafeInteger(previousFailures) || previousFailures < 0) {
+          throw new Error('Invalid persistent confirmation failure counter');
+        }
+        const failedAttempts = previousFailures + 1;
+        const locked = failedAttempts >= Math.max(1, maxAttempts);
+        if (locked) {
+          await removeFileDurable(path);
+          this.delete(id);
+        } else {
+          await writeJsonAtomic(path, {
+            ...record,
+            failedConfirmationAttempts: failedAttempts,
+          });
+          this.failedConfirmationAttempts.set(id, failedAttempts);
+        }
+        return { found: true, failedAttempts, locked };
+      },
+      { timeoutMs: this.persistent?.lockTimeoutMs ?? 30_000 },
+    );
   }
 
   /** Clears the shared failure counter after a valid secret without deleting the action. */
@@ -324,15 +447,36 @@ export class PendingActionStore {
     try {
       names = await fs.readdir(directory);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return this.list();
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
     }
     const records = await Promise.all(
-      names.filter((name) => /^[0-9a-f]{32}\.json$/.test(name)).map((name) => readJsonFile<PersistentPendingRecord>(join(directory, name))),
+      names
+        .filter((name) => /^[0-9a-f]{32}\.json$/.test(name))
+        .map(async (name) => ({
+          id: name.slice(0, -'.json'.length),
+          path: join(directory, name),
+          record: await readJsonFile<PersistentPendingRecord>(join(directory, name)),
+        })),
     );
-    const byId = new Map(this.list().map((item) => [item.id, item]));
-    for (const record of records) {
-      if (!record || record.expiresAt < Date.now()) continue;
+    // Durable records are authoritative in persistent mode. Process-local
+    // entries can be stale after another process claims, cancels, or locks one.
+    const byId = new Map<string, PendingActionInfo>();
+    const now = Date.now();
+    await Promise.all(
+      records
+        .filter(
+          ({ record }) =>
+            record !== undefined &&
+            (record.state ?? 'pending') === 'pending' &&
+            record.expiresAt < now,
+        )
+        .map(({ id, path }) => this.removeExpiredPersistent(id, path, now)),
+    );
+    for (const { record } of records) {
+      if (!record || record.expiresAt < now || (record.state ?? 'pending') !== 'pending') {
+        continue;
+      }
       byId.set(record.id, {
         id: record.id,
         toolName: record.toolName,
@@ -344,6 +488,45 @@ export class PendingActionStore {
       });
     }
     return [...byId.values()];
+  }
+
+  /** Finds a fail-closed claimed marker after its idempotency result replaced the pending payload. */
+  async hasClaimedPersistent(
+    toolName: string,
+    idempotencyKey: string,
+    argsHash: string,
+  ): Promise<boolean> {
+    for (const action of this.inFlight.values()) {
+      if (
+        action.toolName === toolName &&
+        action.idempotencyKey === idempotencyKey &&
+        action.argsHash === argsHash
+      ) {
+        return true;
+      }
+    }
+    if (!this.persistent) return false;
+    const directory = join(this.persistent.stateDir, this.persistent.namespace, 'pending');
+    let names: string[];
+    try {
+      names = await fs.readdir(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
+    const records = await Promise.all(
+      names
+        .filter((name) => /^[0-9a-f]{32}\.json$/.test(name))
+        .map((name) => readJsonFile<PersistentPendingRecord>(join(directory, name))),
+    );
+    return records.some(
+      (record) =>
+        record !== undefined &&
+        (record.state ?? 'pending') === 'claimed' &&
+        record.toolName === toolName &&
+        record.idempotencyKey === idempotencyKey &&
+        record.argsHash === argsHash,
+    );
   }
 
   /** For tests — the current size. */
@@ -386,6 +569,29 @@ export class PendingActionStore {
     return join(this.persistent.stateDir, this.persistent.namespace, 'pending', `${id}.json`);
   }
 
+  private async removeExpiredPersistent(
+    id: string,
+    path: string,
+    now: number = Date.now(),
+  ): Promise<boolean> {
+    return withFileLock(
+      path,
+      async () => {
+        const record = await readJsonFile<PersistentPendingRecord>(path);
+        if (!record) {
+          this.delete(id);
+          return false;
+        }
+        if ((record.state ?? 'pending') === 'claimed') return false;
+        if (record.expiresAt >= now) return false;
+        await removeFileDurable(path);
+        this.delete(id);
+        return true;
+      },
+      { timeoutMs: this.persistent?.lockTimeoutMs ?? 30_000 },
+    );
+  }
+
   private toRecord(action: PendingAction): PersistentPendingRecord {
     return {
       version: 1,
@@ -399,19 +605,31 @@ export class PendingActionStore {
       initiator: action.initiator,
       idempotencyKey: action.idempotencyKey,
       argsHash: action.argsHash,
+      state: 'pending',
     };
   }
 
   private rehydrate(record: PersistentPendingRecord): PendingAction | undefined {
-    if (record.version !== 1 || record.expiresAt < Date.now()) return undefined;
+    if (
+      record.version !== 1 ||
+      record.expiresAt < Date.now() ||
+      (record.state ?? 'pending') !== 'pending'
+    ) {
+      return undefined;
+    }
     const executor = this.executors.get(record.toolName);
     if (!executor) return undefined;
-    const action = { ...record } as Omit<PersistentPendingRecord, 'version'> & {
-      version?: number;
-    };
-    delete action.version;
     return {
-      ...action,
+      id: record.id,
+      toolName: record.toolName,
+      risk: record.risk,
+      summary: record.summary,
+      args: record.args,
+      createdAt: record.createdAt,
+      expiresAt: record.expiresAt,
+      initiator: record.initiator,
+      idempotencyKey: record.idempotencyKey,
+      argsHash: record.argsHash,
       execute: () => executor(record.args, record.idempotencyKey, record.argsHash),
     };
   }
@@ -419,6 +637,11 @@ export class PendingActionStore {
 
 interface PersistentPendingRecord extends Omit<PendingAction, 'execute'> {
   version: 1;
+  /** Missing means pending for backward compatibility with v1.3.0/v1.3.1. */
+  state?: 'pending' | 'claimed';
+  claimedAt?: number;
+  /** Shared hard-confirmation failures; optional for v1.3.0/1.3.1 records. */
+  failedConfirmationAttempts?: number;
 }
 
 export interface CallerExtra {

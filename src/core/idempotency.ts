@@ -11,16 +11,20 @@
  *   - On a repeated call with the same key but different args: ConflictError → the agent
  *     sees a clear error and does not get "the same result for different args"
  *
- * The design is intentionally in-memory. Persistent / shared backends (file, Redis, etc.)
- * are out of scope for a general-purpose package: different users will want different ones.
- * We document this as an extension point.
+ * Without stateDir/namespace the store is process-local. With them it uses
+ * locked, durable JSON records shared by stdio processes in the same namespace.
  */
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { withFileLock } from './file-lock.js';
-import { readJsonFile, safeStatePart, writeJsonAtomic } from './runtime-state.js';
+import {
+  readJsonFile,
+  removeFileDurable,
+  safeStatePart,
+  writeJsonAtomic,
+} from './runtime-state.js';
 
 export interface IdempotencyEntry {
   key: string;
@@ -57,6 +61,10 @@ export interface IdempotencyStoreOptions {
 export interface IdempotencyRetentionOptions {
   /** Keep an expired entry while an external lifecycle (for example confirmation) is active. */
   retainExpired?: (entry: IdempotencyEntry) => boolean;
+  /** Cross-process equivalent used before removing an expired durable record. */
+  retainExpiredPersistent?: (entry: IdempotencyEntry) => boolean | Promise<boolean>;
+  /** Fail closed unless a cached result is still safe and useful to replay. */
+  replayAllowed?: (entry: IdempotencyEntry) => boolean | Promise<boolean>;
 }
 
 export class IdempotencyConflictError extends Error {
@@ -198,15 +206,23 @@ export class IdempotencyStore {
           if (record && record.argsHash !== argsHash) {
             throw new IdempotencyConflictError(key, toolName);
           }
-          if (record?.state === 'completed' && record.result && record.expiresAt >= now) {
+          if (record?.state === 'completed' && record.result) {
             const entry = this.fromPersistent(record);
-            this.entries.set(this.composeKey(toolName, key), entry);
-            return { entry, replay: true };
+            const retained =
+              record.expiresAt >= now || (await this.isExpiredReplayRetained(entry, options));
+            if (retained && (await this.isReplayAllowed(entry, options))) {
+              this.entries.set(this.composeKey(toolName, key), entry);
+              return { entry, replay: true };
+            }
           }
           if (record?.state === 'in_flight') {
             throw new IdempotencyRecoveryRequiredError(key, toolName);
           }
-          if (record) await fs.rm(persistentPath, { force: true });
+          if (record) {
+            this.entries.delete(this.composeKey(toolName, key));
+            this.retainExpired.delete(this.composeKey(toolName, key));
+            await removeFileDurable(persistentPath);
+          }
 
           const reservation: PersistentRecord = {
             version: 1,
@@ -241,7 +257,11 @@ export class IdempotencyStore {
     const cached = this.entries.get(composed);
     if (cached) {
       if (cached.argsHash !== argsHash) throw new IdempotencyConflictError(key, toolName);
-      return { entry: cached, replay: true };
+      if (await this.isReplayAllowed(cached, options)) {
+        return { entry: cached, replay: true };
+      }
+      this.entries.delete(composed);
+      this.retainExpired.delete(composed);
     }
 
     const existing = this.reservations.get(composed);
@@ -322,6 +342,32 @@ export class IdempotencyStore {
       expiresAt: record.expiresAt,
       result: record.result!,
     };
+  }
+
+  private async isReplayAllowed(
+    entry: IdempotencyEntry,
+    options: IdempotencyRetentionOptions,
+  ): Promise<boolean> {
+    if (!options.replayAllowed) return true;
+    try {
+      return await options.replayAllowed(entry);
+    } catch {
+      // A lifecycle-check failure must never reopen a destructive slot.
+      return true;
+    }
+  }
+
+  private async isExpiredReplayRetained(
+    entry: IdempotencyEntry,
+    options: IdempotencyRetentionOptions,
+  ): Promise<boolean> {
+    if (!options.retainExpiredPersistent) return false;
+    try {
+      return await options.retainExpiredPersistent(entry);
+    } catch {
+      // An uncertain lifecycle must keep the destructive slot closed.
+      return true;
+    }
   }
 
   private cleanupExpired(): void {
