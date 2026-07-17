@@ -1,6 +1,26 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promises as fs } from 'node:fs';
 
 import { PendingActionLimitError, PendingActionStore } from '../src/core/pending-actions.js';
+
+const tempDirs: string[] = [];
+
+async function makeTempStateDir(): Promise<string> {
+  const directory = await fs.mkdtemp(
+    join(tmpdir(), `avito-pending-${randomBytes(6).toString('hex')}-`),
+  );
+  tempDirs.push(directory);
+  return directory;
+}
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
+  );
+});
 
 const input = (name: string) => ({
   toolName: name,
@@ -78,6 +98,30 @@ describe('PendingActionStore shared confirmation lockout', () => {
     store.recordFailedConfirmation(action.id, 3);
     store.resetConfirmationFailures(action.id);
     expect(store.recordFailedConfirmation(action.id, 3).failedAttempts).toBe(1);
+  });
+
+  it('deletes persistent approvals when hard-confirmation failures lock out', async () => {
+    const stateDir = await makeTempStateDir();
+    const namespace = 'test-namespace';
+    const store = new PendingActionStore(60_000, 1000, { stateDir, namespace });
+    store.registerExecutor('protected', async () => ({ content: [] }));
+    const action = await store.createPersistent(input('protected'));
+    const actionFile = join(stateDir, namespace, 'pending', `${action.id}.json`);
+
+    expect(await fs.stat(actionFile)).toBeDefined();
+    expect(store.recordFailedConfirmation(action.id, 2)).toEqual({
+      found: true,
+      failedAttempts: 1,
+      locked: false,
+    });
+    expect(await store.recordFailedConfirmationPersistent(action.id, 2)).toEqual({
+      found: true,
+      failedAttempts: 2,
+      locked: true,
+    });
+
+    await expect(fs.stat(actionFile)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await store.getPersistent(action.id)).toBeUndefined();
   });
 });
 

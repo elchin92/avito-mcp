@@ -469,7 +469,7 @@ export const register: DomainRegister = (server, ctx) => {
           const provided =
             typeof args.confirmation_secret === 'string' ? args.confirmation_secret : '';
           if (!provided || !secretsMatch(provided, ctx.config.confirmationSecret!)) {
-            const attempt = ctx.pendingStore.recordFailedConfirmation(
+            const attempt = await ctx.pendingStore.recordFailedConfirmationPersistent(
               id,
               maxFailedConfirmationAttempts,
             );

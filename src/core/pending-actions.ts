@@ -283,6 +283,17 @@ export class PendingActionStore {
     return { found: true, failedAttempts, locked };
   }
 
+  async recordFailedConfirmationPersistent(
+    id: string,
+    maxAttempts: number = 5,
+  ): Promise<ConfirmationFailureResult> {
+    const attempt = this.recordFailedConfirmation(id, maxAttempts);
+    if (attempt.locked) {
+      await this.deletePersistent(id);
+    }
+    return attempt;
+  }
+
   /** Clears the shared failure counter after a valid secret without deleting the action. */
   resetConfirmationFailures(id: string): void {
     this.failedConfirmationAttempts.delete(id);
