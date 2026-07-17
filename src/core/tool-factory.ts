@@ -352,7 +352,10 @@ export function defineTool<I extends ZodRawShape>(
             sc?.requires_confirmation === true && typeof sc.confirmation_id === 'string'
               ? (sc.confirmation_id as string)
               : undefined;
-          if (stalePendingId !== undefined && !ctx.pendingStore.isActive(stalePendingId)) {
+          if (
+            stalePendingId !== undefined &&
+            !(await ctx.pendingStore.isActivePersistent(stalePendingId))
+          ) {
             ctx.idempotencyStore.delete(idempotencyKey, spec.name);
           } else {
             logger.info(
@@ -435,6 +438,32 @@ export function defineTool<I extends ZodRawShape>(
                     ? structured.confirmation_id
                     : undefined;
                 return confirmationId !== undefined && ctx.pendingStore.isActive(confirmationId);
+              },
+              retainExpiredPersistent: async (candidate) => {
+                const structured = candidate.result.structuredContent as
+                  Record<string, unknown> | undefined;
+                const confirmationId =
+                  structured?.requires_confirmation === true &&
+                  typeof structured.confirmation_id === 'string'
+                    ? structured.confirmation_id
+                    : undefined;
+                if (confirmationId !== undefined) {
+                  return ctx.pendingStore.isActivePersistent(confirmationId);
+                }
+                return ctx.pendingStore.hasClaimedPersistent(spec.name, idempotencyKey, argsHash);
+              },
+              replayAllowed: async (candidate) => {
+                const structured = candidate.result.structuredContent as
+                  Record<string, unknown> | undefined;
+                const confirmationId =
+                  structured?.requires_confirmation === true &&
+                  typeof structured.confirmation_id === 'string'
+                    ? structured.confirmation_id
+                    : undefined;
+                return (
+                  confirmationId === undefined ||
+                  (await ctx.pendingStore.isActivePersistent(confirmationId))
+                );
               },
             },
           );

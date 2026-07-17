@@ -77,6 +77,7 @@ async function makeRig(
   confirmationMode: ConfirmationMode,
   ttlSec = 900,
   extra: Partial<Config> = {},
+  persistent?: { stateDir: string; namespace: string },
 ) {
   const cfg = makeConfig({ confirmationMode, confirmationTtlSec: ttlSec, ...extra });
   const fetchMock = vi.fn(async (url: string) => {
@@ -95,8 +96,8 @@ async function makeRig(
   const client = new AvitoClient(cfg, {
     retry: { retry429BaseMs: 1, max429Retries: 0, retry5xxBackoffMs: 1, max5xxRetries: 0 },
   });
-  const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
-  const idempotencyStore = new IdempotencyStore(cfg.idempotencyTtlSec * 1000);
+  const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000, 1000, persistent);
+  const idempotencyStore = new IdempotencyStore(cfg.idempotencyTtlSec * 1000, 10_000, persistent);
   const ctx: ToolContext = { client, config: cfg, pendingStore, idempotencyStore };
 
   const server = new McpServer({ name: 'test', version: '0.0.0' });
@@ -360,6 +361,205 @@ describe('confirmation flow', () => {
     expect(rig.fetchMock.mock.calls.length).toBeGreaterThan(0);
     expect(rig.pendingStore.size()).toBe(0);
     await rig.client.close();
+  });
+
+  it('does not replay durable confirmation ids after cancellation or lockout', async () => {
+    const stateDir = await fs.mkdtemp(join(tmpdir(), 'avito-confirm-replay-'));
+    const persistent = { stateDir, namespace: 'account-a' };
+    const secret = 'persistent-lockout-secret-1234567890';
+    const argsAfterCancel = {
+      item_id: 1,
+      vas_id: 'cancelled',
+      idempotencyKey: 'persistent-cancel-key',
+    };
+    const argsAfterLockout = {
+      item_id: 2,
+      vas_id: 'locked',
+      idempotencyKey: 'persistent-lockout-key',
+    };
+    let firstRig: Awaited<ReturnType<typeof makeRig>> | undefined;
+    let restartedRig: Awaited<ReturnType<typeof makeRig>> | undefined;
+    const tokenFiles: string[] = [];
+    try {
+      firstRig = await makeRig('money_public', 900, { confirmationSecret: secret }, persistent);
+      cfg = firstRig.cfg;
+      tokenFiles.push(firstRig.cfg.tokenFile);
+      const cancelledPending = await firstRig.client.callTool({
+        name: 'money_tool',
+        arguments: argsAfterCancel,
+      });
+      const cancelledId = extractConfirmationId(parseText(cancelledPending.content));
+      await firstRig.client.callTool({
+        name: 'meta_cancel_action',
+        arguments: { confirmation_id: cancelledId },
+      });
+
+      const lockedPending = await firstRig.client.callTool({
+        name: 'money_tool',
+        arguments: argsAfterLockout,
+      });
+      const lockedId = extractConfirmationId(parseText(lockedPending.content));
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await firstRig.client.callTool({
+          name: 'meta_confirm_action',
+          arguments: {
+            confirmation_id: lockedId,
+            confirmation_secret: `wrong-${attempt}`,
+          },
+        });
+      }
+      await firstRig.client.close();
+
+      restartedRig = await makeRig('money_public', 900, { confirmationSecret: secret }, persistent);
+      cfg = restartedRig.cfg;
+      tokenFiles.push(restartedRig.cfg.tokenFile);
+      const retriedCancelled = await restartedRig.client.callTool({
+        name: 'money_tool',
+        arguments: argsAfterCancel,
+      });
+      const retriedLocked = await restartedRig.client.callTool({
+        name: 'money_tool',
+        arguments: argsAfterLockout,
+      });
+
+      expect(extractConfirmationId(parseText(retriedCancelled.content))).not.toBe(cancelledId);
+      expect(extractConfirmationId(parseText(retriedLocked.content))).not.toBe(lockedId);
+      expect(retriedCancelled.structuredContent).not.toMatchObject({ idempotent_replay: true });
+      expect(retriedLocked.structuredContent).not.toMatchObject({ idempotent_replay: true });
+    } finally {
+      await firstRig?.client.close().catch(() => undefined);
+      await restartedRig?.client.close().catch(() => undefined);
+      await Promise.all(tokenFiles.map((file) => fs.rm(file, { force: true })));
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it('retains an active persistent approval after the idempotency TTL expires', async () => {
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const stateDir = await fs.mkdtemp(join(tmpdir(), 'avito-confirm-ledger-ttl-'));
+    const persistent = { stateDir, namespace: 'account-a' };
+    const args = {
+      item_id: 4,
+      vas_id: 'pending',
+      idempotencyKey: 'persistent-expired-ledger-key',
+    };
+    let firstRig: Awaited<ReturnType<typeof makeRig>> | undefined;
+    let restartedRig: Awaited<ReturnType<typeof makeRig>> | undefined;
+    const tokenFiles: string[] = [];
+    try {
+      firstRig = await makeRig('money_public', 900, { idempotencyTtlSec: 0.001 }, persistent);
+      cfg = firstRig.cfg;
+      tokenFiles.push(firstRig.cfg.tokenFile);
+      const first = await firstRig.client.callTool({ name: 'money_tool', arguments: args });
+      const confirmationId = extractConfirmationId(parseText(first.content));
+      await firstRig.client.close();
+
+      now += 2_000;
+      restartedRig = await makeRig('money_public', 900, { idempotencyTtlSec: 0.001 }, persistent);
+      cfg = restartedRig.cfg;
+      tokenFiles.push(restartedRig.cfg.tokenFile);
+      const retry = await restartedRig.client.callTool({ name: 'money_tool', arguments: args });
+
+      expect(extractConfirmationId(parseText(retry.content))).toBe(confirmationId);
+      expect(retry.structuredContent).toMatchObject({ idempotent_replay: true });
+      expect(await restartedRig.pendingStore.listPersistent()).toHaveLength(1);
+    } finally {
+      await firstRig?.client.close().catch(() => undefined);
+      await restartedRig?.client.close().catch(() => undefined);
+      await Promise.all(tokenFiles.map((file) => fs.rm(file, { force: true })));
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not reopen an idempotency slot while another process executes its claim', async () => {
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const stateDir = await fs.mkdtemp(join(tmpdir(), 'avito-confirm-inflight-'));
+    const persistent = { stateDir, namespace: 'account-a' };
+    const secret = 'persistent-inflight-secret-123456789';
+    const args = {
+      item_id: 3,
+      vas_id: 'inflight',
+      idempotencyKey: 'persistent-inflight-key',
+    };
+    let firstRig: Awaited<ReturnType<typeof makeRig>> | undefined;
+    let restartedRig: Awaited<ReturnType<typeof makeRig>> | undefined;
+    let releaseOperation: (() => void) | undefined;
+    let confirmation: Promise<unknown> | undefined;
+    const tokenFiles: string[] = [];
+    try {
+      firstRig = await makeRig(
+        'money_public',
+        1,
+        { confirmationSecret: secret, idempotencyTtlSec: 0.001 },
+        persistent,
+      );
+      cfg = firstRig.cfg;
+      tokenFiles.push(firstRig.cfg.tokenFile);
+      const pending = await firstRig.client.callTool({ name: 'money_tool', arguments: args });
+      const confirmationId = extractConfirmationId(parseText(pending.content));
+
+      const operationGate = new Promise<void>((resolve) => {
+        releaseOperation = resolve;
+      });
+      let markOperationStarted!: () => void;
+      const operationStarted = new Promise<void>((resolve) => {
+        markOperationStarted = resolve;
+      });
+      firstRig.fetchMock.mockImplementation(async (url: string) => {
+        if (url.endsWith('/token')) {
+          return new Response(
+            JSON.stringify({ access_token: 'tk', expires_in: 3600, token_type: 'bearer' }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        markOperationStarted();
+        await operationGate;
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      });
+
+      confirmation = firstRig.client.callTool({
+        name: 'meta_confirm_action',
+        arguments: { confirmation_id: confirmationId, confirmation_secret: secret },
+      });
+      await operationStarted;
+      now += 2_000;
+
+      restartedRig = await makeRig(
+        'money_public',
+        1,
+        { confirmationSecret: secret, idempotencyTtlSec: 0.001 },
+        persistent,
+      );
+      cfg = restartedRig.cfg;
+      tokenFiles.push(restartedRig.cfg.tokenFile);
+      const retry = await restartedRig.client.callTool({ name: 'money_tool', arguments: args });
+
+      expect(extractConfirmationId(parseText(retry.content))).toBe(confirmationId);
+      expect(retry.structuredContent).toMatchObject({ idempotent_replay: true });
+      expect(await restartedRig.pendingStore.listPersistent()).toEqual([]);
+      expect(restartedRig.fetchMock).not.toHaveBeenCalled();
+
+      releaseOperation?.();
+      releaseOperation = undefined;
+      await confirmation;
+      confirmation = undefined;
+
+      const completed = await restartedRig.client.callTool({ name: 'money_tool', arguments: args });
+      expect(parseText(completed.content)).not.toContain('requires_confirmation');
+      expect(completed.structuredContent).toMatchObject({ ok: true, idempotent_replay: true });
+    } finally {
+      releaseOperation?.();
+      await confirmation?.catch(() => undefined);
+      await firstRig?.client.close().catch(() => undefined);
+      await restartedRig?.client.close().catch(() => undefined);
+      await Promise.all(tokenFiles.map((file) => fs.rm(file, { force: true })));
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
   });
 
   it('write tool does NOT require confirmation in money_public mode', async () => {

@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-07-17
+
+Security patch for durable hard-confirmation lockout across concurrent MCP processes. Existing tool names, schemas, and configuration remain unchanged. The release gate passes **352 tests across 31 files** with **81.37% statements / 72.72% branches / 83.24% functions / 84.23% lines** coverage.
+
+### Security
+
+- Failed `confirmation_secret` attempts are now counted in the durable pending-action record under a cross-process lock, so the five-attempt lockout survives process restarts and cannot be bypassed by opening a new stdio process.
+- Claim, cancellation, and final lockout are serialized per `confirmation_id`; exactly one terminal transition wins, and a stale process-local cache can no longer report a successful cancellation after another process already claimed the action.
+- A claimed action now remains durably fail-closed until execution and idempotency-result storage complete. Expired ledger entries cannot replay cancelled/locked actions or open a second confirmation while an earlier claim is unresolved.
+- Terminal pending-action removal is persisted with a directory `fsync`; persistent reads, listings, and lifecycle checks treat the shared state file as authoritative instead of reviving stale local entries.
+
+### Compatibility
+
+- Existing v1.3.0/v1.3.1 pending-action records remain readable because the new durable counter/state fields are optional. No migration or configuration change is required; upgrading is strongly recommended when `AVITO_MCP_CONFIRMATION_SECRET` is used.
+
 ## [1.3.1] - 2026-07-14
 
 Patch release for runtime-state placement and deployment readiness. The release gate passes **338 tests across 31 files** with **80.95% statements / 71.91% branches / 81.86% functions / 83.83% lines** coverage.

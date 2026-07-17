@@ -4,6 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import { logger } from '../logger.js';
 import { withFileLock } from './file-lock.js';
+import { syncDirectory } from './runtime-state.js';
 
 export interface TokenRecord {
   version: 1;
@@ -251,21 +252,5 @@ export class TokenStore {
       await fs.rm(tmp, { force: true }).catch(() => undefined);
       logger.warn({ err, filePath: this.filePath }, 'failed to persist token to file');
     }
-  }
-}
-
-async function syncDirectory(directory: string): Promise<void> {
-  let handle: import('node:fs/promises').FileHandle | undefined;
-  try {
-    handle = await fs.open(directory, 'r');
-    await handle.sync();
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    // Directory fsync is unsupported on some otherwise safe platforms.
-    if (code !== 'EINVAL' && code !== 'ENOTSUP' && code !== 'EPERM' && code !== 'EISDIR') {
-      throw err;
-    }
-  } finally {
-    await handle?.close().catch(() => undefined);
   }
 }

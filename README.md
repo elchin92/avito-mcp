@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **New in v1.3.1** — runtime state now follows a custom `AVITO_TOKEN_FILE`; `/readyz` and the systemd installer verify that shared durable state is accessible. See the [CHANGELOG](./CHANGELOG.md) for details.
+> **New in v1.3.2** — hard-confirmation lockout now survives restarts and is atomic across MCP processes; confirmation, cancellation, and final lockout cannot all claim the same pending action. See the [CHANGELOG](./CHANGELOG.md) for details.
 
 ---
 

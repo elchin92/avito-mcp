@@ -67,14 +67,32 @@ export async function writeJsonAtomic(path: string, value: unknown): Promise<voi
   }
   try {
     await fs.rename(temp, path);
-    const dir = await fs.open(directory, 'r');
-    try {
-      await dir.sync();
-    } finally {
-      await dir.close();
-    }
+    await syncDirectory(directory);
   } catch (error) {
     await fs.rm(temp, { force: true }).catch(() => undefined);
     throw error;
+  }
+}
+
+/** Removes a runtime-state file and durably records the unlink in its directory. */
+export async function removeFileDurable(path: string): Promise<void> {
+  const directory = dirname(path);
+  await fs.rm(path, { force: true });
+  await syncDirectory(directory);
+}
+
+/** Flushes directory metadata where supported; some safe platforms reject directory fsync. */
+export async function syncDirectory(directory: string): Promise<void> {
+  let handle: import('node:fs/promises').FileHandle | undefined;
+  try {
+    handle = await fs.open(directory, 'r');
+    await handle.sync();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'EINVAL' && code !== 'ENOTSUP' && code !== 'EPERM' && code !== 'EISDIR') {
+      throw error;
+    }
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
 }
