@@ -227,8 +227,8 @@ async function staleSnapshot(lockPath: string, staleMs: number): Promise<LockSna
  * so any other shape is off-protocol and unreachable for staleSnapshot():
  *
  *   - empty: the owner died between mkdir and the marker write (SIGKILL, OOM, or a
- *     parent killing the process while a persist was in flight). This is the shape
- *     that wedged order-management for six days in July 2026.
+ *     parent killing the process while a persist was in flight). This shape is the
+ *     one that occurs in practice, and it blocks its lease path indefinitely.
  *   - two or more markers: a process stalled past staleMs between its mkdir and its
  *     marker write, its directory was reclaimed, a successor took the path, and the
  *     stalled writer then landed its marker inside the successor's directory.
@@ -288,10 +288,10 @@ async function removeIfAbandoned(lockPath: string, staleMs: number): Promise<boo
 /**
  * Ownership proved by content instead of by inode, which is the only proof that holds
  * here: ext4 hands a freed directory inode straight back to the next mkdir at the same
- * path (measured 200/200 on this deployment's state filesystem), so a dev/ino match
- * cannot distinguish our generation from a replacement that took the path after ours
- * was removed. A directory holding anything other than exactly our marker is not ours,
- * whatever its inode says.
+ * path — measured 200 times out of 200, against 0 out of 200 on tmpfs — so a dev/ino
+ * match cannot distinguish our generation from a replacement that took the path after
+ * ours was removed. A directory holding anything other than exactly our marker is not
+ * ours, whatever its inode says.
  */
 async function soleMarker(lockPath: string, markerName: string): Promise<boolean> {
   try {

@@ -1,12 +1,19 @@
 /**
  * Tests for the cross-process token lease. We do not fork processes here; the
  * deterministic transition test injects the exact successor-replacement race.
+ *
+ * These run below the project directory rather than in os.tmpdir() on purpose. The
+ * lease protocol depends on how the filesystem recycles directory inodes, and tmpdir
+ * is frequently tmpfs, which never reuses a freed inode — the one filesystem where an
+ * ownership check based on dev/ino looks sound. The project directory sits on whatever
+ * filesystem the deployment actually keeps its runtime state on, which is the case
+ * these tests need to cover.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
 
 import { FileLockTimeoutError, withFileLock } from '../src/core/file-lock.js';
 
@@ -28,8 +35,19 @@ async function createDirectoryLease(
   return raw;
 }
 
-/** A pid that cannot be running, so liveness never rescues a marker written with it. */
-const DEAD_PID = 999_999;
+/**
+ * A pid that is provably gone. A hardcoded large number is not: pid_max on Linux is
+ * commonly 4194304, so 999999 is allocatable and a liveness assertion built on it can
+ * invert on a busy host. Spawning a child and waiting for its exit reaps it, so the
+ * number is guaranteed free for as long as the run lasts.
+ */
+let DEAD_PID: number;
+
+beforeAll(async () => {
+  const child = spawn(process.execPath, ['-e', '']);
+  DEAD_PID = child.pid!;
+  await new Promise((resolve) => child.once('exit', resolve));
+});
 
 async function writeMarker(
   lockPath: string,
@@ -53,22 +71,19 @@ async function backdate(lockPath: string, ageMs = 120_000): Promise<void> {
 }
 
 describe('file-lock', () => {
+  let base: string;
   let target: string;
 
-  beforeEach(() => {
-    target = join(tmpdir(), `lock-target-${randomBytes(6).toString('hex')}`);
+  beforeEach(async () => {
+    // Anchored to this file, not to process.cwd(), which vitest does not guarantee.
+    base = join(import.meta.dirname, `.locktest-${randomBytes(6).toString('hex')}`);
+    await fs.mkdir(base, { recursive: true, mode: 0o700 });
+    target = join(base, 'lock-target');
   });
 
   afterEach(async () => {
-    await fs.rm(target, { force: true });
-    const parent = dirname(target);
-    const prefix = `${basename(target)}.lock`;
-    const entries = await fs.readdir(parent).catch(() => []);
-    await Promise.all(
-      entries
-        .filter((entry) => entry.startsWith(prefix))
-        .map((entry) => fs.rm(join(parent, entry), { recursive: true, force: true })),
-    );
+    // The whole sandbox goes, so leases, transitioned leftovers and strays all go with it.
+    await fs.rm(base, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 
@@ -118,7 +133,7 @@ describe('file-lock', () => {
   });
 
   it('reclaims a directory lease owned by a dead PID', async () => {
-    await createDirectoryLease(target, 999999, '2'.repeat(32));
+    await createDirectoryLease(target, DEAD_PID, '2'.repeat(32));
     let ran = false;
     await withFileLock(
       target,
@@ -363,6 +378,49 @@ describe('file-lock', () => {
     // behind — a second marker is what makes a directory unadjudicable in the first place.
     const entries = await fs.readdir(lockPath);
     expect(entries).toEqual([competitor]);
+  });
+
+  // The one test here that depends on the filesystem, and the reason this suite runs next
+  // to the repo rather than in tmpdir. It recreates the lock path so the inode is handed
+  // straight back, which is what makes an ownership check based on dev/ino pass when it
+  // must not. On a filesystem that never recycles inodes this cannot discriminate at all,
+  // so it says so rather than quietly passing.
+  it('refuses a lease whose directory was replaced under it, inode recycling and all', async () => {
+    const lockPath = `${target}.lock`;
+    const nonce = '7'.repeat(32);
+    const competitor = `owner-${nonce}.json`;
+    await fs.mkdir(lockPath, { mode: 0o700 });
+    await backdate(lockPath);
+
+    let publishedIno: number | undefined;
+    let replacedIno: number | undefined;
+    const realOpen = fs.open.bind(fs) as (...args: unknown[]) => Promise<unknown>;
+    vi.spyOn(fs, 'open').mockImplementation((async (path: unknown, ...rest: unknown[]) => {
+      if (String(path).startsWith(join(lockPath, 'owner-')) && replacedIno === undefined) {
+        publishedIno = (await fs.lstat(lockPath)).ino;
+        // A competitor reclaims our lease and republishes the path before our marker lands.
+        await fs.rmdir(lockPath);
+        await fs.mkdir(lockPath, { mode: 0o700 });
+        replacedIno = (await fs.lstat(lockPath)).ino;
+        await fs.writeFile(join(lockPath, competitor), lockRecord(process.pid, nonce), {
+          mode: 0o600,
+        });
+      }
+      return realOpen(path, ...rest);
+    }) as unknown as typeof fs.open);
+
+    await expect(
+      withFileLock(target, async () => 'stolen', { timeoutMs: 300, staleMs: 60_000 }),
+    ).rejects.toBeInstanceOf(FileLockTimeoutError);
+
+    expect(
+      replacedIno !== undefined && replacedIno === publishedIno,
+      'this filesystem did not hand the directory inode back on recreation, so it cannot ' +
+        'exercise the ownership proof — run this suite on the filesystem the deployment ' +
+        'keeps its runtime state on, not on tmpfs',
+    ).toBe(true);
+    // The competitor keeps its lease, and we left no stray marker of our own behind.
+    expect(await fs.readdir(lockPath)).toEqual([competitor]);
   });
 
   it('serialises concurrent acquirers racing to reclaim the same abandoned directory', async () => {

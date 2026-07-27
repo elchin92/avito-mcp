@@ -41,3 +41,7 @@ webhook-events.jsonl
 deploy/Caddyfile
 AUDIT-*.md
 deploy/Caddyfile.bak*
+
+# Sandbox directories created by test/file-lock.test.ts (must live on the repo filesystem)
+test/.locktest-*/
+test/.tmptest-*/
