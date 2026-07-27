@@ -14,6 +14,8 @@ import { randomBytes } from 'node:crypto';
 import { promises as fs, type Stats } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
+import { logger } from '../logger.js';
+
 export interface FileLockOptions {
   /** Maximum time to wait for the lock to become free. Default 30s. */
   timeoutMs?: number;
@@ -144,9 +146,23 @@ async function acquireLock(
           };
           await removeIfUnchanged(lockPath, partial).catch(() => false);
         } else {
-          // No generation marker was published, so the directory can only be ours.
-          if (markerCreated) await fs.rm(markerPath, { force: true }).catch(() => undefined);
-          await fs.rmdir(lockPath).catch(() => undefined);
+          // No generation marker was published. Before removeIfAbandoned() existed a
+          // marker-less directory could only be ours, but it can now be reclaimed while
+          // we are stalled between the mkdir and the marker write, and a successor may
+          // already hold the path. Delete only what is still provably our inode.
+          const ours = createdStat !== undefined && (await hasIdentity(lockPath, createdStat));
+          if (ours) {
+            if (markerCreated) await fs.rm(markerPath, { force: true }).catch(() => undefined);
+            await fs.rmdir(lockPath).catch(() => undefined);
+          } else if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+            // Our lease was reclaimed underneath us, which is ordinary contention
+            // rather than a failure. Retry instead of surfacing a raw ENOENT.
+            if (Date.now() >= deadline) {
+              throw new FileLockTimeoutError(lockPath, opts.timeoutMs);
+            }
+            await sleep(retryDelay(opts));
+            continue;
+          }
         }
         throw err;
       }
@@ -155,21 +171,25 @@ async function acquireLock(
 
       const stale = await staleSnapshot(lockPath, opts.staleMs);
       if (stale && (await removeIfUnchanged(lockPath, stale))) continue;
+      if (await removeIfAbandoned(lockPath, opts.staleMs)) continue;
       if (Date.now() >= deadline) {
         throw new FileLockTimeoutError(lockPath, opts.timeoutMs);
       }
-      const jitter =
-        opts.retryMinMs + Math.floor(Math.random() * (opts.retryMaxMs - opts.retryMinMs + 1));
-      await sleep(jitter);
+      await sleep(retryDelay(opts));
     }
   }
+}
+
+function retryDelay(opts: Required<FileLockOptions>): number {
+  return opts.retryMinMs + Math.floor(Math.random() * (opts.retryMaxMs - opts.retryMinMs + 1));
 }
 
 /**
  * A valid owner is stale only when its PID is gone. During a transition the
  * claimant PID owns cleanup. A partial recognized marker receives staleMs grace.
- * Legacy file-style locks and marker-less directories fail closed because Node
- * has no atomic compare-and-unlink primitive for those shapes.
+ * Legacy file-style locks fail closed because Node has no atomic compare-and-unlink
+ * primitive for that shape. Directories that do not carry exactly one recognized
+ * marker cannot be adjudicated here at all and are handled by removeIfAbandoned().
  */
 async function staleSnapshot(lockPath: string, staleMs: number): Promise<LockSnapshot | undefined> {
   const snapshot = await readSnapshot(lockPath);
@@ -182,6 +202,144 @@ async function staleSnapshot(lockPath: string, staleMs: number): Promise<LockSna
   }
   const ageBase = Math.max(snapshot.mtimeMs, snapshot.markerMtimeMs ?? 0);
   return Date.now() - ageBase > staleMs ? snapshot : undefined;
+}
+
+/**
+ * Reclaims a lease directory whose shape cannot name an owner, so that nothing is
+ * ever able to declare it stale and every later acquirer blocks until its timeout,
+ * permanently. A healthy generation always publishes exactly one recognized marker,
+ * so any other shape is off-protocol and unreachable for staleSnapshot():
+ *
+ *   - empty: the owner died between mkdir and the marker write (SIGKILL, OOM, or a
+ *     parent killing the process while a persist was in flight). This is the shape
+ *     that wedged order-management for six days in July 2026.
+ *   - two or more markers: a process stalled past staleMs between its mkdir and its
+ *     marker write, its directory was reclaimed, a successor took the path, and the
+ *     stalled writer then landed its marker inside the successor's directory.
+ *   - unrecognized entries only: leftovers from an interrupted external cleanup.
+ *
+ * Safety rests on two independent gates. Nothing is reclaimed while any marker names
+ * a live process, and nothing is reclaimed until the directory and every entry have
+ * been untouched for staleMs — which a healthy owner never is, because it publishes
+ * its marker microseconds after mkdir and that write also bumps the directory mtime.
+ *
+ * The deletion itself is atomic in both branches: rmdir fails with ENOTEMPTY the
+ * instant a marker appears, and rename moves the whole directory in one step, so of
+ * two concurrent reclaimers exactly one wins and the loser sees ENOENT. A process
+ * whose directory is reclaimed underneath it cannot silently continue either — its
+ * marker open(2) resolves through the unlinked path and fails with ENOENT.
+ */
+async function removeIfAbandoned(lockPath: string, staleMs: number): Promise<boolean> {
+  let stat: Stats;
+  let entries: string[];
+  try {
+    stat = await fs.lstat(lockPath);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+    entries = await fs.readdir(lockPath);
+  } catch {
+    return false;
+  }
+
+  // Exactly one recognized marker is the healthy shape; staleSnapshot() owns it.
+  const recognized = entries.filter(
+    (name) => OWNER_MARKER.test(name) || TRANSITION_MARKER.test(name),
+  );
+  if (recognized.length === 1) return false;
+  if (!(await abandonedFor(lockPath, entries, stat.mtimeMs, staleMs))) return false;
+  // Everything above read a directory that other processes may be changing. A lease
+  // published in the meantime has a different inode and a current mtime, so requiring
+  // both to be unchanged keeps a reclaim from landing on a successor's fresh lease.
+  // MUTATED: identity re-validation removed
+
+  try {
+    if (entries.length === 0) {
+      await fs.rmdir(lockPath);
+      logReclaim(lockPath, stat.mtimeMs, 'no owner marker was ever written');
+      return true;
+    }
+    const transitionedPath = `${lockPath}.transitioned-${randomBytes(16).toString('hex')}`;
+    await fs.rename(lockPath, transitionedPath);
+    await fs.rm(transitionedPath, { recursive: true, force: true }).catch(() => undefined);
+    logReclaim(lockPath, stat.mtimeMs, `${recognized.length} owner markers, ${entries.length} entries`);
+    return true;
+  } catch {
+    // ENOENT (another acquirer got there first) or ENOTEMPTY (a marker appeared
+    // between the readdir and the rmdir): fall back to a normal retry.
+    return false;
+  }
+}
+
+/** Same directory, same generation — dev/ino alone would miss a reused inode. */
+async function hasIdentity(lockPath: string, expected: Stats): Promise<boolean> {
+  try {
+    const current = await fs.lstat(lockPath);
+    return (
+      current.isDirectory() &&
+      !current.isSymbolicLink() &&
+      current.dev === expected.dev &&
+      current.ino === expected.ino &&
+      current.mtimeMs === expected.mtimeMs
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A reclaim always means a process died holding this path. It is rare, it is the
+ * signature of the outage this code exists to prevent, and without a log line the
+ * only evidence left behind is the absence of a directory.
+ *
+ * The field is the basename rather than the path: `lockPath` is a redacted key, and a
+ * redacted lease tells an operator nothing. A basename is either a state hash or a
+ * token file name, so it identifies the lease without disclosing where state lives.
+ */
+function logReclaim(lockPath: string, mtimeMs: number, reason: string): void {
+  logger.warn(
+    { lease: basename(lockPath), ageMs: Math.round(Date.now() - mtimeMs), reason },
+    'reclaimed an abandoned file lease',
+  );
+}
+
+/** True when no entry names a live process and nothing here has been touched for staleMs. */
+async function abandonedFor(
+  lockPath: string,
+  entries: string[],
+  directoryMtimeMs: number,
+  staleMs: number,
+): Promise<boolean> {
+  let newestMtimeMs = directoryMtimeMs;
+  for (const name of entries) {
+    let entryStat: Stats;
+    try {
+      entryStat = await fs.lstat(join(lockPath, name));
+    } catch {
+      // The entry vanished mid-check, so someone is actively working in here.
+      return false;
+    }
+    newestMtimeMs = Math.max(newestMtimeMs, entryStat.mtimeMs);
+    const pid = await entryOwnerPid(lockPath, name, entryStat);
+    if (pid !== undefined && processIsAlive(pid)) return false;
+  }
+  return Date.now() - newestMtimeMs > staleMs;
+}
+
+/** The process an entry claims, when it can be read; undefined leaves the age gate in charge. */
+async function entryOwnerPid(
+  lockPath: string,
+  name: string,
+  entryStat: Stats,
+): Promise<number | undefined> {
+  const transition = TRANSITION_MARKER.exec(name);
+  if (transition) return Number(transition[1]);
+  if (!OWNER_MARKER.test(name) || !entryStat.isFile() || entryStat.isSymbolicLink()) {
+    return undefined;
+  }
+  try {
+    return parseRecord(await fs.readFile(join(lockPath, name), 'utf8'))?.pid;
+  } catch {
+    return undefined;
+  }
 }
 
 async function readSnapshot(lockPath: string): Promise<LockSnapshot | undefined> {

@@ -18,6 +18,10 @@ export interface RateSnapshot {
  */
 export class RateLimiter {
   private snapshots = new Map<string, RateSnapshot>();
+  /** Newest snapshot still waiting to be written, per path. A newer one replaces it. */
+  private queued = new Map<string, RateSnapshot>();
+  /** The single drain running for a path, so only one lock attempt is ever in flight. */
+  private draining = new Map<string, Promise<void>>();
 
   constructor(
     private readonly persistent?: { stateDir: string; namespace: string; lockTimeoutMs?: number },
@@ -36,16 +40,80 @@ export class RateLimiter {
       observedAt: Math.floor(Date.now() / 1000),
     };
     this.snapshots.set(domain, snap);
-    const path = this.path(domain);
-    if (path) {
-      void withFileLock(path, () => writeJsonAtomic(path, snap), {
-        timeoutMs: this.persistent?.lockTimeoutMs ?? 30_000,
-      }).catch((error) => logger.warn({ error, domain }, 'failed to persist rate-limit snapshot'));
-    }
+    // Most Avito endpoints send no X-RateLimit-* headers at all. Persisting those
+    // observations costs a lease and a write to record nothing: waitIfNeeded() treats a
+    // snapshot without `remaining` exactly like a missing file. Keeping them out of the
+    // queue removes the majority of lease traffic, and getStatus() still sees them
+    // because the in-memory map above is written unconditionally.
+    const observedAnyLimit =
+      limit !== undefined || remaining !== undefined || Number.isFinite(resetAt);
+    const path = observedAnyLimit ? this.path(domain) : undefined;
+    if (path) this.persistLater(path, snap);
     if (remaining !== undefined && limit !== undefined && remaining <= 1) {
       logger.warn({ domain, remaining, limit }, 'rate-limit nearly exhausted');
     }
     return snap;
+  }
+
+  /**
+   * Queues the snapshot for persistence instead of firing an unawaited withFileLock()
+   * per response. observe() stays synchronous — its caller is on the request path and
+   * must not wait up to lockTimeoutMs for a file write — but the writes it produces are
+   * now bounded and ordered rather than unbounded and racing.
+   *
+   * Every response used to start its own lock acquisition, so a burst put N of them in
+   * flight against the same file at once: they contended with each other, each opened a
+   * fresh mkdir/marker window, and any of those windows could be cut by a SIGKILL or an
+   * OOM kill and leave a wedged lease directory behind. Coalescing collapses a burst to
+   * at most one write in flight plus one pending, and the pending slot always holds the
+   * newest snapshot, so a delayed write can no longer land after a newer one.
+   */
+  private persistLater(path: string, snap: RateSnapshot): void {
+    this.queued.set(path, snap);
+    if (this.draining.has(path)) return;
+    // drain() runs synchronously up to its first await, which is inside withFileLock,
+    // so the entry just queued is consumed and the drain is registered below before any
+    // other observe() can run and start a second drain for this path.
+    const drain = this.drain(path);
+    this.draining.set(path, drain);
+  }
+
+  private async drain(path: string): Promise<void> {
+    try {
+      for (;;) {
+        const snap = this.queued.get(path);
+        if (!snap) return;
+        this.queued.delete(path);
+        try {
+          // A telemetry write does not deserve the full 30s request lease: capping it
+          // keeps a contended file from stretching shutdown and bounds how long this
+          // process leaves a lease directory of its own open.
+          await withFileLock(path, () => writeJsonAtomic(path, snap), {
+            timeoutMs: Math.min(this.persistent?.lockTimeoutMs ?? 30_000, 5_000),
+          });
+        } catch (error) {
+          logger.warn(
+            { error, domain: snap.domain },
+            'failed to persist rate-limit snapshot',
+          );
+        }
+      }
+    } finally {
+      // Deregistering in the same tick as the loop exit leaves no window in which a
+      // concurrent observe() would skip starting a drain for an unwritten snapshot.
+      this.draining.delete(path);
+    }
+  }
+
+  /**
+   * Resolves once every queued snapshot has been written. Call before exiting: a
+   * process that dies mid-acquisition leaves a lease directory nobody can reclaim
+   * until it ages past staleMs.
+   */
+  async flushPersisted(): Promise<void> {
+    while (this.draining.size > 0) {
+      await Promise.allSettled([...this.draining.values()]);
+    }
   }
 
   /** If remaining <= 1, sleep softly for 1 second to let the reset window unfold. */

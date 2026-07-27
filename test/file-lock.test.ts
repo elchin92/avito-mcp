@@ -28,6 +28,30 @@ async function createDirectoryLease(
   return raw;
 }
 
+/** A pid that cannot be running, so liveness never rescues a marker written with it. */
+const DEAD_PID = 999_999;
+
+async function writeMarker(
+  lockPath: string,
+  markerName: string,
+  pid: number,
+  nonce: string,
+): Promise<void> {
+  await fs.writeFile(join(lockPath, markerName), lockRecord(pid, nonce), { mode: 0o600 });
+}
+
+/**
+ * Ages a lease directory and everything in it past any plausible staleMs. Reclaim looks
+ * at the newest mtime among the directory and its entries, so both have to move.
+ */
+async function backdate(lockPath: string, ageMs = 120_000): Promise<void> {
+  const when = new Date(Date.now() - ageMs);
+  for (const entry of await fs.readdir(lockPath)) {
+    await fs.utimes(join(lockPath, entry), when, when);
+  }
+  await fs.utimes(lockPath, when, when);
+}
+
 describe('file-lock', () => {
   let target: string;
 
@@ -203,5 +227,141 @@ describe('file-lock', () => {
       withFileLock(target, async () => 'never', { timeoutMs: 150, staleMs: 1 }),
     ).rejects.toBeInstanceOf(FileLockTimeoutError);
     expect(await fs.readFile(`${target}.lock`, 'utf8')).toBe(legacy);
+  });
+
+  it('reclaims a marker-less lease directory abandoned before its marker was written', async () => {
+    const lockPath = `${target}.lock`;
+    await fs.mkdir(lockPath, { mode: 0o700 });
+    const old = new Date(Date.now() - 120_000);
+    await fs.utimes(lockPath, old, old);
+
+    await expect(
+      withFileLock(target, async () => 'reclaimed', { timeoutMs: 2_000, staleMs: 60_000 }),
+    ).resolves.toBe('reclaimed');
+    await expect(fs.lstat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('holds a freshly created marker-less directory until it ages out of the grace period', async () => {
+    const lockPath = `${target}.lock`;
+    await fs.mkdir(lockPath, { mode: 0o700 });
+
+    // Age is the only thing keeping this directory: it must survive while fresh...
+    await expect(
+      withFileLock(target, async () => 'never', { timeoutMs: 150, staleMs: 60_000 }),
+    ).rejects.toBeInstanceOf(FileLockTimeoutError);
+    expect((await fs.lstat(lockPath)).isDirectory()).toBe(true);
+
+    // ...and be reclaimed once it is older, which is what proves the grace period is
+    // doing the blocking rather than the reclaim path simply being absent.
+    await backdate(lockPath);
+    await expect(
+      withFileLock(target, async () => 'reclaimed', { timeoutMs: 2_000, staleMs: 60_000 }),
+    ).resolves.toBe('reclaimed');
+  });
+
+  // A directory carrying anything other than exactly one recognized marker cannot be
+  // adjudicated by staleSnapshot(), so before the reclaim path each of these shapes
+  // blocked its domain permanently — the same failure as the empty directory above.
+  it.each([
+    [
+      'two owner markers left by a stalled writer landing in a successor directory',
+      async (lockPath: string) => {
+        await writeMarker(lockPath, `owner-${'a'.repeat(32)}.json`, DEAD_PID, 'a'.repeat(32));
+        await writeMarker(lockPath, `owner-${'b'.repeat(32)}.json`, DEAD_PID, 'b'.repeat(32));
+      },
+    ],
+    [
+      'unrecognized leftovers only',
+      async (lockPath: string) => {
+        await fs.writeFile(join(lockPath, 'garbage.txt'), 'x', { mode: 0o600 });
+      },
+    ],
+  ])('reclaims an abandoned lease directory with %s', async (_label, populate) => {
+    const lockPath = `${target}.lock`;
+    await fs.mkdir(lockPath, { mode: 0o700 });
+    await populate(lockPath);
+    await backdate(lockPath);
+
+    await expect(
+      withFileLock(target, async () => 'reclaimed', { timeoutMs: 2_000, staleMs: 60_000 }),
+    ).resolves.toBe('reclaimed');
+    await expect(fs.lstat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    // The reclaim moves the directory aside before deleting it; nothing may survive that.
+    const parent = dirname(target);
+    const leftovers = (await fs.readdir(parent)).filter((entry) =>
+      entry.startsWith(`${basename(target)}.lock.transitioned-`),
+    );
+    expect(leftovers).toEqual([]);
+  });
+
+  // The reclaim path must never be able to break mutual exclusion. Age alone is not
+  // enough to take a lease: a marker naming a live process always wins.
+  it.each([
+    [
+      'a live owner whose critical section outlived staleMs',
+      async (lockPath: string) => {
+        await writeMarker(lockPath, `owner-${'a'.repeat(32)}.json`, process.pid, 'a'.repeat(32));
+      },
+    ],
+    [
+      'a live owner alongside a dead writer stray marker',
+      async (lockPath: string) => {
+        await writeMarker(lockPath, `owner-${'a'.repeat(32)}.json`, process.pid, 'a'.repeat(32));
+        await writeMarker(lockPath, `owner-${'b'.repeat(32)}.json`, DEAD_PID, 'b'.repeat(32));
+      },
+    ],
+    [
+      'a live claimant mid-transition next to unrecognized leftovers',
+      async (lockPath: string) => {
+        await writeMarker(
+          lockPath,
+          `.transition-${process.pid}-${'c'.repeat(32)}.json`,
+          DEAD_PID,
+          'c'.repeat(32),
+        );
+        await fs.writeFile(join(lockPath, 'garbage.txt'), 'x', { mode: 0o600 });
+      },
+    ],
+  ])('never reclaims a lease directory held by %s', async (_label, populate) => {
+    const lockPath = `${target}.lock`;
+    await fs.mkdir(lockPath, { mode: 0o700 });
+    await populate(lockPath);
+    await backdate(lockPath);
+
+    await expect(
+      withFileLock(target, async () => 'never', { timeoutMs: 200, staleMs: 60_000 }),
+    ).rejects.toBeInstanceOf(FileLockTimeoutError);
+    expect((await fs.lstat(lockPath)).isDirectory()).toBe(true);
+  });
+
+  it('serialises concurrent acquirers racing to reclaim the same abandoned directory', async () => {
+    const lockPath = `${target}.lock`;
+    await fs.mkdir(lockPath, { mode: 0o700 });
+    await fs.writeFile(join(lockPath, 'garbage.txt'), 'x', { mode: 0o600 });
+    await backdate(lockPath);
+
+    let inside = 0;
+    let maxInside = 0;
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        withFileLock(
+          target,
+          async () => {
+            inside += 1;
+            maxInside = Math.max(maxInside, inside);
+            await new Promise((resolve) => setTimeout(resolve, 15));
+            inside -= 1;
+            return 'ok';
+          },
+          { timeoutMs: 5_000, staleMs: 60_000 },
+        ),
+      ),
+    );
+
+    // Reclaiming must not degenerate into several acquirers each deciding the directory
+    // is theirs: the loser of the race retries, it does not enter.
+    expect(results).toEqual(['ok', 'ok', 'ok', 'ok', 'ok']);
+    expect(maxInside).toBe(1);
+    await expect(fs.lstat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
