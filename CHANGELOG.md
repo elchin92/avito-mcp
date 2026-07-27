@@ -5,7 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [1.3.3] - 2026-07-27
 
-Availability patch for a permanent cross-process lock deadlock: a lease directory left behind by a process killed at the wrong moment could block its domain indefinitely, failing every call in it until the directory was removed by hand. Tool names, schemas, and configuration are unchanged. Upgrading is strongly recommended for every deployment that runs more than one avito-mcp process against the same runtime state. The release gate passes **382 tests across 33 files** with **81.46% statements / 73.65% branches / 82.06% functions / 84.37% lines** coverage.
+Availability patch for a permanent cross-process lock deadlock: a lease directory left behind by a process killed at the wrong moment could block its domain indefinitely, failing every call in it until the directory was removed by hand. Tool names, schemas, and configuration are unchanged. Upgrading is strongly recommended for every deployment that runs more than one avito-mcp process against the same runtime state. The release gate passes **382 tests across 33 files** with **81.41% statements / 73.61% branches / 82.06% functions / 84.34% lines** coverage.
 
 ### Fixed
 
@@ -18,6 +18,10 @@ Availability patch for a permanent cross-process lock deadlock: a lease director
 
 - **The OAuth store lease reclaims the same abandoned shapes instead of refusing to start.** `{store}.process.lock` is published by `mkdir` with its owner marker written a moment later, exactly like the runtime-state lease, so a process killed inside that window left a directory `inspectLease()` could not adjudicate. It threw, and the HTTP transport failed to start until an operator deleted the directory by hand. A marker that exists but cannot be parsed counts as unadjudicable too — `writeFileSync` creates the file before it writes it, so a zero-byte marker is the likeliest residue of all. The same two gates apply as for the runtime-state lease: nothing is reclaimed while any marker names a live process, or before the initialization grace has passed. This lease now also proves its own ownership by reading the marker set back after publishing, so a reclaim that lands between its `mkdir` and its marker write can no longer leave two processes owning one store file.
 - **Runtime-state writes no longer leave temp files behind.** `writeJsonAtomic()` closed its handle in a `finally` but removed the temp only when the *rename* failed, so a write that failed with the file already created — `ENOSPC` and `EIO` reach this far more often than a kill does — leaked it. Temps abandoned by a killed process are now cleared as well, once per directory per process and only when older than an hour, which no live write ever is.
+
+### Dependencies
+
+- Transitive dependencies carrying high-severity advisories were lifted without any breaking change: `fast-uri` 3.1.2 → 3.1.4 (host confusion), `brace-expansion` 5.0.6 → 5.0.8 and `postcss` 8.5.16 → 8.5.23 (denial of service), plus `body-parser` 2.2.2 → 2.3.0, `@hono/node-server` 1.19.14 → 1.19.17 and `nanoid` 3.3.15 → 3.3.16. `package.json` ranges are unchanged. Two moderate advisories remain, reachable only by downgrading `@modelcontextprotocol/sdk` below 1.25.0, which is not worth a breaking change for their severity.
 
 ### Testing
 
