@@ -5,7 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [1.3.3] - 2026-07-27
 
-Availability patch for a permanent cross-process lock deadlock that stopped Avito order confirmation for six days (2026-07-20 to 2026-07-26). Tool names, schemas, and configuration are unchanged. Upgrading is strongly recommended for every deployment that runs more than one avito-mcp process against the same runtime state. The release gate passes **366 tests across 32 files** with **81.07% statements / 72.82% branches / 82.25% functions / 83.87% lines** coverage.
+Availability patch for a permanent cross-process lock deadlock that stopped Avito order confirmation for six days (2026-07-20 to 2026-07-26). Tool names, schemas, and configuration are unchanged. Upgrading is strongly recommended for every deployment that runs more than one avito-mcp process against the same runtime state. The release gate passes **367 tests across 32 files** with **81.17% statements / 73.07% branches / 82.37% functions / 84.01% lines** coverage.
 
 ### Fixed
 
@@ -14,6 +14,7 @@ Availability patch for a permanent cross-process lock deadlock that stopped Avit
 - **Rate-limit snapshots are no longer persisted with an unawaited lock acquisition.** `RateLimiter.observe()` fired a detached `withFileLock()` per response, so a burst kept many lease windows open at once and any kill could land inside one of them — this is what produced the abandoned directories. Writes now pass through a per-file queue that keeps at most one lease open and always persists the newest snapshot, `observe()` stays synchronous and off the request path, and responses carrying no `X-RateLimit-*` headers no longer take a lease to record nothing.
 - **Queued state is flushed before exit.** `SIGTERM`/`SIGINT` now drain pending rate-limit writes in stdio mode as well, where previously no handler existed at all and the default disposition killed the process outright — the exact shape that abandoned a lease on every restart of a per-call stdio server.
 - **A process whose own lease was reclaimed while it was stalled no longer deletes its successor's directory** and no longer surfaces a raw `ENOENT`; it verifies the inode is still its own before cleaning up, and otherwise retries acquisition as ordinary contention.
+- **A newly published lease now proves ownership by its marker set rather than by inode**, which is the only proof that holds: ext4 returns a freed directory inode to the very next `mkdir` at the same path, so the previous `dev`/`ino` comparison could not tell an owner's own generation from a replacement that took the path after the owner's was reclaimed. Two processes could therefore both consider the lease theirs and run their critical sections concurrently — reproduced in 9 of 10 runs once a stall was introduced between `mkdir` and the marker write, which is the condition the OOM pressure of the incident produced. An acquirer that finds any marker other than its own now releases only its own marker, never the directory, and retries.
 
 ### Known issues
 

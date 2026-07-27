@@ -103,6 +103,7 @@ async function acquireLock(
     let createdDirectory = false;
     let createdStat: Stats | undefined;
     let markerCreated = false;
+    let lostRace = false;
 
     try {
       // mkdir is the atomic publication of a new lease generation.
@@ -128,12 +129,27 @@ async function acquireLock(
         raw,
         record,
       };
-      if (!(await lockMatches(ownership, lockPath, markerPath))) {
-        throw new Error(`File lock ${lockPath} changed during initialization`);
+      if (!(await lockMatches(ownership, lockPath, markerPath)) || !(await soleMarker(lockPath, markerName))) {
+        lostRace = true;
+        throw new Error(`File lock ${lockPath} was claimed concurrently during initialization`);
       }
       return ownership;
     } catch (err) {
       if (createdDirectory) {
+        if (lostRace) {
+          // Our marker may be sitting inside a generation we do not own, and dev/ino
+          // cannot tell us which — this filesystem hands the freed inode straight back
+          // to the next mkdir. Removing the marker is always safe because its name
+          // carries our nonce; removing the directory would destroy a live competitor.
+          await fs.rm(markerPath, { force: true }).catch(() => undefined);
+          // Only succeeds when no marker at all is left, which means nobody published.
+          await fs.rmdir(lockPath).catch(() => undefined);
+          if (Date.now() >= deadline) {
+            throw new FileLockTimeoutError(lockPath, opts.timeoutMs);
+          }
+          await sleep(retryDelay(opts));
+          continue;
+        }
         if (createdStat && markerCreated) {
           const partial: LockSnapshot = {
             dev: createdStat.dev,
@@ -249,7 +265,7 @@ async function removeIfAbandoned(lockPath: string, staleMs: number): Promise<boo
   // Everything above read a directory that other processes may be changing. A lease
   // published in the meantime has a different inode and a current mtime, so requiring
   // both to be unchanged keeps a reclaim from landing on a successor's fresh lease.
-  // MUTATED: identity re-validation removed
+  if (!(await hasIdentity(lockPath, stat))) return false;
 
   try {
     if (entries.length === 0) {
@@ -265,6 +281,26 @@ async function removeIfAbandoned(lockPath: string, staleMs: number): Promise<boo
   } catch {
     // ENOENT (another acquirer got there first) or ENOTEMPTY (a marker appeared
     // between the readdir and the rmdir): fall back to a normal retry.
+    return false;
+  }
+}
+
+/**
+ * Ownership proved by content instead of by inode, which is the only proof that holds
+ * here: ext4 hands a freed directory inode straight back to the next mkdir at the same
+ * path (measured 200/200 on this deployment's state filesystem), so a dev/ino match
+ * cannot distinguish our generation from a replacement that took the path after ours
+ * was removed. A directory holding anything other than exactly our marker is not ours,
+ * whatever its inode says.
+ */
+async function soleMarker(lockPath: string, markerName: string): Promise<boolean> {
+  try {
+    const entries = await fs.readdir(lockPath);
+    const recognized = entries.filter(
+      (name) => OWNER_MARKER.test(name) || TRANSITION_MARKER.test(name),
+    );
+    return recognized.length === 1 && recognized[0] === markerName;
+  } catch {
     return false;
   }
 }

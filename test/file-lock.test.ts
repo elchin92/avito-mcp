@@ -334,6 +334,37 @@ describe('file-lock', () => {
     expect((await fs.lstat(lockPath)).isDirectory()).toBe(true);
   });
 
+  // Ownership cannot be proved by inode: ext4 hands the freed directory inode straight
+  // back to the next mkdir at the same path, so a competitor that reclaimed our lease
+  // and republished it passes every dev/ino check. Only the marker set distinguishes
+  // them, and getting this wrong grants the lease to two processes at once.
+  it('refuses ownership when another generation published a marker into our directory', async () => {
+    const lockPath = `${target}.lock`;
+    const competitor = `owner-${'9'.repeat(32)}.json`;
+    const realOpen = fs.open.bind(fs) as (...args: unknown[]) => Promise<unknown>;
+    // Plant a competitor's marker in the instant between our mkdir and our marker write
+    // — exactly what a stalled writer does after its directory has been reclaimed.
+    vi.spyOn(fs, 'open').mockImplementation((async (path: unknown, ...rest: unknown[]) => {
+      if (String(path).startsWith(join(lockPath, 'owner-'))) {
+        await fs
+          .writeFile(join(lockPath, competitor), lockRecord(process.pid, '9'.repeat(32)), {
+            mode: 0o600,
+          })
+          .catch(() => undefined);
+      }
+      return realOpen(path, ...rest);
+    }) as unknown as typeof fs.open);
+
+    await expect(
+      withFileLock(target, async () => 'stolen', { timeoutMs: 300, staleMs: 60_000 }),
+    ).rejects.toBeInstanceOf(FileLockTimeoutError);
+
+    // The competitor's lease must be intact, and we must not have left our own marker
+    // behind — a second marker is what makes a directory unadjudicable in the first place.
+    const entries = await fs.readdir(lockPath);
+    expect(entries).toEqual([competitor]);
+  });
+
   it('serialises concurrent acquirers racing to reclaim the same abandoned directory', async () => {
     const lockPath = `${target}.lock`;
     await fs.mkdir(lockPath, { mode: 0o700 });
