@@ -62,8 +62,14 @@ export async function writeJsonAtomic(path: string, value: unknown): Promise<voi
   try {
     await handle.writeFile(`${JSON.stringify(value)}\n`, 'utf8');
     await handle.sync();
-  } finally {
     await handle.close();
+  } catch (error) {
+    // A write that fails after the file exists used to leave it behind: the close ran
+    // in a finally, but nothing removed the temp. ENOSPC and EIO reach this far more
+    // often than a kill does.
+    await handle.close().catch(() => undefined);
+    await fs.rm(temp, { force: true }).catch(() => undefined);
+    throw error;
   }
   try {
     await fs.rename(temp, path);
@@ -71,6 +77,51 @@ export async function writeJsonAtomic(path: string, value: unknown): Promise<voi
   } catch (error) {
     await fs.rm(temp, { force: true }).catch(() => undefined);
     throw error;
+  }
+  // After the durable write, so collecting other processes' litter never delays this one.
+  await sweepStaleTemps(directory);
+}
+
+/** A live temp exists for milliseconds; anything this old was abandoned. */
+const STALE_TEMP_MS = 3_600_000;
+/** Exactly what the writer above produces. Other components keep their own temps in
+ *  these directories under different names, and deleting one mid-write would lose data. */
+const OWN_TEMP_NAME = /^\.[0-9a-f]{24}\.tmp$/;
+const lastSweptAt = new Map<string, number>();
+
+/**
+ * Clears temps left by a process killed between open() and rename() — the one leak the
+ * error handling above cannot close, because no handler runs at all.
+ *
+ * Rate-limited to once per directory per stale window rather than once per process: a
+ * long-lived server would otherwise never collect a leak that happened after its first
+ * write, and a directory scan on every snapshot write is not free. It runs after the
+ * rename so it never sits between the caller's lease and its durable write.
+ *
+ * The age gate is what makes this safe beside a concurrent writer, whose temp is seconds
+ * old at most. It is judged on wall clock, so a large forward clock step could in
+ * principle condemn a live temp; the loser of that race is one write that fails and is
+ * retried, never a corrupted file, because the temp is not yet visible under its name.
+ */
+async function sweepStaleTemps(directory: string): Promise<void> {
+  const now = Date.now();
+  const last = lastSweptAt.get(directory);
+  if (last !== undefined && now - last < STALE_TEMP_MS) return;
+  const cutoff = now - STALE_TEMP_MS;
+  try {
+    // opendir streams, so a large ledger directory never materializes as one array.
+    const dir = await fs.opendir(directory);
+    for await (const entry of dir) {
+      if (!entry.isFile() || !OWN_TEMP_NAME.test(entry.name)) continue;
+      const candidate = join(directory, entry.name);
+      const stat = await fs.lstat(candidate).catch(() => undefined);
+      if (!stat?.isFile() || stat.isSymbolicLink() || stat.mtimeMs > cutoff) continue;
+      await fs.rm(candidate, { force: true }).catch(() => undefined);
+    }
+    lastSweptAt.set(directory, now);
+  } catch {
+    // Best effort: a leaked temp is untidy, never a correctness problem. Not recording
+    // the sweep leaves a transient failure to be retried on the next write.
   }
 }
 

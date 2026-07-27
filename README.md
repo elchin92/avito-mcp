@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![CI](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-330_passing-brightgreen)](./test)
+[![Tests](https://img.shields.io/badge/tests-382_passing-brightgreen)](./test)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **New in v1.3.2** — hard-confirmation lockout now survives restarts and is atomic across MCP processes; confirmation, cancellation, and final lockout cannot all claim the same pending action. See the [CHANGELOG](./CHANGELOG.md) for details.
+> **New in v1.3.3** — a lease directory left behind by a process killed before it wrote its owner marker no longer blocks its domain forever, and rate-limit snapshots are persisted through a queue instead of an unawaited lock. See the [CHANGELOG](./CHANGELOG.md) for details.
 
 ---
 

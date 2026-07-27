@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![CI](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-330_passing-brightgreen)](./test)
+[![Tests](https://img.shields.io/badge/tests-382_passing-brightgreen)](./test)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **Новое в v1.3.2** — блокировка hard-confirmation теперь переживает рестарт и атомарно работает между MCP-процессами; подтверждение, отмена и финальная блокировка не могут одновременно забрать одно pending action. Подробности — в [CHANGELOG](./CHANGELOG.md).
+> **Новое в v1.3.3** — каталог аренды, оставшийся от процесса, убитого до записи owner-маркера, больше не блокирует свой домен навсегда, а снапшоты rate-limit пишутся через очередь, а не через захват лока без ожидания результата. Подробности — в [CHANGELOG](./CHANGELOG.md).
 
 ---
 

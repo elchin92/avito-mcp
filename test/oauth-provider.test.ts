@@ -25,10 +25,11 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { createSandbox, removeSandbox } from './support/sandbox.js';
 import type { HttpConfig } from '../src/config.js';
 
 type ProviderCtor = typeof import('../src/http/oauth/provider.js').AvitoOAuthProvider;
@@ -836,7 +837,7 @@ describe('AvitoOAuthProvider — token housekeeping (v0.9.1)', () => {
 
 describe('OAuthStore — durable serialized shutdown', () => {
   it('awaits the latest snapshot, prevents a second owner and releases the lease', async () => {
-    const root = join(tmpdir(), `avito-oauth-durable-${randomBytes(6).toString('hex')}`);
+    const root = await createSandbox('oauth-durable');
     const storeFile = join(root, 'nested', 'oauth.json');
     const first = newProvider({ oauthStoreFile: storeFile });
     let second: Provider | undefined;
@@ -866,12 +867,12 @@ describe('OAuthStore — durable serialized shutdown', () => {
     } finally {
       await first.close().catch(() => undefined);
       await second?.close().catch(() => undefined);
-      await fs.rm(root, { recursive: true, force: true });
+      await removeSandbox(root);
     }
   });
 
   it('cannot resurrect a revoked token after restart', async () => {
-    const root = join(tmpdir(), `avito-oauth-revoke-${randomBytes(6).toString('hex')}`);
+    const root = await createSandbox('oauth-revoke');
     const storeFile = join(root, 'oauth.json');
     const first = newProvider({ oauthStoreFile: storeFile });
     let second: Provider | undefined;
@@ -889,12 +890,12 @@ describe('OAuthStore — durable serialized shutdown', () => {
     } finally {
       await first.close().catch(() => undefined);
       await second?.close().catch(() => undefined);
-      await fs.rm(root, { recursive: true, force: true });
+      await removeSandbox(root);
     }
   });
 
   it('fails startup on a corrupt persistent snapshot and does not leak its lease', async () => {
-    const root = join(tmpdir(), `avito-oauth-corrupt-${randomBytes(6).toString('hex')}`);
+    const root = await createSandbox('oauth-corrupt');
     const storeFile = join(root, 'oauth.json');
     try {
       await fs.mkdir(root, { recursive: true });
@@ -902,12 +903,12 @@ describe('OAuthStore — durable serialized shutdown', () => {
       expect(() => newProvider({ oauthStoreFile: storeFile })).toThrow(/parse OAuth store/i);
       await expect(fs.access(`${storeFile}.process.lock`)).rejects.toThrow();
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await removeSandbox(root);
     }
   });
 
   it('treats a fresh incomplete lease as live instead of deleting it', async () => {
-    const root = join(tmpdir(), `avito-oauth-fresh-lease-${randomBytes(6).toString('hex')}`);
+    const root = await createSandbox('oauth-fresh-lease');
     const storeFile = join(root, 'oauth.json');
     const leasePath = `${storeFile}.process.lock`;
     try {
@@ -915,12 +916,195 @@ describe('OAuthStore — durable serialized shutdown', () => {
       expect(() => newProvider({ oauthStoreFile: storeFile })).toThrow(/being initialized/i);
       expect((await fs.stat(leasePath)).isDirectory()).toBe(true);
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await removeSandbox(root);
+    }
+  });
+
+  // The HTTP transport used to refuse to start until an operator deleted this directory
+  // by hand, which is the worst possible response to a leftover from a killed process.
+  it.each([
+    ['nothing at all', async () => {}],
+    [
+      'two owner markers',
+      async (leasePath: string) => {
+        for (const id of ['aaa', 'bbb']) {
+          await fs.writeFile(
+            join(leasePath, `owner-${id}.json`),
+            JSON.stringify({ pid: 999_999, id }),
+            'utf8',
+          );
+        }
+      },
+    ],
+    [
+      'unrecognized leftovers',
+      async (leasePath: string) => {
+        await fs.writeFile(join(leasePath, 'garbage.txt'), 'x', 'utf8');
+      },
+    ],
+  ])('reclaims an abandoned lease holding %s and starts', async (_label, populate) => {
+    const root = await createSandbox('oauth-abandoned');
+    const storeFile = join(root, 'oauth.json');
+    const leasePath = `${storeFile}.process.lock`;
+    let provider: Provider | undefined;
+    try {
+      await fs.mkdir(leasePath, { recursive: true });
+      await populate(leasePath);
+      const old = new Date(Date.now() - 120_000);
+      for (const entry of await fs.readdir(leasePath)) {
+        await fs.utimes(join(leasePath, entry), old, old);
+      }
+      await fs.utimes(leasePath, old, old);
+
+      provider = newProvider({ oauthStoreFile: storeFile });
+      // Started, and holding a lease of its own rather than the wreckage.
+      const markers = (await fs.readdir(leasePath)).filter((name) => name.startsWith('owner-'));
+      expect(markers).toHaveLength(1);
+    } finally {
+      await provider?.close().catch(() => undefined);
+      await removeSandbox(root);
+    }
+  });
+
+  it('refuses an abandoned-looking lease while any marker names a live process', async () => {
+    const root = await createSandbox('oauth-live-marker');
+    const storeFile = join(root, 'oauth.json');
+    const leasePath = `${storeFile}.process.lock`;
+    try {
+      await fs.mkdir(leasePath, { recursive: true });
+      // Two markers is an unadjudicable shape, but one of them is this very process,
+      // so taking the lease would hand it to two owners at once.
+      await fs.writeFile(
+        join(leasePath, 'owner-live.json'),
+        JSON.stringify({ pid: process.pid, id: 'live' }),
+        'utf8',
+      );
+      await fs.writeFile(
+        join(leasePath, 'owner-dead.json'),
+        JSON.stringify({ pid: 999_999, id: 'dead' }),
+        'utf8',
+      );
+      const old = new Date(Date.now() - 120_000);
+      for (const entry of await fs.readdir(leasePath)) {
+        await fs.utimes(join(leasePath, entry), old, old);
+      }
+      await fs.utimes(leasePath, old, old);
+
+      expect(() => newProvider({ oauthStoreFile: storeFile })).toThrow(/ambiguous|already owned/i);
+      expect((await fs.readdir(leasePath)).sort()).toEqual(['owner-dead.json', 'owner-live.json']);
+    } finally {
+      await removeSandbox(root);
+    }
+  });
+
+  // writeFileSync creates the marker before it writes it, so a process killed inside that
+  // call leaves exactly one recognized marker holding nothing. That shape used to be
+  // fatal: reclaim declined it and inspectLease demanded manual removal.
+  it.each([
+    ['a zero-byte marker', ''],
+    ['a truncated marker', '{"pid":123,"i'],
+    ['a marker that is valid JSON but names no owner', '{"note":"not a lease"}'],
+  ])('reclaims a lease holding %s and starts', async (_label, contents) => {
+    const root = await createSandbox('oauth-unreadable');
+    const storeFile = join(root, 'oauth.json');
+    const leasePath = `${storeFile}.process.lock`;
+    let provider: Provider | undefined;
+    try {
+      await fs.mkdir(leasePath, { recursive: true });
+      await fs.writeFile(join(leasePath, 'owner-halfwritten.json'), contents, 'utf8');
+      const old = new Date(Date.now() - 120_000);
+      await fs.utimes(join(leasePath, 'owner-halfwritten.json'), old, old);
+      await fs.utimes(leasePath, old, old);
+
+      provider = newProvider({ oauthStoreFile: storeFile });
+      const markers = (await fs.readdir(leasePath)).filter((name) => name.startsWith('owner-'));
+      expect(markers).toHaveLength(1);
+      expect(markers[0]).not.toBe('owner-halfwritten.json');
+    } finally {
+      await provider?.close().catch(() => undefined);
+      await removeSandbox(root);
+    }
+  });
+
+  it('refuses an unadjudicable lease whose transition marker names a live claimant', async () => {
+    const root = await createSandbox('oauth-live-claimant');
+    const storeFile = join(root, 'oauth.json');
+    const leasePath = `${storeFile}.process.lock`;
+    try {
+      await fs.mkdir(leasePath, { recursive: true });
+      // Two recognized markers is an unadjudicable shape, so the reclaim runs its own pid
+      // scan rather than deferring to inspectLease. A transition marker carries its
+      // claimant pid in the FILENAME, and its payload deliberately names a dead process,
+      // so only reading the name can veto this.
+      const transitionMarker = `.transition-${process.pid}-abc.json`;
+      await fs.writeFile(
+        join(leasePath, transitionMarker),
+        JSON.stringify({ pid: 999_999, id: 'x' }),
+        'utf8',
+      );
+      await fs.writeFile(
+        join(leasePath, 'owner-dead.json'),
+        JSON.stringify({ pid: 999_999, id: 'dead' }),
+        'utf8',
+      );
+      const old = new Date(Date.now() - 120_000);
+      for (const entry of await fs.readdir(leasePath)) {
+        await fs.utimes(join(leasePath, entry), old, old);
+      }
+      await fs.utimes(leasePath, old, old);
+
+      expect(() => newProvider({ oauthStoreFile: storeFile })).toThrow(/ambiguous|transition/i);
+      expect((await fs.readdir(leasePath)).sort()).toEqual([transitionMarker, 'owner-dead.json']);
+    } finally {
+      await removeSandbox(root);
+    }
+  });
+
+  // A reclaim can delete the directory this process just created, and the filesystem
+  // hands the freed inode to whoever recreates the path, so identity says nothing. Only
+  // the marker set does. Driven through the same prototype seam the sibling race tests use.
+  it('does not take the lease when another generation publishes into our directory', async () => {
+    const { OAuthStore } = await import('../src/http/oauth/store.js');
+    const root = await createSandbox('oauth-sole-marker');
+    const storeFile = join(root, 'oauth.json');
+    const leasePath = `${storeFile}.process.lock`;
+    const prototype = OAuthStore.prototype as unknown as {
+      beforeLeaseOwnershipCheck: (leasePath: string) => void;
+    };
+    const originalHook = prototype.beforeLeaseOwnershipCheck;
+    let store: InstanceType<typeof OAuthStore> | undefined;
+    let intercepted = false;
+    try {
+      mkdirSync(root, { recursive: true });
+      prototype.beforeLeaseOwnershipCheck = (observedPath) => {
+        if (intercepted || observedPath !== leasePath) return;
+        intercepted = true;
+        writeFileSync(
+          join(leasePath, 'owner-competitor.json'),
+          JSON.stringify({ pid: process.pid, id: 'competitor' }),
+          'utf8',
+        );
+      };
+
+      // The competitor names a live process, so the lease is genuinely taken and we must
+      // refuse it rather than run alongside another owner of the same store file.
+      expect(() => {
+        store = new OAuthStore(storeFile);
+      }).toThrow(/already owned by active process/i);
+
+      expect(intercepted).toBe(true);
+      // And we left exactly the competitor behind: our own marker was withdrawn, which is
+      // what keeps a lost publication race from wedging the directory at two markers.
+      expect(readdirSync(leasePath)).toEqual(['owner-competitor.json']);
+    } finally {
+      prototype.beforeLeaseOwnershipCheck = originalHook;
+      store?.close();
+      await removeSandbox(root);
     }
   });
 
   it('does not remove a lease whose ownership marker changed', async () => {
-    const root = join(tmpdir(), `avito-oauth-lease-owner-${randomBytes(6).toString('hex')}`);
+    const root = await createSandbox('oauth-lease-owner');
     const storeFile = join(root, 'oauth.json');
     const provider = newProvider({ oauthStoreFile: storeFile });
     const leasePath = `${storeFile}.process.lock`;
@@ -936,13 +1120,13 @@ describe('OAuthStore — durable serialized shutdown', () => {
       await expect(fs.access(leasePath)).resolves.toBeUndefined();
     } finally {
       await provider.close().catch(() => undefined);
-      await fs.rm(root, { recursive: true, force: true });
+      await removeSandbox(root);
     }
   });
 
   it('does not let a delayed stale cleaner remove a replacement lease', async () => {
     const { OAuthStore } = await import('../src/http/oauth/store.js');
-    const root = join(tmpdir(), `avito-oauth-lease-cleaner-race-${randomBytes(6).toString('hex')}`);
+    const root = await createSandbox('oauth-lease-cleaner-race');
     const storeFile = join(root, 'oauth.json');
     const leasePath = `${storeFile}.process.lock`;
     const prototype = OAuthStore.prototype as unknown as {
@@ -980,13 +1164,13 @@ describe('OAuthStore — durable serialized shutdown', () => {
     } finally {
       prototype.beforeLeaseTransition = originalHook;
       await replacement?.close().catch(() => undefined);
-      await fs.rm(root, { recursive: true, force: true });
+      await removeSandbox(root);
     }
   });
 
   it('does not let a delayed release transition remove a replacement lease', async () => {
     const { OAuthStore } = await import('../src/http/oauth/store.js');
-    const root = join(tmpdir(), `avito-oauth-lease-release-race-${randomBytes(6).toString('hex')}`);
+    const root = await createSandbox('oauth-lease-release-race');
     const storeFile = join(root, 'oauth.json');
     const leasePath = `${storeFile}.process.lock`;
     const displacedPath = `${leasePath}.displaced`;
@@ -1019,13 +1203,13 @@ describe('OAuthStore — durable serialized shutdown', () => {
       prototype.beforeLeaseTransition = originalHook;
       await first.close().catch(() => undefined);
       await replacement?.close().catch(() => undefined);
-      await fs.rm(root, { recursive: true, force: true });
+      await removeSandbox(root);
     }
   });
 
   it('releases an acquired lease when OAuth router construction fails', async () => {
     if (!createOAuthSubsystem) return;
-    const root = join(tmpdir(), `avito-oauth-router-failure-${randomBytes(6).toString('hex')}`);
+    const root = await createSandbox('oauth-router-failure');
     const storeFile = join(root, 'oauth.json');
     try {
       expect(() =>
@@ -1035,12 +1219,12 @@ describe('OAuthStore — durable serialized shutdown', () => {
       ).toThrow();
       await expect(fs.access(`${storeFile}.process.lock`)).rejects.toThrow();
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await removeSandbox(root);
     }
   });
 
   it('validates the public URL before acquiring a durable lease', async () => {
-    const root = join(tmpdir(), `avito-oauth-url-failure-${randomBytes(6).toString('hex')}`);
+    const root = await createSandbox('oauth-url-failure');
     const storeFile = join(root, 'oauth.json');
     try {
       expect(
@@ -1051,7 +1235,7 @@ describe('OAuthStore — durable serialized shutdown', () => {
       ).toThrow();
       await expect(fs.access(`${storeFile}.process.lock`)).rejects.toThrow();
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await removeSandbox(root);
     }
   });
 });

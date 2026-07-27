@@ -172,6 +172,27 @@ async function startServer(): Promise<void> {
     await server.connect(transport);
     // After connect: mirror selected pino events to the stdio client as logging notifications.
     bindMcpLogger(server);
+
+    // A stdio run normally ends with its stdin pipe, but callers that spawn one per
+    // tool call kill it instead. Without a handler SIGTERM is fatal immediately, and a
+    // queued rate-limit write caught mid-acquisition leaves a lease directory that
+    // blocks the domain until it ages out. Only registered when no HTTP listener
+    // follows, which installs its own handler covering the same flush.
+    if (!runHttpMcp && !config.webhook.enabled) {
+      let flushing = false;
+      const flushAndExit = (signal: string): void => {
+        if (flushing) return;
+        flushing = true;
+        logger.debug({ signal }, 'avito-mcp stdio shutting down');
+        void client.rateLimiter
+          .flushPersisted()
+          .catch((err) => logger.warn({ err }, 'error flushing rate-limit state'))
+          .finally(() => process.exit(0));
+        setTimeout(() => process.exit(0), 2_000).unref();
+      };
+      process.once('SIGTERM', () => flushAndExit('SIGTERM'));
+      process.once('SIGINT', () => flushAndExit('SIGINT'));
+    }
   }
 
   // Misconfiguration guards for the webhook receiver (config stays permissive;
@@ -217,6 +238,11 @@ async function startServer(): Promise<void> {
       void handle
         .close()
         .catch((err) => logger.warn({ err }, 'error during HTTP shutdown'))
+        // Queued rate-limit writes must land before exit: a process killed between the
+        // mkdir of a lease directory and its owner marker leaves one nobody can reclaim
+        // until it ages past staleMs, and every call in that domain blocks meanwhile.
+        .then(() => client.rateLimiter.flushPersisted())
+        .catch((err) => logger.warn({ err }, 'error flushing rate-limit state'))
         .finally(() => process.exit(0));
       // Hard exit if something hangs (an open SSE stream, a stuck close).
       setTimeout(() => process.exit(0), 10_000).unref();

@@ -17,6 +17,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  rmdirSync,
   type Stats,
   writeFileSync,
 } from 'node:fs';
@@ -635,12 +636,32 @@ export class OAuthStore {
     const leaseId = OAuthStore.newId();
     const leaseContents = JSON.stringify({ pid: process.pid, id: leaseId });
     const markerPath = join(leasePath, `owner-${leaseId}.json`);
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    // Reclaims and lost publication races do not adjudicate anything, so they must not
+    // consume the budget meant for EEXIST decisions, or a successful reclaim would end
+    // in a generic 'Unable to acquire'.
+    for (let adjudications = 0, guard = 0; adjudications < 2 && guard < 8; guard += 1) {
       try {
         // mkdir owns the path; the generation-specific marker is the atomic
         // transition baton used by both stale cleanup and normal release.
         mkdirSync(leasePath, { mode: 0o700 });
         writeFileSync(markerPath, leaseContents, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        // Ownership proved by content, not by inode: a reclaim can remove this directory
+        // between the mkdir and this write, and ext4 hands the freed inode to whoever
+        // recreates the path, so identityOf() cannot tell our generation from theirs.
+        // A directory holding anything but our marker is not ours.
+        this.beforeLeaseOwnershipCheck(leasePath);
+        if (!this.soleLeaseMarker(leasePath, `owner-${leaseId}.json`)) {
+          // Our marker may be sitting inside a generation we do not own. Its name carries
+          // our id, so removing it can never disturb a competitor; removing the directory
+          // would destroy a live lease.
+          rmSync(markerPath, { force: true });
+          try {
+            rmdirSync(leasePath); // ENOTEMPTY unless nobody published at all
+          } catch {
+            // A competitor's marker is there, which is exactly what we want to leave alone.
+          }
+          continue;
+        }
         const stat = lstatSync(leasePath);
         this.leasePath = leasePath;
         this.leaseMarkerPath = markerPath;
@@ -649,7 +670,15 @@ export class OAuthStore {
         this.leaseIdentity = this.identityOf(stat);
         return;
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+        const code = (err as NodeJS.ErrnoException).code;
+        // Our directory was reclaimed underneath us before the marker landed. That is
+        // ordinary contention, not a failure to report to the caller.
+        if (code === 'ENOENT') continue;
+        if (code !== 'EEXIST') throw err;
+        // A lease that cannot name an owner is unreachable for inspectLease(), which
+        // refuses it and leaves the server unable to start until someone deletes the
+        // directory by hand. Reclaiming it first turns that into a self-healing start.
+        if (this.reclaimAbandonedLease(leasePath)) continue;
         let snapshot: LeaseSnapshot;
         try {
           snapshot = this.inspectLease(leasePath);
@@ -675,10 +704,149 @@ export class OAuthStore {
             { cause: err },
           );
         }
+        adjudications += 1;
         this.transitionLease(snapshot, 'reclaim');
       }
     }
     throw new Error(`Unable to acquire OAuth store lease for ${this.storeFile}`);
+  }
+
+  /** The lease directory holds exactly our marker and nothing else recognized. */
+  private soleLeaseMarker(leasePath: string, markerName: string): boolean {
+    try {
+      const recognized = readdirSync(leasePath).filter(
+        (name) => LEASE_OWNER_MARKER.test(name) || LEASE_TRANSITION_MARKER.test(name),
+      );
+      return recognized.length === 1 && recognized[0] === markerName;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Reclaims a lease directory whose shape cannot name an owner — the mirror of
+   * removeIfAbandoned() in src/core/file-lock.ts, and reachable the same way: mkdirSync
+   * publishes the directory and the owner marker lands in it a moment later, so a
+   * process killed inside that window leaves a directory with nothing to identify.
+   *
+   * inspectLease() cannot adjudicate that shape and throws, and acquireLease() only
+   * resumes on ENOENT, so what should be a transient leftover instead keeps the HTTP
+   * transport from starting at all until an operator removes the directory.
+   *
+   * The gates are the same two that make this safe there: no marker may name a live
+   * process, and nothing here may have been touched within the initialization grace,
+   * which a healthy owner never satisfies because its marker write lands microseconds
+   * after the mkdir and bumps the directory mtime with it.
+   */
+  private reclaimAbandonedLease(leasePath: string): boolean {
+    let stat: Stats;
+    let entries: string[];
+    try {
+      stat = lstatSync(leasePath);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+      entries = readdirSync(leasePath);
+    } catch {
+      return false;
+    }
+
+    // Exactly one marker that names an owner is the healthy shape; inspectLease() decides
+    // that one by pid. A marker that cannot be parsed names nobody and is therefore just
+    // as unadjudicable as no marker at all — and it is the likeliest residue of all, since
+    // writeFileSync creates the marker before it writes it, so a process killed inside
+    // that call leaves a zero-byte one behind. Without this it would keep the transport
+    // down permanently, which is the exact failure this reclaim exists to end.
+    const recognized = entries.filter(
+      (name) => LEASE_OWNER_MARKER.test(name) || LEASE_TRANSITION_MARKER.test(name),
+    );
+    if (recognized.length === 1 && this.leaseMarkerNamesAnOwner(leasePath, recognized[0]!)) {
+      return false;
+    }
+
+    let newestMtimeMs = stat.mtimeMs;
+    for (const name of entries) {
+      let entryStat: Stats;
+      try {
+        entryStat = lstatSync(join(leasePath, name));
+      } catch {
+        // The entry vanished mid-scan, so someone is actively working in here.
+        return false;
+      }
+      newestMtimeMs = Math.max(newestMtimeMs, entryStat.mtimeMs);
+      const pid = this.leaseEntryOwnerPid(leasePath, name, entryStat);
+      if (pid !== undefined && processIsAlive(pid)) return false;
+    }
+    if (Date.now() - newestMtimeMs <= LEASE_INITIALIZATION_GRACE_MS) return false;
+
+    // Everything above read a directory another process may be replacing. A lease
+    // published in the meantime carries a fresh mtime, so requiring it unchanged keeps
+    // the reclaim off a successor that took the path while we were looking.
+    try {
+      const current = lstatSync(leasePath);
+      if (
+        !current.isDirectory() ||
+        current.dev !== stat.dev ||
+        current.ino !== stat.ino ||
+        current.mtimeMs !== stat.mtimeMs
+      ) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+
+    try {
+      if (entries.length === 0) {
+        // rmdir refuses with ENOTEMPTY the instant a marker appears, so a generation that
+        // published while we looked survives even if it reused this very inode.
+        rmdirSync(leasePath);
+      } else {
+        const movedPath = `${leasePath}.transitioned-${OAuthStore.newId()}`;
+        renameSync(leasePath, movedPath);
+        try {
+          rmSync(movedPath, { recursive: true, force: true });
+        } catch {
+          // The lease path is free the moment the rename lands. A failed delete leaves
+          // litter, not a blocked lease, so it must not turn the reclaim into a failure.
+        }
+      }
+    } catch {
+      return false;
+    }
+    logger.warn(
+      { lease: basename(leasePath), ageMs: Math.round(Date.now() - newestMtimeMs) },
+      'oauth store: reclaimed an abandoned lease',
+    );
+    return true;
+  }
+
+  /** True when this marker identifies an owner, so inspectLease() can adjudicate it by pid. */
+  private leaseMarkerNamesAnOwner(leasePath: string, name: string): boolean {
+    // A transition marker carries its claimant pid in the filename, so it always names one.
+    if (LEASE_TRANSITION_MARKER.test(name)) return true;
+    try {
+      this.parseLeaseOwner(readFileSync(join(leasePath, name), 'utf8'));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The process an entry claims, when it can be read; undefined leaves the age gate in charge. */
+  private leaseEntryOwnerPid(
+    leasePath: string,
+    name: string,
+    entryStat: Stats,
+  ): number | undefined {
+    const transition = LEASE_TRANSITION_MARKER.exec(name);
+    if (transition) return Number(transition[1]);
+    if (!LEASE_OWNER_MARKER.test(name) || !entryStat.isFile() || entryStat.isSymbolicLink()) {
+      return undefined;
+    }
+    try {
+      return this.parseLeaseOwner(readFileSync(join(leasePath, name), 'utf8')).pid;
+    } catch {
+      return undefined;
+    }
   }
 
   private inspectLease(leasePath: string): LeaseSnapshot {
@@ -810,6 +978,11 @@ export class OAuthStore {
 
   private beforeLeaseTransition(_reason: LeaseTransitionReason, _leasePath: string): void {
     // Tests override this no-op to deterministically exercise generation replacement races.
+  }
+
+  private beforeLeaseOwnershipCheck(_leasePath: string): void {
+    // Tests override this no-op to publish a competing marker in the window between our
+    // marker write and the ownership check that has to notice it.
   }
 
   private releaseLease(): void {

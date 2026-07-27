@@ -41,3 +41,7 @@ webhook-events.jsonl
 deploy/Caddyfile
 AUDIT-*.md
 deploy/Caddyfile.bak*
+
+# Test scratch directories (see test/support/sandbox.ts — they must live on the repo
+# filesystem, not on tmpfs, or the lease tests silently lose what they can detect)
+test/.sandbox/
