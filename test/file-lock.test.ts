@@ -2,20 +2,16 @@
  * Tests for the cross-process token lease. We do not fork processes here; the
  * deterministic transition test injects the exact successor-replacement race.
  *
- * These run below the project directory rather than in os.tmpdir() on purpose. The
- * lease protocol depends on how the filesystem recycles directory inodes, and tmpdir
- * is frequently tmpfs, which never reuses a freed inode — the one filesystem where an
- * ownership check based on dev/ino looks sound. The project directory sits on whatever
- * filesystem the deployment actually keeps its runtime state on, which is the case
- * these tests need to cover.
+ * They run in the repo-filesystem sandbox rather than os.tmpdir() on purpose; the
+ * reasoning lives in test/support/sandbox.ts.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 
 import { FileLockTimeoutError, withFileLock } from '../src/core/file-lock.js';
+import { createSandbox, removeSandbox } from './support/sandbox.js';
 
 function lockRecord(pid: number, nonce: string, createdAt = Date.now()): string {
   return `${JSON.stringify({ version: 1, pid, createdAt, nonce })}\n`;
@@ -75,15 +71,13 @@ describe('file-lock', () => {
   let target: string;
 
   beforeEach(async () => {
-    // Anchored to this file, not to process.cwd(), which vitest does not guarantee.
-    base = join(import.meta.dirname, `.locktest-${randomBytes(6).toString('hex')}`);
-    await fs.mkdir(base, { recursive: true, mode: 0o700 });
+    base = await createSandbox('lock');
     target = join(base, 'lock-target');
   });
 
   afterEach(async () => {
     // The whole sandbox goes, so leases, transitioned leftovers and strays all go with it.
-    await fs.rm(base, { recursive: true, force: true });
+    await removeSandbox(base);
     vi.restoreAllMocks();
   });
 

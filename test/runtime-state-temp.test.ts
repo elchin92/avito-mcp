@@ -3,15 +3,15 @@
  * leave that temp behind: a write that failed after the file existed (the close ran in
  * a finally, nothing removed the file), and a process killed between open and rename.
  *
- * Like test/file-lock.test.ts these run below the project directory rather than in
- * os.tmpdir(), so the filesystem matches the one the deployment stores state on.
+ * Like test/file-lock.test.ts these run in the repo-filesystem sandbox rather than in
+ * os.tmpdir(); see test/support/sandbox.ts.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
 
 import { writeJsonAtomic } from '../src/core/runtime-state.js';
+import { createSandbox, removeSandbox } from './support/sandbox.js';
 
 let base: string;
 
@@ -21,14 +21,12 @@ async function temps(directory: string): Promise<string[]> {
 }
 
 beforeEach(async () => {
-  // Anchored to this file, not to process.cwd(), which vitest does not guarantee.
-  base = join(import.meta.dirname, `.tmptest-${randomBytes(6).toString('hex')}`);
-  await fs.mkdir(base, { recursive: true, mode: 0o700 });
+  base = await createSandbox('temp');
 });
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await fs.rm(base, { recursive: true, force: true });
+  await removeSandbox(base);
 });
 
 describe('writeJsonAtomic temp handling', () => {

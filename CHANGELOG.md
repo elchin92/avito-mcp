@@ -5,7 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [1.3.3] - 2026-07-27
 
-Availability patch for a permanent cross-process lock deadlock: a lease directory left behind by a process killed at the wrong moment could block its domain indefinitely, failing every call in it until the directory was removed by hand. Tool names, schemas, and configuration are unchanged. Upgrading is strongly recommended for every deployment that runs more than one avito-mcp process against the same runtime state. The release gate passes **382 tests across 33 files** with **81.41% statements / 73.61% branches / 82.06% functions / 84.34% lines** coverage.
+Availability patch for a permanent cross-process lock deadlock: a lease directory left behind by a process killed at the wrong moment could block its domain indefinitely, failing every call in it until the directory was removed by hand. Tool names, schemas, and configuration are unchanged. Upgrading is strongly recommended for every deployment that runs more than one avito-mcp process against the same runtime state. The release gate passes **382 tests across 33 files** with **81.46% statements / 73.65% branches / 82.06% functions / 84.37% lines** coverage.
 
 ### Fixed
 
@@ -21,7 +21,7 @@ Availability patch for a permanent cross-process lock deadlock: a lease director
 
 ### Testing
 
-- `test/file-lock.test.ts` runs below the project directory instead of `os.tmpdir()`. The lease protocol depends on how the filesystem recycles directory inodes, and tmpdir is frequently tmpfs, which never reuses a freed inode — the one filesystem on which an ownership check based on `dev`/`ino` looks correct.
+- Every suite that exercises a lease now runs in a scratch directory on the repository's own filesystem instead of `os.tmpdir()`, through one helper in `test/support/sandbox.ts`. The lease protocol depends on how the filesystem recycles directory inodes, and tmpdir is frequently tmpfs, which never reuses a freed inode — the one filesystem on which an ownership check based on `dev`/`ino` looks correct. A relocation alone proves nothing, so a test now recreates a lock path, asserts the inode really was recycled, and fails with an explicit wrong-filesystem message where it was not.
 
 ## [1.3.2] - 2026-07-17
 
