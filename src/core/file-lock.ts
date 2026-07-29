@@ -55,6 +55,7 @@ interface LockOwnership extends LockSnapshot {
 
 const OWNER_MARKER = /^owner-([0-9a-f]{32})\.json$/;
 const TRANSITION_MARKER = /^\.transition-(\d+)-([0-9a-f]{32})\.json$/;
+const RECLAIM_MARKER = '.reclaim.json';
 
 const DEFAULTS: Required<FileLockOptions> = {
   timeoutMs: 30_000,
@@ -258,20 +259,46 @@ async function removeIfAbandoned(lockPath: string, staleMs: number): Promise<boo
 
   // Exactly one recognized marker is the healthy shape; staleSnapshot() owns it.
   const recognized = entries.filter(
-    (name) => OWNER_MARKER.test(name) || TRANSITION_MARKER.test(name),
+    (name) => OWNER_MARKER.test(name) || TRANSITION_MARKER.test(name) || name === RECLAIM_MARKER,
   );
   if (recognized.length === 1) return false;
   if (!(await abandonedFor(lockPath, entries, stat.mtimeMs, staleMs))) return false;
-  // Everything above read a directory that other processes may be changing. A lease
-  // published in the meantime has a different inode and a current mtime, so requiring
-  // both to be unchanged keeps a reclaim from landing on a successor's fresh lease.
-  if (!(await hasIdentity(lockPath, stat))) return false;
-
   try {
     if (entries.length === 0) {
       await fs.rmdir(lockPath);
       logReclaim(lockPath, stat.mtimeMs, 'no owner marker was ever written');
       return true;
+    }
+    // Publish a live transition marker before moving a non-empty directory. This is
+    // the compare-and-claim step: if a successor replaced the directory while the
+    // checks above were awaiting, our marker lands in that successor and the entry
+    // comparison fails. Once it lands in the checked generation, cooperating
+    // reclaimers see our live PID and cannot replace the directory before rename.
+    const claimName = RECLAIM_MARKER;
+    const claimPath = join(lockPath, claimName);
+    const claim = await fs.open(claimPath, 'wx', 0o600);
+    try {
+      await claim.writeFile(
+        `${JSON.stringify({
+          version: 1,
+          pid: process.pid,
+          createdAt: Date.now(),
+          nonce: randomBytes(16).toString('hex'),
+        })}\n`,
+        'utf8',
+      );
+      await claim.sync();
+    } finally {
+      await claim.close();
+    }
+    const currentEntries = await fs.readdir(lockPath);
+    if (
+      currentEntries.length !== entries.length + 1 ||
+      !entries.every((entry) => currentEntries.includes(entry)) ||
+      !currentEntries.includes(claimName)
+    ) {
+      await fs.rm(claimPath, { force: true }).catch(() => undefined);
+      return false;
     }
     const transitionedPath = `${lockPath}.transitioned-${randomBytes(16).toString('hex')}`;
     await fs.rename(lockPath, transitionedPath);
@@ -297,7 +324,7 @@ async function soleMarker(lockPath: string, markerName: string): Promise<boolean
   try {
     const entries = await fs.readdir(lockPath);
     const recognized = entries.filter(
-      (name) => OWNER_MARKER.test(name) || TRANSITION_MARKER.test(name),
+      (name) => OWNER_MARKER.test(name) || TRANSITION_MARKER.test(name) || name === RECLAIM_MARKER,
     );
     return recognized.length === 1 && recognized[0] === markerName;
   } catch {
@@ -368,6 +395,13 @@ async function entryOwnerPid(
 ): Promise<number | undefined> {
   const transition = TRANSITION_MARKER.exec(name);
   if (transition) return Number(transition[1]);
+  if (name === RECLAIM_MARKER && entryStat.isFile() && !entryStat.isSymbolicLink()) {
+    try {
+      return parseRecord(await fs.readFile(join(lockPath, name), 'utf8'))?.pid;
+    } catch {
+      return undefined;
+    }
+  }
   if (!OWNER_MARKER.test(name) || !entryStat.isFile() || entryStat.isSymbolicLink()) {
     return undefined;
   }
@@ -415,7 +449,7 @@ async function readSnapshot(lockPath: string): Promise<LockSnapshot | undefined>
     return snapshot;
   }
   const markerNames = entries.filter(
-    (name) => OWNER_MARKER.test(name) || TRANSITION_MARKER.test(name),
+    (name) => OWNER_MARKER.test(name) || TRANSITION_MARKER.test(name) || name === RECLAIM_MARKER,
   );
   if (markerNames.length !== 1) return snapshot;
 
@@ -438,6 +472,7 @@ async function readSnapshot(lockPath: string): Promise<LockSnapshot | undefined>
   }
   const transition = TRANSITION_MARKER.exec(markerName);
   if (transition) snapshot.claimantPid = Number(transition[1]);
+  if (markerName === RECLAIM_MARKER) snapshot.claimantPid = snapshot.record?.pid;
   return snapshot;
 }
 

@@ -303,6 +303,37 @@ describe('file-lock', () => {
     expect(leftovers).toEqual([]);
   });
 
+  it('preserves a live successor installed while an abandoned reclaim is checking', async () => {
+    const lockPath = `${target}.lock`;
+    await fs.mkdir(lockPath, { mode: 0o700 });
+    await fs.writeFile(join(lockPath, 'garbage.txt'), 'x', { mode: 0o600 });
+    await backdate(lockPath);
+
+    const parkedPath = `${lockPath}.abandoned`;
+    const successorNonce = 'd'.repeat(32);
+    const successorMarker = `owner-${successorNonce}.json`;
+    const successor = lockRecord(process.pid, successorNonce);
+    const realOpen = fs.open.bind(fs) as (...args: unknown[]) => Promise<unknown>;
+    let swapped = false;
+    vi.spyOn(fs, 'open').mockImplementation((async (path: unknown, ...rest: unknown[]) => {
+      if (!swapped && basename(String(path)) === '.reclaim.json') {
+        swapped = true;
+        await fs.rename(lockPath, parkedPath);
+        await fs.mkdir(lockPath, { mode: 0o700 });
+        await fs.writeFile(join(lockPath, successorMarker), successor, { mode: 0o600 });
+      }
+      return realOpen(path, ...rest);
+    }) as unknown as typeof fs.open);
+
+    await expect(
+      withFileLock(target, async () => 'never', { timeoutMs: 200, staleMs: 60_000 }),
+    ).rejects.toBeInstanceOf(FileLockTimeoutError);
+
+    expect(swapped).toBe(true);
+    expect(await fs.readdir(lockPath)).toEqual([successorMarker]);
+    expect(await fs.readFile(join(lockPath, successorMarker), 'utf8')).toBe(successor);
+  });
+
   // The reclaim path must never be able to break mutual exclusion. Age alone is not
   // enough to take a lease: a marker naming a live process always wins.
   it.each([
