@@ -694,6 +694,23 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
       // is a different brand and would land on the 500 branch.
       throw new OAuthError(OAuthErrorCode.InvalidToken, 'Invalid or expired access token');
     }
+    // ⚠️ M5.7 — this is SET EQUALITY, not "has the scope it needs", and that is
+    // a migration hazard, not a style choice.
+    //
+    // The spec says servers MUST honour scope hierarchies; this deployment has
+    // exactly one scope, so there is no hierarchy to honour and equality and
+    // containment coincide. The moment a second scope exists they stop
+    // coinciding, and this line rejects every token that does not carry the new
+    // set EXACTLY — including every token already in the field. Splitting
+    // `avito:mcp` into `avito:read` / `avito:write` therefore logs out the
+    // entire installed base at the instant of deployment, silently, with an
+    // `invalid_token` that looks to each client like an expiry it should have
+    // been able to refresh through.
+    //
+    // The decision to keep one scope for this major is recorded in
+    // docs/adr/0005-scopes.md. Whoever revisits it: relax this to containment
+    // and accept `avito:mcp` as a super-scope FIRST, ship that, and only then
+    // start issuing the narrower scopes. See M8.7.
     if (
       !rec.scopes.includes(REQUIRED_SCOPE) ||
       rec.scopes.some((scope) => scope !== REQUIRED_SCOPE)

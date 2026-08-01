@@ -47,6 +47,14 @@ In `AVITO_MCP_HTTP_AUTH=oauth` this value is not a display string. It becomes th
 - **Changing it is changing authorization servers.** A client that recorded the old issuer is required to treat the new one as a different server. Registered clients and issued tokens in `AVITO_MCP_OAUTH_STORE_FILE` are therefore discarded on the first start under a new public URL (logged as `issuer identifier changed`), and every client re-registers and re-authorizes. Plan the change like a credential rotation, not like a rename.
 - **Clients compare it byte for byte.** The `iss` parameter on the authorization response and the `issuer` in the metadata document are the same string, trailing slash included; a conformant client may not normalise either side before comparing. If you put avito-mcp behind a proxy, do not let the proxy rewrite the host or the scheme.
 
+### `AVITO_MCP_OAUTH_STORE_FILE` holds tokens in cleartext — accepted risk
+
+If you enable the durable OAuth store, issued access tokens, refresh tokens and self-registered `client_secret` values are written to that file **as they are**: the token strings are object keys, the secret is a plain field. They are not hashed and not encrypted.
+
+The file is created `0600` in a `0700` directory and is written atomically under an exclusive process lease, so the people who can read it are `root`, the service account avito-mcp runs as, and anyone holding a backup or container layer that contains it. The first two can already read `AVITO_MCP_OAUTH_OWNER_PASSWORD` from the process environment and mint fresh tokens whenever they like, so hashing removes nobody from that list. Access tokens expire in an hour by default, refresh tokens in 30 days, all are revocable, and all are discarded when the issuer identifier changes.
+
+The reasoning and the conditions that would reverse this decision are in [`docs/adr/0006-token-storage.md`](docs/adr/0006-token-storage.md) — the short version is that it stops being an accepted risk the moment any long-lived machine-to-machine credential lives in this store, or the file leaves the host's private state directory. **Reports are in scope** if the file is created with wider permissions than described, if its contents reach a log or an MCP resource, or if another local user can read it.
+
 ## Disclosure
 
 Standard coordinated disclosure: please give us a reasonable window to ship a fix before discussing the issue publicly. After a patched version is on npm, write about it however you like.
