@@ -41,6 +41,21 @@ import { applyLegacyWireDefaults } from '../src/core/wire-compat.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = join(here, '..', 'dist', 'manifest.json');
 
+/**
+ * Deliberately NOT `test/support/config-fixture.ts`, even though the literal below
+ * is the one that fixture replaced everywhere else.
+ *
+ * This script runs inside the Docker build stage, which copies only `src/`,
+ * `scripts/`, `tsconfig.json` and `tsconfig.scripts.json` — there is no `test/`
+ * in that layer, so importing from it turns `npm run generate:manifest` into a
+ * build failure. `tsconfig.scripts.json` excludes `test` for the same reason, and
+ * `files` in package.json never ships `test/`. The manifest is a release artefact;
+ * it must not depend on the test tree.
+ *
+ * Drift between the two is harmless: this config exists only to force every tool
+ * into existence (full_access + confirmation on + auth tools exposed), and
+ * `test/registry.test.ts` mounts the same registry and asserts its shape.
+ */
 function makeFakeConfig(): Config {
   return {
     clientId: 'manifest-only',

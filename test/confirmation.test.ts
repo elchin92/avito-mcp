@@ -15,7 +15,6 @@ import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 
 import { AvitoClient } from '../src/core/client.js';
@@ -25,54 +24,7 @@ import { PendingActionStore } from '../src/core/pending-actions.js';
 import { register as registerMeta } from '../src/domains/meta.js';
 import { register as registerMessenger } from '../src/domains/messenger.js';
 import type { Config, ConfirmationMode } from '../src/config.js';
-
-function makeConfig(overrides: Partial<Config> = {}): Config {
-  return {
-    clientId: 'cid',
-    clientSecret: 'sec',
-    profileId: 12345,
-    baseUrl: 'https://api.test.example',
-    cpaSource: 'avito-mcp-test',
-    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
-    logLevel: 'fatal',
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
-    exposeAuthTools: false,
-    allowedUploadDirs: [],
-    maxUploadMb: 15,
-    confirmationMode: 'money_public',
-    confirmationTtlSec: 900,
-    confirmationSecret: undefined,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
-    http: {
-      transport: 'stdio',
-      host: '127.0.0.1',
-      port: 3000,
-      publicUrl: 'http://127.0.0.1:3000',
-      auth: 'oauth',
-      authTokens: [],
-      allowNoAuth: false,
-      allowedHosts: [],
-      allowedOrigins: [],
-      maxSessions: 100,
-      sessionIdleSec: 1800,
-      maxInflight: 64,
-      maxStreams: 32,
-      oauthTokenTtlSec: 3600,
-    },
-    webhook: {
-      enabled: false,
-      publicUrl: 'http://127.0.0.1:3000',
-      path: '/avito/webhook',
-      bufferSize: 100,
-    },
-    ...overrides,
-  };
-}
+import { makeConfig } from './support/config-fixture.js';
 
 async function makeRig(
   confirmationMode: ConfirmationMode,
@@ -152,7 +104,6 @@ async function makeUploadRig(confirmationMode: ConfirmationMode, extra: Partial<
     ...extra,
     confirmationMode,
     allowedUploadDirs: [uploadDir],
-    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
   });
   const imagePath = join(uploadDir, 'one.png');
   await fs.writeFile(

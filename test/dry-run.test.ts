@@ -11,9 +11,6 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/client';
 import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 
 import { AvitoClient } from '../src/core/client.js';
@@ -21,52 +18,10 @@ import { defineTool, type ToolContext } from '../src/core/tool-factory.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import { IdempotencyStore } from '../src/core/idempotency.js';
 import type { Config } from '../src/config.js';
+import { makeConfig as makeBaseConfig, type ConfigOverrides } from './support/config-fixture.js';
 
-function makeConfig(overrides: Partial<Config> = {}): Config {
-  return {
-    clientId: 'cid',
-    clientSecret: 'sec',
-    profileId: 12345,
-    baseUrl: 'https://api.test.example',
-    cpaSource: 'avito-mcp-test',
-    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
-    logLevel: 'fatal',
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
-    exposeAuthTools: false,
-    allowedUploadDirs: [],
-    maxUploadMb: 15,
-    confirmationMode: 'off',
-    confirmationTtlSec: 900,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
-    http: {
-      transport: 'stdio',
-      host: '127.0.0.1',
-      port: 3000,
-      publicUrl: 'http://127.0.0.1:3000',
-      auth: 'oauth',
-      authTokens: [],
-      allowNoAuth: false,
-      allowedHosts: [],
-      allowedOrigins: [],
-      maxSessions: 100,
-      sessionIdleSec: 1800,
-      maxInflight: 64,
-      maxStreams: 32,
-      oauthTokenTtlSec: 3600,
-    },
-    webhook: {
-      enabled: false,
-      publicUrl: 'http://127.0.0.1:3000',
-      path: '/avito/webhook',
-      bufferSize: 100,
-    },
-    ...overrides,
-  };
+function makeConfig(overrides: ConfigOverrides = {}): Config {
+  return makeBaseConfig({ confirmationMode: 'off', ...overrides });
 }
 
 async function makeRig(cfg: Config) {

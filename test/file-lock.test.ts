@@ -374,12 +374,75 @@ describe('file-lock', () => {
     expect(entries).toEqual([competitor]);
   });
 
-  // The one test here that depends on the filesystem, and the reason this suite runs next
-  // to the repo rather than in tmpdir. It recreates the lock path so the inode is handed
-  // straight back, which is what makes an ownership check based on dev/ino pass when it
-  // must not. On a filesystem that never recycles inodes this cannot discriminate at all,
-  // so it says so rather than quietly passing.
-  it('refuses a lease whose directory was replaced under it, inode recycling and all', async () => {
+  /**
+   * The ownership proof, and it runs everywhere.
+   *
+   * A replacement generation that carries the very inode the acquirer published is the
+   * one case dev/ino cannot see, and it is the case soleMarker() exists for: lockMatches()
+   * compares dev/ino and our marker's bytes, both of which agree here, so the only thing
+   * left to refuse the lease is the marker set.
+   *
+   * The inode is held identical by construction instead of by hoping the kernel recycles
+   * it. rename() carries a directory across a vacancy without changing its inode, so the
+   * path is genuinely emptied and republished with a different generation in it. What the
+   * acquirer can observe afterwards — dev, ino, mode, link count, the marker set — is what
+   * ext4 produces when it hands the freed inode straight back to a competitor's mkdir,
+   * which is exactly why an inode is worthless as proof of ownership.
+   *
+   * Real recycling is left to the sibling test below, because it cannot be made reliable:
+   * ext4 allocates the lowest free inode in the block group, so any concurrent delete of a
+   * lower inode anywhere in that group — another vitest worker tearing down its sandbox,
+   * say — takes the freed inode first. Measured on ext4 under that kind of load the inode
+   * came back 104 times out of 200; retrying does not recover it (99/200) because after
+   * the first miss the allocator is stable on the lower inode.
+   */
+  it('refuses a lease whose directory was replaced under it, inode identity and all', async () => {
+    const lockPath = `${target}.lock`;
+    const nonce = '7'.repeat(32);
+    const competitor = `owner-${nonce}.json`;
+    await fs.mkdir(lockPath, { mode: 0o700 });
+    await backdate(lockPath);
+
+    let publishedIno: number | undefined;
+    let replacedIno: number | undefined;
+    const realOpen = fs.open.bind(fs) as (...args: unknown[]) => Promise<unknown>;
+    vi.spyOn(fs, 'open').mockImplementation((async (path: unknown, ...rest: unknown[]) => {
+      if (String(path).startsWith(join(lockPath, 'owner-')) && replacedIno === undefined) {
+        publishedIno = (await fs.lstat(lockPath)).ino;
+        // A competitor reclaims our lease and republishes the path before our marker lands.
+        // The directory the acquirer meets on its return is not the generation it published
+        // — it holds a competitor's marker and not ours — yet dev/ino still agree.
+        const reclaimed = `${lockPath}.reclaimed`;
+        await fs.rename(lockPath, reclaimed);
+        await fs.writeFile(join(reclaimed, competitor), lockRecord(process.pid, nonce), {
+          mode: 0o600,
+        });
+        await fs.rename(reclaimed, lockPath);
+        replacedIno = (await fs.lstat(lockPath)).ino;
+      }
+      return realOpen(path, ...rest);
+    }) as unknown as typeof fs.open);
+
+    await expect(
+      withFileLock(target, async () => 'stolen', { timeoutMs: 300, staleMs: 60_000 }),
+    ).rejects.toBeInstanceOf(FileLockTimeoutError);
+
+    // The interception has to have happened, or the assertions below prove nothing.
+    expect(publishedIno).toBeDefined();
+    // What an inode-based owner check would have consulted still says "our directory"...
+    expect(replacedIno).toBe(publishedIno);
+    // ...and the lease was refused anyway, so the marker set is what decided it. The
+    // competitor keeps its lease, and we left no stray marker of our own behind.
+    expect(await fs.readdir(lockPath)).toEqual([competitor]);
+  });
+
+  // The same scenario driven by the kernel rather than by rename(), which is worth having
+  // because it also demonstrates the recycling the design is built around. It is the one
+  // test here that depends on the filesystem, and the reason this suite runs next to the
+  // repo rather than in tmpdir. The precondition is not ours to guarantee, so when the
+  // freed inode does not come back this skips instead of failing: the ownership proof is
+  // in the test above, which does not need the kernel's cooperation.
+  it('refuses a replaced lease when the kernel hands the directory inode back', async (ctx) => {
     const lockPath = `${target}.lock`;
     const nonce = '7'.repeat(32);
     const competitor = `owner-${nonce}.json`;
@@ -407,12 +470,15 @@ describe('file-lock', () => {
       withFileLock(target, async () => 'stolen', { timeoutMs: 300, staleMs: 60_000 }),
     ).rejects.toBeInstanceOf(FileLockTimeoutError);
 
-    expect(
-      replacedIno !== undefined && replacedIno === publishedIno,
-      'this filesystem did not hand the directory inode back on recreation, so it cannot ' +
-        'exercise the ownership proof — run this suite on the filesystem the deployment ' +
-        'keeps its runtime state on, not on tmpfs',
-    ).toBe(true);
+    // A missed interception is a broken test, not an uncooperative kernel.
+    expect(publishedIno).toBeDefined();
+    ctx.skip(
+      replacedIno !== publishedIno,
+      'the kernel did not hand the directory inode back: ext4 allocates the lowest free ' +
+        'inode in the block group, so a concurrent delete elsewhere in that group takes ' +
+        'it first, and tmpfs never recycles at all. Nothing is lost — the ownership proof ' +
+        'is the preceding test, which pins the inode with rename() instead',
+    );
     // The competitor keeps its lease, and we left no stray marker of our own behind.
     expect(await fs.readdir(lockPath)).toEqual([competitor]);
   });

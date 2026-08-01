@@ -32,8 +32,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 
 import { AvitoClient } from '../src/core/client.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
@@ -42,6 +40,11 @@ import { WebhookStore } from '../src/core/webhook-store.js';
 import { startHttpServer, type HttpServerHandle } from '../src/http/app.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config, HttpConfig } from '../src/config.js';
+import {
+  makeConfig as makeBaseConfig,
+  makeHttpConfig,
+  type ConfigOverrides,
+} from './support/config-fixture.js';
 
 const OWNER_PASSWORD = 'bearer-http-owner-password-strong';
 const PUBLIC_URL = 'https://mcp.example.com';
@@ -73,58 +76,27 @@ interface Rig {
 
 async function startRig(
   httpOverrides: Partial<HttpConfig> = {},
-  configOverrides: Partial<Config> = {},
+  configOverrides: ConfigOverrides = {},
 ): Promise<Rig> {
   const port = await reservePort();
-  const http: HttpConfig = {
+  // Only what this suite actually needs to differ from an empty-env HTTP config:
+  // a real listening transport on a reserved port, the public URL the OAuth
+  // metadata is asserted against, and the owner password the flow logs in with.
+  const http: HttpConfig = makeHttpConfig({
     transport: 'http',
-    host: '127.0.0.1',
     port,
     publicUrl: PUBLIC_URL,
-    auth: 'oauth',
-    authTokens: [],
-    allowNoAuth: false,
-    allowedHosts: [],
-    allowedOrigins: [],
-    maxSessions: 100,
-    sessionIdleSec: 1800,
-    maxInflight: 64,
-    maxStreams: 32,
-    oauthTokenTtlSec: 3600,
     oauthOwnerPassword: OWNER_PASSWORD,
     ...httpOverrides,
-  };
-  const cfg = {
-    clientId: 'cid',
-    clientSecret: 'sec',
+  });
+  // Built by the shared fixture, so `tokenFile` and the runtime state directory
+  // land in this config's own sandbox rather than a shared os.tmpdir() namespace.
+  const cfg: Config = makeBaseConfig({
     profileId: 12345678,
-    baseUrl: 'https://api.test.example',
-    cpaSource: 'avito-mcp-test',
-    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
-    logLevel: 'fatal',
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
-    exposeAuthTools: false,
-    allowedUploadDirs: [],
-    maxUploadMb: 15,
-    confirmationMode: 'money_public',
-    confirmationTtlSec: 900,
-    confirmationSecret: undefined,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
     http,
-    webhook: {
-      enabled: false,
-      secret: undefined,
-      publicUrl: PUBLIC_URL,
-      path: '/avito/webhook',
-      bufferSize: 100,
-    },
+    webhook: { publicUrl: PUBLIC_URL },
     ...configOverrides,
-  } as unknown as Config;
+  });
 
   const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
   const ctx: ToolContext = {
@@ -327,6 +299,19 @@ describe('OAuth bearer auth over HTTP (SDK v2 resource-server path)', () => {
    * `test/webhook-store.test.ts`), and it removes both halves of the race: the
    * TTL is now long enough that no slowness can expire the token early, and the
    * expiry no longer depends on a sleep being long enough.
+   *
+   * Merge note (M0.3 × M3): main fixed the same flake by widening the margin —
+   * TTL 1s → 2s, sleep 1.3s → 2.3s — and in doing so identified a cause this
+   * comment did not yet know about. The mint flow's login attempts pass through
+   * the rate limiter, which persists under `runtimeStateDir` with withFileLock()
+   * + fsync; the shared config fixture moved that directory from tmpfs onto the
+   * repository filesystem, so those flushes became real disk writes and could
+   * eat a one-second budget before `before` was even sent. That diagnosis is
+   * kept because it is true and it explains why the margin had to keep growing.
+   * The clock skew is kept over the wider margin because it answers the
+   * diagnosis rather than accommodating it: with a 300s TTL no disk latency can
+   * expire the token early, and no margin has to be guessed again the next time
+   * the storage underneath a test moves. It also returns the 2.3s of wall time.
    */
   it('answers an expired but genuinely issued token with 401, not 500', async () => {
     const ttlSec = 300;
