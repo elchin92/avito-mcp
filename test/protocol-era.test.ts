@@ -154,14 +154,14 @@ describe('createServerFactory (M3.2)', () => {
     await Promise.all([a.close(), b.close()]);
   });
 
-  it('registers the instance as a log sink and releases it on close', async () => {
+  it('registers a LEGACY instance as a log sink and releases it on close', async () => {
     // Observed functionally, because the sink registry is module-private: while
     // the instance lives, background pino events reach it; after close() they
     // must not. A leaked binding keeps a fully-registered 148-tool server alive
     // for the life of the process, once per discarded instance.
     const ctx = makeCtx();
     const factory = createServerFactory(ctx, { background: true });
-    const server = await factory({ era: 'modern' });
+    const server = await factory({ era: 'legacy' });
     const sent = vi.fn().mockResolvedValue(undefined);
     (server as unknown as { sendLoggingMessage: unknown }).sendLoggingMessage = sent;
 
@@ -176,6 +176,29 @@ describe('createServerFactory (M3.2)', () => {
     logger.info({ probe: 'unbound' }, 'protocol-era-sink-probe');
     await new Promise((r) => setTimeout(r, 20));
     expect(sent).not.toHaveBeenCalled();
+  });
+
+  it('never registers a MODERN instance as a background log sink', async () => {
+    // M3 item 10. Until M3 the factory bound every instance the same way, so a
+    // stdio process at `AVITO_MCP_PROTOCOL_ERA=dual|modern` mirrored EVERY pino
+    // line to the connection as `notifications/message` — no request to scope
+    // it to, and no reading of `_meta["io.modelcontextprotocol/logLevel"]`.
+    // That is the revision's MUST NOT twice over, and it was live: the same
+    // `{background: true}` factory serves the modern stdio path in src/server.ts.
+    //
+    // Asserted through the same seam as the legacy case above, on the same
+    // factory and the same options, so the two differ in exactly one input.
+    const ctx = makeCtx();
+    const factory = createServerFactory(ctx, { background: true });
+    const server = await factory({ era: 'modern' });
+    const sent = vi.fn().mockResolvedValue(undefined);
+    (server as unknown as { sendLoggingMessage: unknown }).sendLoggingMessage = sent;
+
+    logger.info({ probe: 'modern-unbound' }, 'protocol-era-sink-probe');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sent).not.toHaveBeenCalled();
+
+    await server.close();
   });
 
   it('releases the binding through onclose when the peer hangs up', async () => {

@@ -28,7 +28,9 @@ import { createServer, type AddressInfo } from 'node:net';
 import {
   CLIENT_CAPABILITIES_META_KEY,
   CLIENT_INFO_META_KEY,
+  LOG_LEVEL_META_KEY,
   PROTOCOL_VERSION_META_KEY,
+  SUBSCRIPTION_ID_META_KEY,
 } from '@modelcontextprotocol/server';
 
 import { AvitoClient } from '../../src/core/client.js';
@@ -48,6 +50,8 @@ export const META = {
   protocolVersion: PROTOCOL_VERSION_META_KEY,
   clientCapabilities: CLIENT_CAPABILITIES_META_KEY,
   clientInfo: CLIENT_INFO_META_KEY,
+  logLevel: LOG_LEVEL_META_KEY,
+  subscriptionId: SUBSCRIPTION_ID_META_KEY,
 } as const;
 
 export const MODERN_REVISION = MODERN_PROTOCOL_VERSION;
@@ -106,6 +110,14 @@ export interface Rig {
   handle: HttpServerHandle;
   base: string;
   host: string;
+  /**
+   * The very `ToolContext` the running server was built from. Exposed because
+   * the subscription suites have to make the server's own state CHANGE
+   * (`pendingStore.createPersistent`, `webhookStore.add`) and then assert what
+   * appeared on an open stream — driving that through tool calls instead would
+   * test the tools, not the notification routing.
+   */
+  ctx: ToolContext;
 }
 
 const rigs: Rig[] = [];
@@ -113,6 +125,7 @@ const rigs: Rig[] = [];
 export async function startRig(
   protocolEra?: ProtocolEraMode,
   configure?: (config: Config) => void,
+  decorate?: (ctx: ToolContext) => void,
 ): Promise<Rig> {
   const cfg = makeConfig(protocolEra);
   configure?.(cfg);
@@ -132,11 +145,13 @@ export async function startRig(
     pendingStore: new PendingActionStore(cfg.confirmationTtlSec * 1000),
     idempotencyStore: new IdempotencyStore(cfg.idempotencyTtlSec * 1000),
   };
+  decorate?.(ctx);
   const handle = await startHttpServer(ctx, cfg);
   const rig: Rig = {
     handle,
     base: `http://127.0.0.1:${handle.port}`,
     host: `127.0.0.1:${handle.port}`,
+    ctx,
   };
   rigs.push(rig);
   return rig;
@@ -270,6 +285,177 @@ export async function modernPost(
       params: { ...params, _meta: meta },
     },
   });
+}
+
+/** One JSON-RPC message read off an open SSE stream. */
+export interface Frame {
+  jsonrpc: string;
+  id?: string | number | null;
+  method?: string;
+  params?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  error?: { code: number; message: string; data?: unknown };
+}
+
+/**
+ * A `subscriptions/listen` stream (or any other long-lived SSE response), read
+ * frame by frame.
+ *
+ * `rawRequest` cannot serve these: it does `await res.text()`, which on a
+ * listen stream never resolves — the whole point of the stream is that it stays
+ * open. And the assertions this era needs are ORDERING assertions ("the ack is
+ * the first message", "no unrequested type ever appears", "the graceful close
+ * arrives before the stream ends"), which a whole-body read cannot express at
+ * all.
+ *
+ * `abort()` closes the client end WITHOUT a graceful shutdown — which is also
+ * the fixture for item 11: on this era, closing the response stream IS the
+ * cancellation signal.
+ */
+export interface ModernStream {
+  status: number;
+  contentType: string | null;
+  /** Resolves with the next frame, or rejects when the stream ends first. */
+  next(timeoutMs?: number): Promise<Frame>;
+  /** Every frame received so far, in arrival order. */
+  received(): Frame[];
+  /** Resolves once the server closed the stream. */
+  ended(): Promise<void>;
+  /** Client-side hang-up: the server sees the response stream close. */
+  abort(): void;
+}
+
+export async function openModernStream(
+  rig: Rig,
+  method: string,
+  params: Record<string, unknown> = {},
+  options: ModernPostOptions = {},
+): Promise<ModernStream> {
+  const controller = new AbortController();
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+    host: rig.host,
+    'MCP-Protocol-Version': MODERN_REVISION,
+    'Mcp-Method': method,
+    ...(options.name !== undefined ? { 'Mcp-Name': options.name } : {}),
+  };
+  for (const [key, value] of Object.entries(options.headers ?? {})) {
+    if (value === null) delete headers[key];
+    else headers[key] = value;
+  }
+  const meta: Record<string, unknown> = {
+    [META.protocolVersion]: MODERN_REVISION,
+    [META.clientCapabilities]: {},
+    [META.clientInfo]: { name: 'modern-rig', version: '1.0.0' },
+    ...(options.meta ?? {}),
+  };
+  for (const [key, value] of Object.entries(options.meta ?? {})) {
+    if (value === undefined) delete meta[key];
+  }
+
+  const res = await fetch(`${rig.base}/mcp`, {
+    method: 'POST',
+    headers,
+    signal: controller.signal,
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: options.id ?? 1,
+      method,
+      params: { ...params, _meta: meta },
+    }),
+  });
+
+  const frames: Frame[] = [];
+  /** How many of `frames` `next()` has already handed out. */
+  let delivered = 0;
+  const waiters: Array<{ resolve: (frame: Frame) => void; reject: (err: Error) => void }> = [];
+  let done = false;
+  let endResolve!: () => void;
+  const endPromise = new Promise<void>((resolve) => {
+    endResolve = resolve;
+  });
+
+  const streaming = (res.headers.get('content-type') ?? '').includes('text/event-stream');
+
+  void (async (): Promise<void> => {
+    try {
+      if (res.body === null) return;
+      // A modern exchange upgrades to SSE only when the handler emits something
+      // before its result (`responseMode: 'auto'`). A plain JSON answer is the
+      // same exchange with one frame, and the suites must be able to assert
+      // "exactly one frame, and it is the result" — so both shapes land in the
+      // same frame list rather than one of them being unreadable here.
+      if (!streaming) {
+        const text = await res.text();
+        if (text) frames.push(JSON.parse(text) as Frame);
+        while (waiters.length > 0 && delivered < frames.length) {
+          waiters.shift()!.resolve(frames[delivered++]!);
+        }
+        return;
+      }
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+        buffer += decoder.decode(chunk, { stream: true });
+        // SSE events are separated by a blank line; keepalives are `:` comments.
+        let split = buffer.indexOf('\n\n');
+        while (split !== -1) {
+          const block = buffer.slice(0, split);
+          buffer = buffer.slice(split + 2);
+          for (const line of block.split('\n')) {
+            if (!line.startsWith('data:')) continue;
+            frames.push(JSON.parse(line.slice(5).trim()) as Frame);
+          }
+          split = buffer.indexOf('\n\n');
+        }
+        while (waiters.length > 0 && delivered < frames.length) {
+          waiters.shift()!.resolve(frames[delivered++]!);
+        }
+      }
+    } catch {
+      // Aborted by us, or the connection dropped: both end the stream.
+    } finally {
+      done = true;
+      while (waiters.length > 0) {
+        waiters.shift()!.reject(new Error('stream ended before the next frame arrived'));
+      }
+      endResolve();
+    }
+  })();
+
+  return {
+    status: res.status,
+    contentType: res.headers.get('content-type'),
+    received: () => [...frames],
+    ended: () => endPromise,
+    abort: () => controller.abort(),
+    next: (timeoutMs = 5_000): Promise<Frame> =>
+      new Promise<Frame>((resolve, reject) => {
+        if (delivered < frames.length) {
+          resolve(frames[delivered++]!);
+          return;
+        }
+        if (done) {
+          reject(new Error('stream ended before the next frame arrived'));
+          return;
+        }
+        const timer = setTimeout(
+          () => reject(new Error(`no frame within ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+        waiters.push({
+          resolve: (frame) => {
+            clearTimeout(timer);
+            resolve(frame);
+          },
+          reject: (err) => {
+            clearTimeout(timer);
+            reject(err);
+          },
+        });
+      }),
+  };
 }
 
 /** The JSON-RPC `result` of an answer, or `undefined` when it carried an error. */

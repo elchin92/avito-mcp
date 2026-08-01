@@ -43,6 +43,18 @@ export interface RequestOptions {
   staticHeaders?: SafeStaticHeaders;
   /** Explicit code-owned opt-in for Swagger operations that require a GET JSON body. */
   allowGetBody?: boolean;
+  /**
+   * The caller's cancellation signal — on an MCP request this is
+   * `ctx.mcpReq.signal`, which the SDK aborts when the request's response
+   * stream is closed by the peer (revision 2026-07-28 defines exactly that as a
+   * cancellation) or when a 2025 client sends `notifications/cancelled`.
+   *
+   * Honouring it does three things the deadline timer cannot: it stops an
+   * in-flight Avito call the answer to which nobody can receive any more, it
+   * releases the rate-limiter slot this call reserved, and it unwedges the
+   * idempotency reservation (the ledger frees a lease on a thrown execute).
+   */
+  signal?: AbortSignal;
 }
 
 export interface RequestResponse<T = unknown> {
@@ -117,9 +129,21 @@ export class AvitoClient {
     const reqInfo: RequestInfo = { method: opts.method, url, domain };
     const deadline = Date.now() + (opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
-    await this.awaitBeforeDeadline(this.rateLimiter.waitIfNeeded(rateKey), deadline, reqInfo);
+    const slot = await this.awaitBeforeDeadline(
+      this.rateLimiter.waitIfNeeded(rateKey, opts.signal),
+      deadline,
+      reqInfo,
+    );
 
-    return this.doRequest<T>(opts, url, reqInfo, deadline, rateKey);
+    try {
+      return await this.doRequest<T>(opts, url, reqInfo, deadline, rateKey);
+    } catch (err) {
+      // Give the slot back ONLY on cancellation. Every other failure — a 4xx, a
+      // timeout, a transport error — still consumed a unit of the upstream
+      // budget, because the request did reach Avito.
+      if (opts.signal?.aborted === true) await slot.release();
+      throw err;
+    }
   }
 
   private async doRequest<T>(
@@ -139,13 +163,18 @@ export class AvitoClient {
       const remainingMs = this.assertBeforeDeadline(deadline, reqInfo);
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), remainingMs);
+      // Two independent reasons to stop: our own deadline, and the caller's
+      // cancellation. `AbortSignal.any` is the composition that keeps both live
+      // without either owning the other's controller.
+      const fetchSignal =
+        opts.signal === undefined ? ctl.signal : AbortSignal.any([ctl.signal, opts.signal]);
 
       try {
         const requestInit: RequestInit = {
           method: opts.method,
           headers,
           body: body as FetchBody | null,
-          signal: ctl.signal,
+          signal: fetchSignal,
         };
         const resp =
           opts.method === 'GET' && body !== null
@@ -198,7 +227,7 @@ export class AvitoClient {
         }
 
         const maxResponseBytes = (this.config.maxBinaryMb ?? 20) * 1024 * 1024;
-        const data = await safeParseResponse<T>(resp, maxResponseBytes, ctl.signal);
+        const data = await safeParseResponse<T>(resp, maxResponseBytes, fetchSignal);
 
         if (!resp.ok) {
           throw new AvitoApiError({
@@ -212,9 +241,14 @@ export class AvitoClient {
         return { status: resp.status, data: data as T, headers: resp.headers };
       } catch (err) {
         if (err instanceof AvitoApiError || err instanceof ResponseLimitError) throw err;
-        const cause = ctl.signal.aborted
-          ? new Error('Request timeout: deadline exceeded while receiving response')
-          : err;
+        // Cancellation is checked FIRST: when both fired, "the client went away"
+        // is the accurate diagnosis and "timeout" would send an operator
+        // hunting a latency problem that never happened.
+        const cause = opts.signal?.aborted
+          ? new Error('Request cancelled: the caller closed the response stream')
+          : ctl.signal.aborted
+            ? new Error('Request timeout: deadline exceeded while receiving response')
+            : err;
         throw new AvitoTransportError(reqInfo, cause);
       } finally {
         clearTimeout(timer);

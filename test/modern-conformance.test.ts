@@ -64,7 +64,11 @@ import {
   type Rig,
 } from './support/modern-rig.js';
 import { SUPPORTED_PROTOCOL_VERSIONS } from '../src/version.js';
-import { SERVER_INSTRUCTIONS, createServerFactory } from '../src/build-server.js';
+import {
+  MODERN_SERVER_INSTRUCTIONS,
+  SERVER_INSTRUCTIONS,
+  createServerFactory,
+} from '../src/build-server.js';
 import { AvitoClient } from '../src/core/client.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import { IdempotencyStore } from '../src/core/idempotency.js';
@@ -156,7 +160,10 @@ describe('A1 — server/discover', () => {
     expect(errorOf(modernInit)?.code).toBe(-32601);
 
     const discovered = resultOf(await modernPost(rig, 'server/discover'))!;
-    expect(discovered.instructions).toBe(SERVER_INSTRUCTIONS);
+    // M3: the brief is era-SPLIT. The safety half must survive verbatim; the
+    // half that tells the model how to watch for changes must name a method
+    // that exists on the era being served — see MODERN_SERVER_INSTRUCTIONS.
+    expect(discovered.instructions).toBe(MODERN_SERVER_INSTRUCTIONS);
     // Not just "a string": the parts an agent must not lose.
     expect(discovered.instructions).toContain('confirmation_id');
     expect(discovered.instructions).toContain('meta_confirm_action');
@@ -206,7 +213,7 @@ describe('A1 — server/discover', () => {
       const result = frame.result!;
       expect(result.resultType).toBe('complete');
       expect(result.supportedVersions).toContain(MODERN_REVISION);
-      expect(result.instructions).toBe(SERVER_INSTRUCTIONS);
+      expect(result.instructions).toBe(MODERN_SERVER_INSTRUCTIONS);
       expect(result.serverInfo).toBeUndefined();
       expect((result._meta as Record<string, unknown>)[SERVER_INFO_META_KEY]).toBeDefined();
       lines.close();

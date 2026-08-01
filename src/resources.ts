@@ -19,16 +19,18 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ResourceTemplate } from '@modelcontextprotocol/server';
+import { ResourceNotFoundError, ResourceTemplate } from '@modelcontextprotocol/server';
 import type {
   CacheHint,
   McpServer,
+  ProtocolEra,
   ReadResourceResult,
   ListResourcesResult,
 } from '@modelcontextprotocol/server';
+import type { Config } from './config.js';
 import { logger } from './logger.js';
 import { evaluatePolicy } from './core/policy.js';
-import type { ToolContext, ToolRisk } from './core/tool-factory.js';
+import { toolContextEra, type ToolContext, type ToolRisk } from './core/tool-factory.js';
 import { PACKAGE_NAME, VERSION } from './version.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -342,7 +344,55 @@ function safeReadFile(p: string): string | null {
   }
 }
 
+/**
+ * The URIs this server emits `notifications/resources/updated` for, filtered by
+ * the deployment's active policy.
+ *
+ * Exported because on the modern era the subscription registry does NOT live on
+ * an `McpServer` instance any more. Revision 2026-07-28 replaced
+ * `resources/subscribe` (a per-connection `Set<uri>` on a long-lived server)
+ * with `subscriptions/listen` (a stream owned by the serving ENTRY, fed by a
+ * `ServerEventBus` that outlives every per-request instance). So the publisher
+ * side moved out of this module and into `src/http/mcp-http.ts`, which holds
+ * the handler — but the POLICY decision about which URIs exist at all must not
+ * be duplicated there, or a resource hidden by `AVITO_MCP_MODE` would still
+ * announce its changes to anyone who asked.
+ */
+export function subscribableResourceUris(config: Config): string[] {
+  const uris: string[] = [];
+  if (
+    config.confirmationMode !== 'off' &&
+    evaluatePolicy('meta_list_pending_actions', 'read', config).allowed
+  ) {
+    uris.push(PENDING_ACTIONS_URI);
+  }
+  if (evaluatePolicy('messenger_get_webhook_events', 'read', config).allowed) {
+    uris.push(WEBHOOK_EVENTS_URI);
+  }
+  return uris;
+}
+
+/**
+ * How a client of this era asks to be told when `uri` changes. Goes into the
+ * resource DESCRIPTION, which is text the model reads and acts on — naming
+ * `resources/subscribe` to a 2026 client produces an agent that calls a method
+ * answering `-32601` and then stops trying.
+ *
+ * `legacy` returns the caller's own wording verbatim rather than a shared
+ * phrasing. The two descriptions were worded differently in 1.3.x, and
+ * "harmonising" them would have rewritten a client-visible string on a wire
+ * this stage is contractually not allowed to move — which is exactly what the
+ * capture-and-diff of the legacy handshake caught before this shipped.
+ */
+function subscriptionHint(era: ProtocolEra, uri: string, legacy: string): string {
+  return era === 'modern'
+    ? `Subscribable: open a subscriptions/listen stream with resourceSubscriptions: ["${uri}"] ` +
+        'and receive notifications/resources/updated on the same stream'
+    : legacy;
+}
+
 export function registerResources(server: McpServer, ctx: ToolContext): void {
+  const era = toolContextEra(ctx);
   const pendingActionsDecision = evaluatePolicy('meta_list_pending_actions', 'read', ctx.config);
   const pendingActionsVisible =
     ctx.config.confirmationMode !== 'off' && pendingActionsDecision.allowed;
@@ -461,9 +511,13 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
         cacheHint: resourceCacheHint(PENDING_ACTIONS_URI),
         title: 'Pending actions (live)',
         description:
-          'Pending actions currently awaiting confirmation. Subscribable: a client can ' +
-          'subscribe via resources/subscribe and receive notifications/resources/updated ' +
-          'on every create/confirm/cancel/expire.',
+          'Pending actions currently awaiting confirmation. ' +
+          `${subscriptionHint(
+            era,
+            PENDING_ACTIONS_URI,
+            'Subscribable: a client can subscribe via resources/subscribe and receive ' +
+              'notifications/resources/updated',
+          )} on every create/confirm/cancel/expire.`,
         mimeType: 'application/json',
       },
       async (uri): Promise<ReadResourceResult> => {
@@ -512,8 +566,12 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
         cacheHint: resourceCacheHint(WEBHOOK_EVENTS_URI),
         title: 'Avito webhook events (live)',
         description:
-          'Recently received Avito messenger webhook events (new chat messages). Subscribable: ' +
-          'resources/subscribe → notifications/resources/updated on each delivery. Requires the ' +
+          'Recently received Avito messenger webhook events (new chat messages). ' +
+          `${subscriptionHint(
+            era,
+            WEBHOOK_EVENTS_URI,
+            'Subscribable: resources/subscribe → notifications/resources/updated',
+          )} on each delivery. Requires the ` +
           'webhook receiver to be enabled (AVITO_MCP_WEBHOOK_SECRET); otherwise reports enabled:false. ' +
           'For filtered/paged access use the messenger_get_webhook_events tool.',
         mimeType: 'application/json',
@@ -539,59 +597,76 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
     );
   }
 
-  // The SDK McpServer does not register subscribe/unsubscribe automatically — we
-  // declared the capability in server.ts, so the handlers must exist. We implement
-  // it lightly: track a set of subscribers and, on a pending-actions change, notify only them.
-  const subscribers = new Set<string>();
-  server.server.setRequestHandler('resources/subscribe', async (req) => {
-    if (req.params.uri === PENDING_ACTIONS_URI && !pendingActionsVisible) return {};
-    if (req.params.uri === WEBHOOK_EVENTS_URI && !webhookEventsDecision.allowed) return {};
-    if (req.params.uri !== PENDING_ACTIONS_URI && req.params.uri !== WEBHOOK_EVENTS_URI) return {};
-    subscribers.add(req.params.uri);
-    return {};
-  });
-  server.server.setRequestHandler('resources/unsubscribe', async (req) => {
-    subscribers.delete(req.params.uri);
-    return {};
-  });
-
-  // Wire up the emitter: every change in PendingActionStore -> sendResourceUpdated,
-  // if there is a subscriber for this URI.
+  // ── subscriptions ──────────────────────────────────────────────────────────
   //
-  // The stores are process-wide singletons while Streamable HTTP builds one
-  // McpServer per session, so every subscription registered here MUST be torn
-  // down when this server closes — otherwise each session leaks two listeners
-  // (and sendResourceUpdated calls against dead sessions) forever.
-  const unsubscribers: Array<() => void> = [];
-  if (pendingActionsVisible) {
-    unsubscribers.push(
-      ctx.pendingStore.onChange(() => {
-        if (!subscribers.has(PENDING_ACTIONS_URI)) return;
-        server.server.sendResourceUpdated({ uri: PENDING_ACTIONS_URI }).catch((err: unknown) => {
-          logger.debug({ err }, 'sendResourceUpdated failed');
-        });
-      }),
-    );
-  }
+  // Legacy (2025-11-25) ONLY. The SDK McpServer does not register
+  // subscribe/unsubscribe automatically — we declare the capability, so the
+  // handlers must exist. We implement it lightly: track a set of subscribers
+  // and, on a pending-actions change, notify only them.
+  //
+  // Revision 2026-07-28 removed both RPCs and both notification routes from the
+  // instance: `subscriptions/listen` streams are owned by the serving ENTRY
+  // (`createMcpHandler`), fed by a `ServerEventBus` that outlives the
+  // per-request instance this function is registering onto. Installing this
+  // block on a modern instance would be worse than useless — every one of the
+  // 148-tool per-request instances would attach and detach two listeners on the
+  // process-wide stores for a `subscribers` set that can never be non-empty,
+  // because nothing on this era can call `resources/subscribe`. The publisher
+  // side lives in `src/http/mcp-http.ts`; see `subscribableResourceUris`.
+  if (era !== 'modern') {
+    const subscribers = new Set<string>();
+    server.server.setRequestHandler('resources/subscribe', async (req) => {
+      if (req.params.uri === PENDING_ACTIONS_URI && !pendingActionsVisible) return {};
+      if (req.params.uri === WEBHOOK_EVENTS_URI && !webhookEventsDecision.allowed) return {};
+      if (req.params.uri !== PENDING_ACTIONS_URI && req.params.uri !== WEBHOOK_EVENTS_URI) {
+        return {};
+      }
+      subscribers.add(req.params.uri);
+      return {};
+    });
+    server.server.setRequestHandler('resources/unsubscribe', async (req) => {
+      subscribers.delete(req.params.uri);
+      return {};
+    });
 
-  // v0.9.0: same wiring for webhook events — notify subscribers on each delivery.
-  if (ctx.webhookStore && webhookEventsDecision.allowed) {
-    unsubscribers.push(
-      ctx.webhookStore.onChange(() => {
-        if (!subscribers.has(WEBHOOK_EVENTS_URI)) return;
-        server.server.sendResourceUpdated({ uri: WEBHOOK_EVENTS_URI }).catch((err: unknown) => {
-          logger.debug({ err }, 'sendResourceUpdated failed');
-        });
-      }),
-    );
-  }
+    // Wire up the emitter: every change in PendingActionStore -> sendResourceUpdated,
+    // if there is a subscriber for this URI.
+    //
+    // The stores are process-wide singletons while Streamable HTTP builds one
+    // McpServer per session, so every subscription registered here MUST be torn
+    // down when this server closes — otherwise each session leaks two listeners
+    // (and sendResourceUpdated calls against dead sessions) forever.
+    const unsubscribers: Array<() => void> = [];
+    if (pendingActionsVisible) {
+      unsubscribers.push(
+        ctx.pendingStore.onChange(() => {
+          if (!subscribers.has(PENDING_ACTIONS_URI)) return;
+          server.server.sendResourceUpdated({ uri: PENDING_ACTIONS_URI }).catch((err: unknown) => {
+            logger.debug({ err }, 'sendResourceUpdated failed');
+          });
+        }),
+      );
+    }
 
-  const previousOnClose = server.server.onclose;
-  server.server.onclose = () => {
-    for (const unsubscribe of unsubscribers) unsubscribe();
-    subscribers.clear();
-    previousOnClose?.();
-  };
+    // v0.9.0: same wiring for webhook events — notify subscribers on each delivery.
+    if (ctx.webhookStore && webhookEventsDecision.allowed) {
+      unsubscribers.push(
+        ctx.webhookStore.onChange(() => {
+          if (!subscribers.has(WEBHOOK_EVENTS_URI)) return;
+          server.server.sendResourceUpdated({ uri: WEBHOOK_EVENTS_URI }).catch((err: unknown) => {
+            logger.debug({ err }, 'sendResourceUpdated failed');
+          });
+        }),
+      );
+    }
+
+    const previousOnClose = server.server.onclose;
+    server.server.onclose = () => {
+      for (const unsubscribe of unsubscribers) unsubscribe();
+      subscribers.clear();
+      previousOnClose?.();
+    };
+  }
 
   // ─────────── avito://swaggers/{file} ───────────
   // ResourceTemplate with a list callback — the client sees each swagger as a separate resource.
@@ -629,7 +704,29 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
         'Use it to give an agent the full context of an endpoint without MCP tools.',
       mimeType: 'application/json',
     },
+    // Item 14: on the MODERN era every failure here is a `ResourceNotFoundError`
+    // — `-32602` with `data.uri`, the pair revision 2026-07-28 reassigns "resource
+    // not found" to. A bare `throw new Error` becomes `-32603 Internal error`,
+    // which tells a client the server broke rather than that it asked for
+    // something that does not exist.
+    //
+    // And on the modern era the three failure branches answer IDENTICALLY. A
+    // distinct error for "you tried to escape the directory" is an oracle: it
+    // confirms which candidate paths the guard found interesting. `..` is not a
+    // resource of this server, so "not found" is both the safest answer and the
+    // true one.
+    //
+    // The legacy era keeps its 1.3.x messages and its `-32603` verbatim. The
+    // improvement is real, but it is a client-visible change on a wire this
+    // stage promises not to move, and the capture-and-diff of the legacy
+    // handshake is what makes that promise checkable rather than aspirational.
+    // Item 14 is scoped to the modern connection; the legacy answer moves in a
+    // release that says so.
     async (uri, variables): Promise<ReadResourceResult> => {
+      const requested = uri.toString();
+      const notFound = (legacyMessage: string): Error =>
+        era === 'modern' ? new ResourceNotFoundError(requested) : new Error(legacyMessage);
+
       const slugRaw = Array.isArray(variables.slug) ? variables.slug[0] : variables.slug;
       const slug = decodeURIComponent(String(slugRaw ?? ''));
       // Path-traversal protection: disallow '..', '/' and null bytes.
@@ -640,21 +737,23 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
         slug.includes('\\') ||
         slug.includes('\0')
       ) {
-        throw new Error(`Invalid swagger slug: ${slug}`);
+        throw notFound(`Invalid swagger slug: ${slug}`);
       }
       const filename = `${slug}.json`;
       const full = join(SWAGGERS_DIR, filename);
       // Verify the resolved path does not escape the directory.
       const rel = relative(resolve(SWAGGERS_DIR), resolve(full));
       if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-        throw new Error(`Swagger path escapes directory: ${slug}`);
+        throw notFound(`Swagger path escapes directory: ${slug}`);
       }
       const body = safeReadFile(full);
       if (body === null) {
-        throw new Error(`Swagger '${slug}' not found. Available: ${swaggerFiles.join(', ')}`);
+        throw notFound(
+          `Swagger '${slug}' not found. Available: ${swaggerFiles.join(', ')}`,
+        );
       }
       return {
-        contents: [{ uri: uri.toString(), mimeType: 'application/json', text: body }],
+        contents: [{ uri: requested, mimeType: 'application/json', text: body }],
       };
     },
   );

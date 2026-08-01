@@ -63,6 +63,11 @@ import type { HttpConfig, ProtocolEraMode } from '../config.js';
 import { buildMcpServer, createServerFactory } from '../build-server.js';
 import type { ToolContext } from '../core/tool-factory.js';
 import { bindMcpLogger, logger, runWithMcpLogger } from '../logger.js';
+import {
+  PENDING_ACTIONS_URI,
+  WEBHOOK_EVENTS_URI,
+  subscribableResourceUris,
+} from '../resources.js';
 import { MODERN_PROTOCOL_VERSION } from '../version.js';
 
 /** A live MCP session: the per-session server, its HTTP transport, last activity. */
@@ -545,6 +550,7 @@ export function createMcpHttpHandler(
   // a second, session-less 2025 implementation running beside the real one.
   let modern: McpHttpHandler | undefined;
   let modernNodeHandler: ReturnType<typeof toNodeHandler> | undefined;
+  const modernPublishers: Array<() => void> = [];
   if (protocolEra !== 'legacy') {
     modern = createMcpHandler(createServerFactory(baseCtx, { background: false }), {
       legacy: 'reject',
@@ -553,6 +559,39 @@ export function createMcpHttpHandler(
     modernNodeHandler = toNodeHandler(modern, {
       onerror: (err) => logger.error({ err, era: 'modern' }, 'mcp http modern adapter error'),
     });
+
+    // ── subscriptions/listen publisher side (M3 item 9) ──────────────────────
+    //
+    // The 2025 model attached one listener pair PER McpServer instance and
+    // filtered on a per-instance `Set<uri>` of subscribers. That model cannot
+    // survive here: the modern era builds a fresh instance for every HTTP
+    // request and throws it away again, whereas a `subscriptions/listen` stream
+    // outlives all of them — the SDK closes the instance that served the listen
+    // request immediately and keeps only the stream (`product.close()` right
+    // after `getCapabilities()`, in `createMcpHandler.serveModern`).
+    //
+    // The correct lifetime is therefore the HANDLER's, and the correct number
+    // of listeners is exactly one per store for the process. Everything downstream
+    // — ack-first, per-stream filtering, `io.modelcontextprotocol/subscriptionId`
+    // stamping, never delivering an unrequested type, and the graceful
+    // `{resultType:'complete'}` on shutdown — is the SDK's listen router,
+    // driven off the events published here.
+    //
+    // The URI set is `subscribableResourceUris`, not a literal pair: a resource
+    // hidden from `resources/list` by `AVITO_MCP_MODE` or by
+    // `AVITO_MCP_CONFIRMATION_MODE=off` must not announce its changes either.
+    const publishable = new Set(subscribableResourceUris(baseCtx.config));
+    const notifier = modern.notify;
+    if (publishable.has(PENDING_ACTIONS_URI)) {
+      modernPublishers.push(
+        baseCtx.pendingStore.onChange(() => notifier.resourceUpdated(PENDING_ACTIONS_URI)),
+      );
+    }
+    if (baseCtx.webhookStore && publishable.has(WEBHOOK_EVENTS_URI)) {
+      modernPublishers.push(
+        baseCtx.webhookStore.onChange(() => notifier.resourceUpdated(WEBHOOK_EVENTS_URI)),
+      );
+    }
   }
 
   /**
@@ -657,6 +696,10 @@ export function createMcpHttpHandler(
     closing = true;
     shutdownPromise = (async () => {
       clearInterval(reaper);
+      // Stop feeding the bus before tearing the streams down, so a change that
+      // lands during shutdown cannot race the graceful-close frame.
+      for (const unsubscribe of modernPublishers) unsubscribe();
+      modernPublishers.length = 0;
       await Promise.allSettled([...initializations]);
       // Snapshot BEFORE clearing: dropSession no-ops once the map is empty, so
       // both halves must be closed explicitly here.

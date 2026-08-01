@@ -261,7 +261,30 @@ Every tool returns `structuredContent` alongside the text block — clients can 
 
 ### MCP logging
 
-Selected pino events (mode changes, hidden-tool reports, confirmation lifecycle, rate-limit warnings) are forwarded to the client as `notifications/message` with `logger: "avito-mcp"`, with sensitive fields censored. Clients that adjust verbosity via `logging/setLevel` work as expected. Pino → stderr is preserved.
+Selected pino events (mode changes, hidden-tool reports, confirmation lifecycle, rate-limit warnings) are forwarded to the client as `notifications/message` with `logger: "avito-mcp"`, with sensitive fields censored. Pino → stderr is preserved.
+
+How a client asks for them depends on the protocol revision the connection speaks:
+
+- **2025-11-25** — `logging/setLevel` sets a threshold for the whole connection, as before.
+- **2026-07-28** — `logging/setLevel` no longer exists. The level is declared per request in `_meta["io.modelcontextprotocol/logLevel"]`; the notifications arrive on that request's own response stream, a request that declares no level receives none at all, and an unrecognised level is answered `-32602`.
+
+### Protocol revisions
+
+`AVITO_MCP_PROTOCOL_ERA` selects which revisions this process serves: `legacy` (the default — 2025-11-25 only, byte-for-byte the 1.3.x behaviour), `dual` (both), `modern` (2026-07-28 only). Nothing changes for an existing client unless you set it.
+
+| | 2025-11-25 | 2026-07-28 |
+| --- | --- | --- |
+| Handshake | `initialize` | none — `server/discover`, plus a per-request `_meta` envelope |
+| Watching a resource | `resources/subscribe` → `notifications/resources/updated` | `subscriptions/listen` with `resourceSubscriptions: [...]`; the stream opens with `notifications/subscriptions/acknowledged` naming what it will actually deliver |
+| Subscribable URIs | `avito://state/pending-actions`, `avito://webhook/events` | the same two |
+| `tools` / `prompts` / `resources` `listChanged` | advertised `true` | advertised **`false`** |
+| Cancelling a call | `notifications/cancelled` | closing the response stream — the outgoing Avito call is aborted and its idempotency lease and rate-limiter slot are released |
+
+The `listChanged` difference is deliberate. This server's tool, prompt and resource sets are fixed for the life of the process (membership is decided once, at registration, by the active safety policy), so it never emits a `list_changed` notification on either revision. On 2025-11-25 the advertised `true` is inert, and it is kept for wire compatibility with 1.3.x. On 2026-07-28 it is not inert: `subscriptions/listen` narrows a client's requested filter against exactly these bits, so advertising `true` would acknowledge a subscription to updates that never come, and the client would wait instead of polling. `false` tells it the truth immediately.
+
+### Tool input schemas
+
+`inputSchema` and `outputSchema` are emitted in **JSON Schema draft-07** (`$schema: "http://json-schema.org/draft-07/schema#"`) on both revisions. 2026-07-28 relaxes the constraint to full JSON Schema 2020-12 but does not require it, and for this catalogue the two dialects render identical bodies apart from that one string — while `meta_capabilities.schemaHash` is computed over the schemas as emitted, so moving the dialect would break every consumer watching that hash for drift. No schema contains a `$ref` to a network URI.
 
 ---
 

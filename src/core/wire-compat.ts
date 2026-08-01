@@ -40,6 +40,32 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/server';
 const LEGACY_JSON_SCHEMA_TARGET = 'draft-7';
 
 /**
+ * M3 item 15 — the JSON Schema dialect this server's tool schemas are written
+ * in, stated once so it can be documented and asserted rather than inferred.
+ *
+ * Revision 2026-07-28 RELAXED `inputSchema`/`outputSchema` from the 2025 subset
+ * to full JSON Schema 2020-12 (SEP-2106). Relaxed, not moved: the revision does
+ * not require servers to emit 2020-12, and the 2026 `ToolSchema` accepts any
+ * `$schema` string. So the choice is ours, and it is to keep draft-07 on BOTH
+ * eras. Two reasons:
+ *
+ *   • `dist/manifest.json`'s `schema_hash` is a SHA-256 over every tool's
+ *     `inputSchema`, published to consumers as `meta_capabilities.schemaHash`
+ *     and pinned by `test/wire-conformance.test.ts`. Emitting one dialect on the
+ *     modern wire and another in the manifest would make that hash describe
+ *     schemas the running server does not serve — the exact "two construction
+ *     sites" failure this migration keeps tripping over.
+ *   • Nothing is gained. For these 148 schemas the two targets render
+ *     byte-identical bodies apart from this string: no tool uses a keyword whose
+ *     meaning differs between the drafts.
+ *
+ * `test/modern-runtime.test.ts` asserts that every schema on the modern wire
+ * declares exactly this value — so the documentation cannot drift from what is
+ * served, in either direction.
+ */
+export const TOOL_JSON_SCHEMA_DIALECT = 'http://json-schema.org/draft-07/schema#';
+
+/**
  * The `execution` descriptor SDK v1 stamped on every tool registered through
  * `registerTool()` (v1 `mcp.js` passed `{ taskSupport: 'forbidden' }`
  * literally). v2 passes `undefined` instead, so the field vanished from
