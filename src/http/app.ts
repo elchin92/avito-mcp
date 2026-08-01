@@ -210,6 +210,15 @@ export async function startHttpServer(
     preServerClosers.push(() => mcp.closeAll());
     if (closeOAuth) postServerClosers.push(closeOAuth);
     // Authenticate before parsing a potentially multi-megabyte MCP request.
+    //
+    // The route stays method-agnostic on purpose (M3.7 suggests an explicit
+    // method list here). Which HTTP methods this endpoint serves is a function
+    // of the ERA — `modern` serves POST only and answers everything else `405 +
+    // Allow: POST`, while `legacy` and `dual` still serve the 2025 GET stream
+    // and DELETE teardown — and the era rule already lives in one place, inside
+    // the handler. Encoding a second, era-shaped copy of it in the router is how
+    // the two end up disagreeing about which method is allowed; `405` is
+    // therefore answered by whoever owns the era decision.
     app.all('/mcp', guard, express.json({ limit: '4mb' }), mcp.handleRequest);
   }
 

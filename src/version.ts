@@ -43,6 +43,27 @@ export const SUPPORTED_PROTOCOL_VERSIONS = ['2026-07-28', '2025-11-25'] as const
 /** One of the protocol revisions named in {@link SUPPORTED_PROTOCOL_VERSIONS}. */
 export type SupportedProtocolVersion = (typeof SUPPORTED_PROTOCOL_VERSIONS)[number];
 
+/**
+ * The modern (per-request envelope, no `initialize`) revision we serve.
+ *
+ * Needed as a VALUE — not merely as documentation — in exactly one place: the
+ * HTTP router has to decide, for a body-LESS request (GET/DELETE, where the
+ * SDK's body-primary classifier can only answer "legacy, reason: http-method"),
+ * whether the caller speaks the modern era and must therefore be answered
+ * `405 Method Not Allowed`. The only era signal such a request carries is its
+ * `MCP-Protocol-Version` header value, so the decision has to compare version
+ * strings, and the SDK publishes no modern one.
+ *
+ * A revision we do not recognise is deliberately NOT treated as modern: it
+ * falls through to the legacy branch, which is the branch that can still answer
+ * a 2025 client correctly. Reading "unknown ⇒ probably newer ⇒ modern" would
+ * turn a stray header into a 405 for a client we might have been able to serve.
+ */
+export const MODERN_PROTOCOL_VERSION: SupportedProtocolVersion = SUPPORTED_PROTOCOL_VERSIONS[0];
+
+/** The 2025-era revision still negotiated through the `initialize` handshake. */
+export const LEGACY_PROTOCOL_VERSION: SupportedProtocolVersion = SUPPORTED_PROTOCOL_VERSIONS[1];
+
 export function readManifestMetadata(): { schemaHash: string | null; tools: unknown[] } {
   const candidates = [
     join(here, 'manifest.json'),

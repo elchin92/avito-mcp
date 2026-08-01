@@ -10,7 +10,7 @@
  * without duplicating the Avito client or token cache.
  */
 import { McpServer } from '@modelcontextprotocol/server';
-import type { McpServerFactory } from '@modelcontextprotocol/server';
+import type { McpServerFactory, ServerOptions } from '@modelcontextprotocol/server';
 import type { Config } from './config.js';
 import type { ToolContext } from './core/tool-factory.js';
 import { domains } from './meta/domain-registry.js';
@@ -20,6 +20,79 @@ import { bindMcpLogger } from './logger.js';
 import { PACKAGE_NAME, VERSION } from './version.js';
 import { hasConfiguredCredentials } from './core/credentials.js';
 import { applyLegacyWireDefaults } from './core/wire-compat.js';
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+
+/**
+ * M4.2 — the per-operation `ttlMs` / `cacheScope` this server emits on the
+ * 2026-07-28 wire (SEP-2549 `CacheableResult`).
+ *
+ * Read this together with `RESOURCE_CACHE_DECISIONS` in `src/resources.ts`,
+ * which decides `resources/read` per URI; the entry here is the fallback for
+ * any resource that does not name its own hint.
+ *
+ * Era safety: these values are attached to results on a symbol-keyed property
+ * that JSON never serializes, and only the 2026 codec reads it. A 2025-era
+ * response is byte-identical with and without this option — which is why the
+ * table can be unconditional instead of gated on `AVITO_MCP_PROTOCOL_ERA`.
+ *
+ * The rule behind the `cacheScope` column, applied uniformly:
+ *
+ *   `public` is reserved for payloads that are (a) constant for a given
+ *   package version and (b) contain nothing derived from the configured Avito
+ *   account, the operator's safety policy, or live server state. Everything
+ *   else is `private`. `public` means a SHARED cache may hand this body to a
+ *   different caller, so the question is never "is this secret" but "is this
+ *   the same for everyone".
+ *
+ * | operation                  | scope   | ttl  | why                                                                        |
+ * |----------------------------|---------|------|----------------------------------------------------------------------------|
+ * | `server/discover`          | public  | 1 h  | `supportedVersions`, `capabilities` and `instructions` are process         |
+ * |                            |         |      | constants of this package version; no account data, identical for every    |
+ * |                            |         |      | caller of the endpoint. Static ⇒ a long TTL is the point of the field.     |
+ * | `resources/templates/list` | public  | 1 h  | one unconditional template (`avito://swaggers/{slug}`) whose descriptor is |
+ * |                            |         |      | shipped in the package.                                                    |
+ * | `tools/list`               | private | 5 m  | MEMBERSHIP is a function of the deployment's safety policy                 |
+ * |                            |         |      | (`AVITO_MCP_MODE`, allow/deny lists, `exposeAuthTools`), so it is not the  |
+ * |                            |         |      | same answer for every deployment behind one cache, and it changes when     |
+ * |                            |         |      | the operator changes the policy.                                           |
+ * | `prompts/list`             | private | 5 m  | same registry surface; kept in step with `tools/list` deliberately.        |
+ * | `resources/list`           | private | 1 m  | membership is conditional: `avito://state/pending-actions` appears only    |
+ * |                            |         |      | when confirmations are on and policy allows it, `avito://webhook/events`   |
+ * |                            |         |      | only when policy allows it.                                                |
+ * | `resources/read`           | private | 0    | the FALLBACK for a resource that names no hint of its own. Conservative on |
+ * |                            |         |      | purpose: adding a resource and forgetting its hint must fail closed, and   |
+ * |                            |         |      | most of our resources are live account state.                              |
+ */
+export const MODERN_CACHE_HINTS: NonNullable<ServerOptions['cacheHints']> = {
+  'server/discover': { ttlMs: HOUR, cacheScope: 'public' },
+  'resources/templates/list': { ttlMs: HOUR, cacheScope: 'public' },
+  'tools/list': { ttlMs: 5 * MINUTE, cacheScope: 'private' },
+  'prompts/list': { ttlMs: 5 * MINUTE, cacheScope: 'private' },
+  'resources/list': { ttlMs: MINUTE, cacheScope: 'private' },
+  'resources/read': { ttlMs: 0, cacheScope: 'private' },
+};
+
+/**
+ * The safety instructions handed to the model.
+ *
+ * Lives here as a named export because of a trap specific to the 2026-07-28
+ * revision: on a modern connection there is no `initialize`, so the only
+ * carrier left for this text is the `server/discover` result. Losing it would
+ * not fail any request — the agent would simply stop being told that this
+ * server talks to a LIVE Avito account and that write/money/public operations
+ * go through the confirmation flow. `test/modern-conformance.test.ts` asserts
+ * the string reaches the modern wire.
+ */
+export const SERVER_INSTRUCTIONS: string =
+  'Avito MCP — a server for the live (production) Avito API. Before any write/money/public ' +
+  'operation, always confirm the action with a human; in confirmation_mode=money_public ' +
+  '(default) the server returns a confirmation_id and requires a meta_confirm_action call. ' +
+  'Full reference on the safety modes is in the avito://docs/safety resource. The list of tools ' +
+  'with their risk classification is in avito://manifest. Pending actions are in ' +
+  'avito://state/pending-actions (you can subscribe via resources/subscribe). Received Avito ' +
+  'webhook events (if the receiver is enabled) are in avito://webhook/events (subscribable).';
 
 /**
  * Builds a fully-registered McpServer (all domains, resources, prompts) wired to
@@ -54,14 +127,12 @@ export function buildMcpServer(baseCtx: ToolContext): McpServer {
         prompts: { listChanged: true },
         tools: { listChanged: true },
       },
-      instructions:
-        'Avito MCP — a server for the live (production) Avito API. Before any write/money/public ' +
-        'operation, always confirm the action with a human; in confirmation_mode=money_public ' +
-        '(default) the server returns a confirmation_id and requires a meta_confirm_action call. ' +
-        'Full reference on the safety modes is in the avito://docs/safety resource. The list of tools ' +
-        'with their risk classification is in avito://manifest. Pending actions are in ' +
-        'avito://state/pending-actions (you can subscribe via resources/subscribe). Received Avito ' +
-        'webhook events (if the receiver is enabled) are in avito://webhook/events (subscribable).',
+      // Delivered by `initialize` on a 2025 connection and by `server/discover`
+      // on a 2026 one — the SDK's `_ondiscover()` copies `_instructions` into
+      // the discover result, so ONE declaration feeds both eras. See
+      // SERVER_INSTRUCTIONS for why that matters more than it looks.
+      instructions: SERVER_INSTRUCTIONS,
+      cacheHints: MODERN_CACHE_HINTS,
     },
   );
 

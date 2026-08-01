@@ -10,14 +10,20 @@
  * for M3 is that the flag-off process is indistinguishable from M2, and the
  * cheapest way to guarantee that is for the second path not to exist.
  *
- * `dual` puts the SDK's own `isLegacyRequest` predicate in front: it runs the
- * very code `createMcpHandler` runs to make its routing decision, so a
- * hand-wired split cannot disagree with the entry about what "legacy" means.
- * Requests it calls legacy go to the sessionful manager below, unchanged;
- * everything else — including the modern path's own validation-ladder
- * rejections (`-32602`, `-32020`, unsupported-version) — goes to the modern
- * handler, which owns those answers. `modern` mounts only the modern leg and
- * lets it refuse 2025-era traffic (`legacy: 'reject'`).
+ * `dual` puts the SDK's own `classifyInboundRequest` in front: it is the very
+ * code `createMcpHandler` runs to make its routing decision (and the code the
+ * exported `isLegacyRequest` predicate delegates to), so a hand-wired split
+ * cannot disagree with the entry about what "legacy" means. Requests it calls
+ * legacy go to the sessionful manager below, unchanged; everything else —
+ * including the modern path's own validation-ladder rejections (`-32602`,
+ * `-32020`, unsupported-version) — goes to the modern handler, which owns those
+ * answers. `modern` mounts only the modern leg and lets it refuse 2025-era
+ * traffic (`legacy: 'reject'`).
+ *
+ * Two answers are OURS rather than the SDK's, because the SDK does not produce
+ * them: the `Allow` header on the modern era's `405` (`modernMethodNotAllowed`)
+ * and the `-32020` for a modern request that omits `MCP-Protocol-Version`
+ * (`missingProtocolVersionHeader`). Both are documented at their definitions.
  *
  * Mounted by the HTTP server on the /mcp route (POST/GET/DELETE). Maintains one
  * StreamableHTTPServerTransport + McpServer per MCP session, keyed by the session
@@ -41,21 +47,23 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  classifyInboundRequest,
   createMcpHandler,
   isInitializeRequest,
-  isLegacyRequest,
 } from '@modelcontextprotocol/server';
-import type { McpHttpHandler, McpServer, AuthInfo } from '@modelcontextprotocol/server';
-import {
-  NodeStreamableHTTPServerTransport,
-  toNodeHandler,
-  toWebRequest,
-} from '@modelcontextprotocol/node';
+import type {
+  InboundClassificationOutcome,
+  McpHttpHandler,
+  McpServer,
+  AuthInfo,
+} from '@modelcontextprotocol/server';
+import { NodeStreamableHTTPServerTransport, toNodeHandler } from '@modelcontextprotocol/node';
 import type { RequestHandler } from 'express';
 import type { HttpConfig, ProtocolEraMode } from '../config.js';
 import { buildMcpServer, createServerFactory } from '../build-server.js';
 import type { ToolContext } from '../core/tool-factory.js';
 import { bindMcpLogger, logger, runWithMcpLogger } from '../logger.js';
+import { MODERN_PROTOCOL_VERSION } from '../version.js';
 
 /** A live MCP session: the per-session server, its HTTP transport, last activity. */
 interface Session {
@@ -92,6 +100,109 @@ function unknownSessionError(res: Parameters<RequestHandler>[1]): void {
       message: 'Session not found',
     },
     id: null,
+  });
+}
+
+/**
+ * The JSON-RPC error code SEP-2243 assigns to "the mirrored headers and the
+ * body disagree". Declared here because the SDK keeps it internal: it is
+ * reachable only through `classifyInboundRequest`'s rejection objects, which
+ * is fine for the cells the SDK checks itself but not for the one it leaves to
+ * the server (see `missingProtocolVersionHeader`).
+ *
+ * `test/modern-conformance.test.ts` pins this number against a rejection the
+ * SDK produces, so the two can never drift apart.
+ */
+const HEADER_MISMATCH_ERROR_CODE = -32020;
+
+/** Single-valued header lookup; Node lowercases names, so field-name case is already handled. */
+function headerValue(req: Parameters<RequestHandler>[0], name: string): string | undefined {
+  const raw = req.headers[name];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value === undefined ? undefined : value;
+}
+
+/**
+ * Whether a body-less request identifies itself as modern-era traffic.
+ *
+ * Only consulted for GET/DELETE (and other non-POST methods), where there is no
+ * body for the SDK's body-primary classifier to read — it can only answer
+ * `legacy / http-method` for every one of them, which under `dual` would hand a
+ * 2026 client's GET to the 2025 session manager and answer it `400 Mcp-Session-Id
+ * header is required` instead of the `405` the revision asks for.
+ *
+ * Deliberately NOT used for POST: on POST the era comes from the body envelope
+ * (the SDK's rule), and `MCP-Protocol-Version` is not an era signal there — the
+ * header is mandatory on 2025-11-25 too, so branching on its presence would
+ * misroute every legacy POST.
+ */
+function namesModernRevision(value: string | undefined): boolean {
+  return value !== undefined && value.trim() === MODERN_PROTOCOL_VERSION;
+}
+
+/**
+ * `405` for the modern era, WITH the `Allow` header the spec's SHOULD asks for.
+ *
+ * The SDK's own modern-only refusal (`modernOnlyStrictRejection`, cell
+ * `modern-only-method-not-allowed`) produces the right status and the right
+ * JSON-RPC body but no `Allow` header — `rejectionResponse` builds a bare
+ * `Response.json(..., { status })`. So this answer is ours, and the modern
+ * branch never delegates a non-POST to the SDK.
+ *
+ * `Allow: POST` and not `GET, POST, DELETE`: the value states what the ERA this
+ * caller is speaking allows, and 2026-07-28 removed both the GET stream and the
+ * DELETE session teardown. Under `dual` the endpoint does still answer GET and
+ * DELETE — for 2025 callers, who reach the legacy branch and never see this.
+ */
+function modernMethodNotAllowed(res: Parameters<RequestHandler>[1]): void {
+  res
+    .status(405)
+    .set('Allow', 'POST')
+    .json({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Method not allowed.' },
+      id: null,
+    });
+}
+
+/**
+ * `-32020` for a modern request that omits `MCP-Protocol-Version`.
+ *
+ * This is the ONE cell of the SEP-2243 header matrix the SDK does not cover.
+ * `validateStandardRequestHeaders` enforces `Mcp-Method` (presence) and
+ * `Mcp-Name` (presence, sentinel decoding, agreement with `params.name`/`.uri`),
+ * and `classifyInboundRequest` enforces header↔body agreement for
+ * `MCP-Protocol-Version` and `Mcp-Method` — but nothing rejects a request that
+ * simply omits the version header, because the classifier reads the era out of
+ * the body envelope and no longer needs it. The spec is explicit that it is
+ * still required: "Every POST request to the MCP endpoint MUST include an
+ * `MCP-Protocol-Version` header", and a server that does not serve pre-2025-06-18
+ * clients "MUST reject a request without the header per Server Validation".
+ *
+ * Shaped exactly like the SDK's own missing-header rejections (`crossCheckMismatch`,
+ * cell `method-header-missing`), so a client cannot tell which of the three
+ * headers it forgot apart by the error's structure.
+ */
+function missingProtocolVersionHeader(
+  res: Parameters<RequestHandler>[1],
+  id: string | number | null,
+  method: string,
+): void {
+  res.status(400).json({
+    jsonrpc: '2.0',
+    error: {
+      code: HEADER_MISMATCH_ERROR_CODE,
+      message:
+        'Bad Request: the request headers and body disagree: the body names method ' +
+        `${method} but the required MCP-Protocol-Version header is absent`,
+      data: {
+        mismatch: {
+          header: '(missing)',
+          body: `the body names method ${method} but the required MCP-Protocol-Version header is absent`,
+        },
+      },
+    },
+    id,
   });
 }
 
@@ -448,22 +559,77 @@ export function createMcpHttpHandler(
    * Era dispatcher. Only reachable when `protocolEra !== 'legacy'` — the legacy
    * default returns `handleLegacyRequest` itself, so the default deployment does
    * not even execute this function.
+   *
+   * The era decision comes from `classifyInboundRequest`, the SDK's own routing
+   * step exported as a building block ("Power users composing transport-neutral
+   * routing can also use the exported building blocks directly:
+   * `classifyInboundRequest` for the era decision"). It is the same function the
+   * `isLegacyRequest` predicate delegates to — `isLegacyRequest` is literally
+   * `classifyEntryRequest(...).outcome.kind === 'legacy'` — so our split still
+   * cannot disagree with what `createMcpHandler` would decide. Calling the
+   * classifier directly buys three things the predicate cannot give:
+   *
+   *   • the routed message, so a rejection can echo the request `id`;
+   *   • `messageKind`, so the version-header rule applies to requests only
+   *     (the revision explicitly leaves notification-POST header requirements
+   *     undefined);
+   *   • no `toWebRequest` clone and no extra `await` on the hot path.
+   *
+   * `test/modern-conformance.test.ts` asserts the two agree across a matrix, so
+   * the substitution is checked rather than assumed.
    */
   const dispatchByEra: RequestHandler = (req, res, next) => {
     void (async () => {
       try {
-        if (protocolEra === 'modern') {
-          await modernNodeHandler!(req, res, req.body);
-          return;
-        }
-        // dual. express.json() has already drained the Node stream, so the
-        // parsed body must be handed over explicitly — without it the predicate
-        // would try to clone an already-used body and reject.
-        const probe = await toWebRequest(req, req.body);
-        if (await isLegacyRequest(probe, req.body)) {
+        const httpMethod = req.method.toUpperCase();
+        const protocolVersionHeader = headerValue(req, 'mcp-protocol-version');
+
+        // Body-less methods: the classifier has nothing to read, so the era can
+        // only come from the version header. `modern` has no 2025 session
+        // operations at all, hence the unconditional 405 there.
+        if (httpMethod !== 'POST') {
+          if (protocolEra === 'modern' || namesModernRevision(protocolVersionHeader)) {
+            modernMethodNotAllowed(res);
+            return;
+          }
           handleLegacyRequest(req, res, next);
           return;
         }
+
+        const mcpMethodHeader = headerValue(req, 'mcp-method');
+        const mcpNameHeader = headerValue(req, 'mcp-name');
+        const route: InboundClassificationOutcome = classifyInboundRequest({
+          httpMethod,
+          ...(protocolVersionHeader !== undefined ? { protocolVersionHeader } : {}),
+          ...(mcpMethodHeader !== undefined ? { mcpMethodHeader } : {}),
+          ...(mcpNameHeader !== undefined ? { mcpNameHeader } : {}),
+          ...(req.body !== undefined ? { body: req.body as unknown } : {}),
+        });
+
+        // `reject` outcomes belong to the modern leg: they ARE its answers
+        // (-32602 for a malformed envelope, -32020 for a header/body mismatch),
+        // and the SDK re-derives the identical rejection when the request
+        // reaches it. Only `legacy` goes to the 2025 manager — and only in
+        // `dual`; under `modern` the SDK owns the refusal (-32022 naming what
+        // we do serve), which is not something to reimplement here.
+        if (route.kind === 'legacy') {
+          if (protocolEra === 'dual') {
+            handleLegacyRequest(req, res, next);
+            return;
+          }
+          await modernNodeHandler!(req, res, req.body);
+          return;
+        }
+
+        if (
+          route.kind === 'modern' &&
+          route.messageKind === 'request' &&
+          protocolVersionHeader === undefined
+        ) {
+          missingProtocolVersionHeader(res, route.message.id, route.message.method);
+          return;
+        }
+
         await modernNodeHandler!(req, res, req.body);
       } catch (err) {
         logger.error({ err }, 'mcp http era dispatch failed');
