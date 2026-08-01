@@ -30,6 +30,12 @@ import { startHttpServer, type HttpServerHandle } from '../src/http/app.js';
 import { resolveRebindingProtection } from '../src/http/mcp-http.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config, HttpConfig, WebhookConfig } from '../src/config.js';
+import {
+  makeConfig as makeBaseConfig,
+  makeHttpConfig as makeBaseHttpConfig,
+  makeWebhookConfig as makeBaseWebhookConfig,
+  type ConfigOverrides,
+} from './support/config-fixture.js';
 
 const WEBHOOK_SECRET = 'hardening-webhook-secret-0123456789abcdef';
 const SPECIAL_WEBHOOK_SECRET = 'base64-secret-0123456789abcdef/+=';
@@ -103,60 +109,32 @@ function rawSlowWebhook(
 }
 
 function makeHttpConfig(overrides: Partial<HttpConfig> = {}): HttpConfig {
-  return {
+  return makeBaseHttpConfig({
     transport: 'http',
-    host: '127.0.0.1',
     port: 0, // ephemeral — the handle reports the real port
     publicUrl: 'https://mcp.example.com',
     auth: 'none',
-    authTokens: [],
     allowNoAuth: true,
-    allowedHosts: [],
-    allowedOrigins: [],
-    maxSessions: 100,
-    sessionIdleSec: 1800,
-    oauthTokenTtlSec: 3600,
     ...overrides,
-  };
+  });
 }
 
 function makeWebhookConfig(overrides: Partial<WebhookConfig> = {}): WebhookConfig {
-  return {
+  return makeBaseWebhookConfig({
     enabled: true,
     secret: WEBHOOK_SECRET,
     publicUrl: 'https://mcp.example.com',
-    path: '/avito/webhook',
-    bufferSize: 100,
     ...overrides,
-  };
+  });
 }
 
-function makeConfig(overrides: Partial<Config> = {}): Config {
-  return {
-    clientId: 'cid',
-    clientSecret: 'sec',
+function makeConfig(overrides: ConfigOverrides = {}): Config {
+  return makeBaseConfig({
     profileId: 12345678,
-    baseUrl: 'https://api.test.example',
-    cpaSource: 'avito-mcp-test',
-    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
-    logLevel: 'fatal',
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
-    exposeAuthTools: false,
-    allowedUploadDirs: [],
-    maxUploadMb: 15,
-    confirmationMode: 'money_public',
-    confirmationTtlSec: 900,
-    confirmationSecret: undefined,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
     http: makeHttpConfig(),
     webhook: makeWebhookConfig(),
     ...overrides,
-  } as Config;
+  });
 }
 
 async function startRig(overrides: Partial<Config> = {}): Promise<{

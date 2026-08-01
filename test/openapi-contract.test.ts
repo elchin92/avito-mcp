@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { z, type ZodRawShape } from 'zod';
 
 import type { Config } from '../src/config.js';
+import { makeConfig as makeBaseConfig } from './support/config-fixture.js';
 import { AvitoClient } from '../src/core/client.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import type { DomainRegister, ToolContext, ToolRisk } from '../src/core/tool-factory.js';
@@ -272,47 +273,13 @@ const CONTRACT_EXCEPTIONS: Record<string, Record<string, string>> = {
 };
 
 function makeConfig(): Config {
-  return {
-    clientId: 'cid',
+  return makeBaseConfig({
     clientSecret: 'secret',
-    profileId: 12345,
-    baseUrl: 'https://api.test.example',
     cpaSource: 'avito-mcp-contract-test',
-    tokenFile: '/tmp/avito-mcp-openapi-contract-token.json',
-    logLevel: 'fatal',
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
     exposeAuthTools: true,
     allowedUploadDirs: ['/tmp'],
-    maxUploadMb: 15,
     confirmationMode: 'off',
-    confirmationTtlSec: 900,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
-    http: {
-      transport: 'stdio',
-      host: '127.0.0.1',
-      port: 3000,
-      publicUrl: 'http://127.0.0.1:3000',
-      auth: 'oauth',
-      authTokens: [],
-      allowNoAuth: false,
-      allowedHosts: [],
-      allowedOrigins: [],
-      oauthTokenTtlSec: 3600,
-      maxSessions: 100,
-      sessionIdleSec: 1800,
-    },
-    webhook: {
-      enabled: false,
-      publicUrl: 'http://127.0.0.1:3000',
-      path: '/avito/webhook',
-      bufferSize: 100,
-    },
-  } as Config;
+  });
 }
 
 function propertyName(node: ts.PropertyName, source: ts.SourceFile): string {

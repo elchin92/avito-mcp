@@ -3,15 +3,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { z } from 'zod';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 
 import { AvitoClient } from '../src/core/client.js';
 import { defineTool, type ToolContext } from '../src/core/tool-factory.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import type { Config, SafetyMode } from '../src/config.js';
+import { makeConfig as makeBaseConfig } from './support/config-fixture.js';
 
 function makeConfig(
   overrides: Partial<
@@ -28,48 +26,7 @@ function makeConfig(
     >
   > = {},
 ): Config {
-  return {
-    clientId: 'cid',
-    clientSecret: 'sec',
-    profileId: 12345,
-    baseUrl: 'https://api.test.example',
-    cpaSource: 'avito-mcp-test',
-    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
-    logLevel: 'fatal',
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
-    exposeAuthTools: false,
-    allowedUploadDirs: [],
-    maxUploadMb: 15,
-    confirmationMode: 'off',
-    confirmationTtlSec: 900,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
-    http: {
-      transport: 'stdio',
-      host: '127.0.0.1',
-      port: 3000,
-      publicUrl: 'http://127.0.0.1:3000',
-      auth: 'oauth',
-      authTokens: [],
-      allowNoAuth: false,
-      allowedHosts: [],
-      allowedOrigins: [],
-      maxSessions: 100,
-      sessionIdleSec: 1800,
-      oauthTokenTtlSec: 3600,
-    },
-    webhook: {
-      enabled: false,
-      publicUrl: 'http://127.0.0.1:3000',
-      path: '/avito/webhook',
-      bufferSize: 100,
-    },
-    ...overrides,
-  };
+  return makeBaseConfig({ confirmationMode: 'off', ...overrides });
 }
 
 async function makeRig(ctx: ToolContext) {
@@ -122,13 +79,18 @@ async function listNames(client: Client): Promise<string[]> {
   return tools.map((t) => t.name).sort();
 }
 
-function makeCtx(mode: SafetyMode, allow: string[] = [], deny: string[] = []): { ctx: ToolContext; cfg: Config; fetchMock: ReturnType<typeof vi.fn> } {
+function makeCtx(
+  mode: SafetyMode,
+  allow: string[] = [],
+  deny: string[] = [],
+): { ctx: ToolContext; cfg: Config; fetchMock: ReturnType<typeof vi.fn> } {
   const cfg = makeConfig({ mode, allowTools: allow, denyTools: deny });
-  const fetchMock = vi.fn(async () =>
-    new Response(JSON.stringify({ ok: true }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }),
+  const fetchMock = vi.fn(
+    async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
   );
   vi.stubGlobal('fetch', fetchMock);
   const avito = new AvitoClient(cfg, {
