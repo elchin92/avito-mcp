@@ -7,6 +7,19 @@
  *   - Tests that assert invariants on the registry as a whole
  *
  * Run: `npm run generate:manifest`
+ *
+ * This is the SECOND place a server gets constructed (the first is
+ * `createServerFactory()` in src/build-server.ts), so a change to the shape of a
+ * tool's schema has to be checked in both.
+ *
+ * One shape is refused on purpose: no input-schema property carries an
+ * `x-mcp-header` annotation. See docs/safety.md — there is no routing
+ * intermediary in front of this server to consume one, and these arguments hold
+ * phone numbers, chat ids and sums of money, which is the class of value the
+ * specification says must not be moved into a header. The refusal is enforced
+ * by test/openapi-contract.test.ts rather than left to a reviewer, because an
+ * invalid annotation makes a conformant client drop the tool from `tools/list`
+ * silently.
  */
 import { Client } from '@modelcontextprotocol/client';
 import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';

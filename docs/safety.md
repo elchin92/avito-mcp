@@ -135,6 +135,38 @@ Even with a strict mode, you should always:
 - **Keep local state private.** Token/OAuth/webhook files should live in a `0700` state directory and use `0600`. The bundled systemd installer enforces this and runs the process as an unprivileged user.
 - **Treat configuration errors as startup failures.** v1.2.0 rejects unknown booleans/enums, malformed integers, weak remote secrets, and unsafe OAuth/webhook settings instead of silently selecting a fallback.
 
+## Why no tool argument is annotated `x-mcp-header`
+
+Revision 2026-07-28 lets a server mark an input-schema property with
+`x-mcp-header`, meaning "carry this value as an HTTP header on the transport
+rather than as a tool argument". **avito-mcp does not use it on any of its 148
+tools, and a test enforces that** (`test/openapi-contract.test.ts`).
+
+Two reasons, and the second is the one that matters.
+
+**There is nothing in front of us to route.** The annotation exists so an
+intermediary — a gateway, a router, a proxy multiplexing several backends — can
+decide something from a header without parsing the tool call. avito-mcp has no
+such intermediary and exactly one backend, `api.avito.ru`. Promoting an argument
+to a header would move it out of the request body and into a hop that does
+nothing with it.
+
+**Our arguments are the wrong kind of value.** Tool arguments here carry phone
+numbers, `chat_id`s, item ids and sums of money. Headers are the part of a
+request most likely to be logged verbatim — by a proxy, an access log, or an
+error reporter that was told bodies are sensitive and headers are not. The
+specification is explicit that this annotation is not for that kind of data.
+
+**If this is ever revisited**, the annotation cannot be added by hand. A client
+MUST exclude from `tools/list` any tool whose annotation is invalid, so a
+mistake does not produce an error — it produces a tool that silently disappears
+from the catalogue. A validator has to land in the same change and check all six
+conditions: the value is non-empty; it is a syntactically valid HTTP field-name
+token; it contains no CR or LF; it is unique case-insensitively across the
+schema; the annotated property has a primitive type; and it is not a `number`.
+Plus one structural condition: the property must be statically reachable through
+`properties`, not hidden behind a composed or conditional schema.
+
 ## Future work
 
 - **Per-tool spending limits** — cap the cost of an autonomous session at e.g. ₽500/day across all `money` tools.
