@@ -2,9 +2,8 @@
  * MCP prompts tests (v0.6.0).
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client } from '@modelcontextprotocol/client';
+import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
 import { promises as fs } from 'node:fs';
 
 import { AvitoClient } from '../src/core/client.js';

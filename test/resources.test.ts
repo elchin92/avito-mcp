@@ -3,10 +3,8 @@
  * domains + resources, and exercise listResources / readResource / subscribe.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { ResourceUpdatedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { Client } from '@modelcontextprotocol/client';
+import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promises as fs } from 'node:fs';
@@ -247,7 +245,7 @@ describe('MCP resources — listing & static reads', () => {
     };
 
     const onUpdated = vi.fn();
-    client.setNotificationHandler(ResourceUpdatedNotificationSchema, async (notif) => {
+    client.setNotificationHandler('notifications/resources/updated', async (notif) => {
       onUpdated(notif.params.uri);
     });
 
@@ -303,7 +301,7 @@ describe('MCP resources — listing & static reads', () => {
     };
 
     const onUpdated = vi.fn();
-    client.setNotificationHandler(ResourceUpdatedNotificationSchema, async (notif) => {
+    client.setNotificationHandler('notifications/resources/updated', async (notif) => {
       onUpdated(notif.params.uri);
     });
 

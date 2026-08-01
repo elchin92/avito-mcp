@@ -15,10 +15,7 @@
  * can supply parameters (limit, item_id, tool_name) via the completion API.
  */
 import { z } from 'zod';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { GetPromptResult, PromptMessage } from '@modelcontextprotocol/sdk/types.js';
-
+import type { McpServer, GetPromptResult, PromptMessage } from '@modelcontextprotocol/server';
 import { logger } from './logger.js';
 import type { ToolContext } from './core/tool-factory.js';
 
@@ -37,19 +34,19 @@ export function registerPrompts(server: McpServer, ctx: ToolContext): void {
         'All calls are read-only — safe to run on a production account without confirmations. ' +
         'Готовый промпт для агента: проверить баланс, активные объявления и расходы за период. ' +
         'Все вызовы read-only — безопасно запускать на боевом аккаунте без подтверждений.',
-      argsSchema: {
+      argsSchema: z.object({
         days: z
           .string()
           .optional()
-          .describe('Spendings period in days (defaults to 7). / Период расходов в днях (по умолчанию 7).'),
-      },
+          .describe(
+            'Spendings period in days (defaults to 7). / Период расходов в днях (по умолчанию 7).',
+          ),
+      }),
     },
     async (args): Promise<GetPromptResult> => {
       const days = Number.parseInt(args.days ?? '7', 10) || 7;
       const dateTo = new Date().toISOString().slice(0, 10);
-      const dateFrom = new Date(Date.now() - days * 86400_000)
-        .toISOString()
-        .slice(0, 10);
+      const dateFrom = new Date(Date.now() - days * 86400_000).toISOString().slice(0, 10);
       return {
         description: `Avito daily overview for the last ${days} days / Ежедневная сводка Avito за последние ${days} дней`,
         messages: [
@@ -95,12 +92,14 @@ export function registerPrompts(server: McpServer, ctx: ToolContext): void {
         'only reads. The decision to mark as read or reply is left to the human. ' +
         'Найти непрочитанные чаты и показать последние сообщения. Read-only — не отправляет, ' +
         'только читает. Решение о пометке прочитанным или ответе оставляется человеку.',
-      argsSchema: {
+      argsSchema: z.object({
         limit: z
           .string()
           .optional()
-          .describe('How many chats to look at (defaults to 20). / Сколько чатов смотреть (по умолчанию 20).'),
-      },
+          .describe(
+            'How many chats to look at (defaults to 20). / Сколько чатов смотреть (по умолчанию 20).',
+          ),
+      }),
     },
     async (args): Promise<GetPromptResult> => {
       const limit = Number.parseInt(args.limit ?? '20', 10) || 20;
@@ -144,7 +143,8 @@ export function registerPrompts(server: McpServer, ctx: ToolContext): void {
     },
     async (): Promise<GetPromptResult> => {
       return {
-        description: 'Active safety mode and current restrictions / Активный режим safety и текущие ограничения',
+        description:
+          'Active safety mode and current restrictions / Активный режим safety и текущие ограничения',
         messages: [
           userMessage(
             `Tell me which mode avito-mcp is running in right now.\n\n` +
@@ -180,18 +180,24 @@ export function registerPrompts(server: McpServer, ctx: ToolContext): void {
         'from the corresponding domain. ' +
         'Дать развёрнутое описание одного tool по имени. Использует manifest + swagger ' +
         'из соответствующего домена.',
-      argsSchema: {
+      argsSchema: z.object({
         tool_name: z
           .string()
-          .describe('Tool name, e.g. "items_update_price" or "messenger_get_chats_v2". / Имя tool, например "items_update_price" или "messenger_get_chats_v2".'),
-      },
+          .describe(
+            'Tool name, e.g. "items_update_price" or "messenger_get_chats_v2". / Имя tool, например "items_update_price" или "messenger_get_chats_v2".',
+          ),
+      }),
     },
     async (args): Promise<GetPromptResult> => {
       const name = args.tool_name?.trim() ?? '';
       if (!name) {
         return {
           description: 'tool_name is required',
-          messages: [userMessage('Provide tool_name, e.g. items_update_price.\n\n— Русский / Russian —\n\nУкажи tool_name, например items_update_price.')],
+          messages: [
+            userMessage(
+              'Provide tool_name, e.g. items_update_price.\n\n— Русский / Russian —\n\nУкажи tool_name, например items_update_price.',
+            ),
+          ],
         };
       }
       return {
@@ -229,9 +235,11 @@ export function registerPrompts(server: McpServer, ctx: ToolContext): void {
         'look up prices. Does NOT buy VAS — leaves the final decision to the human. ' +
         'Безопасно подготовить продвижение объявления: проверить баланс, посмотреть suggests, ' +
         'узнать цены. НЕ покупает VAS — оставляет финальное решение человеку.',
-      argsSchema: {
-        item_id: z.string().describe('Avito listing ID to promote. / ID объявления Avito для продвижения.'),
-      },
+      argsSchema: z.object({
+        item_id: z
+          .string()
+          .describe('Avito listing ID to promote. / ID объявления Avito для продвижения.'),
+      }),
     },
     async (args): Promise<GetPromptResult> => {
       const itemId = args.item_id?.trim() ?? '';

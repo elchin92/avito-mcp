@@ -8,9 +8,8 @@
  *
  * Run: `npm run generate:manifest`
  */
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client } from '@modelcontextprotocol/client';
+import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +23,7 @@ import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config } from '../src/config.js';
 import { PACKAGE_NAME, VERSION } from '../src/version.js';
 import { domainOfToolName } from '../src/meta/tool-naming.js';
+import { applyLegacyWireDefaults } from '../src/core/wire-compat.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = join(here, '..', 'dist', 'manifest.json');
@@ -92,7 +92,11 @@ function makeFakeConfig(): Config {
 }
 
 async function main(): Promise<void> {
-  const server = new McpServer({ name: PACKAGE_NAME, version: VERSION });
+  // This script builds its own bare McpServer instead of going through
+  // buildMcpServer(), so it has to install the M2 legacy-wire pins itself —
+  // otherwise `schema_hash` would be computed over draft-2020-12 schemas while
+  // the running server advertises draft-07.
+  const server = applyLegacyWireDefaults(new McpServer({ name: PACKAGE_NAME, version: VERSION }));
   const cfg = makeFakeConfig();
   const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
   const ctx: ToolContext = { client: new AvitoClient(cfg), config: cfg, pendingStore };
@@ -178,7 +182,16 @@ async function main(): Promise<void> {
     tools: flat,
   };
   const schemaHash = createHash('sha256')
-    .update(JSON.stringify(flat.map(({ name, risk, environment, inputSchema }) => ({ name, risk, environment, inputSchema }))))
+    .update(
+      JSON.stringify(
+        flat.map(({ name, risk, environment, inputSchema }) => ({
+          name,
+          risk,
+          environment,
+          inputSchema,
+        })),
+      ),
+    )
     .digest('hex');
   const manifest = { ...manifestBase, schema_hash: schemaHash };
 

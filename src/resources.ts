@@ -19,16 +19,12 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
-import {
-  type ReadResourceResult,
-  type ListResourcesResult,
-  SubscribeRequestSchema,
-  UnsubscribeRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
-
+import { ResourceTemplate } from '@modelcontextprotocol/server';
+import type {
+  McpServer,
+  ReadResourceResult,
+  ListResourcesResult,
+} from '@modelcontextprotocol/server';
 import { logger } from './logger.js';
 import { evaluatePolicy } from './core/policy.js';
 import type { ToolContext, ToolRisk } from './core/tool-factory.js';
@@ -413,14 +409,14 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
   // declared the capability in server.ts, so the handlers must exist. We implement
   // it lightly: track a set of subscribers and, on a pending-actions change, notify only them.
   const subscribers = new Set<string>();
-  server.server.setRequestHandler(SubscribeRequestSchema, async (req) => {
+  server.server.setRequestHandler('resources/subscribe', async (req) => {
     if (req.params.uri === PENDING_ACTIONS_URI && !pendingActionsVisible) return {};
     if (req.params.uri === WEBHOOK_EVENTS_URI && !webhookEventsDecision.allowed) return {};
     if (req.params.uri !== PENDING_ACTIONS_URI && req.params.uri !== WEBHOOK_EVENTS_URI) return {};
     subscribers.add(req.params.uri);
     return {};
   });
-  server.server.setRequestHandler(UnsubscribeRequestSchema, async (req) => {
+  server.server.setRequestHandler('resources/unsubscribe', async (req) => {
     subscribers.delete(req.params.uri);
     return {};
   });

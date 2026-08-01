@@ -3,10 +3,8 @@
  * and prints the list of registered tools (name + description + inputSchema JSON schema).
  * Run with: `npm run list-tools` or `npx tsx scripts/list-tools.ts`.
  */
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-
+import { Client } from '@modelcontextprotocol/client';
+import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
 import { config } from '../src/config.js';
 import { AvitoClient } from '../src/core/client.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';

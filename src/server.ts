@@ -166,7 +166,7 @@ async function startServer(): Promise<void> {
 
   // ── stdio transport (default) ──────────────────────────────────────────────
   if (runStdio) {
-    const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
+    const { StdioServerTransport } = await import('@modelcontextprotocol/server/stdio');
     const server = buildMcpServer(baseCtx);
     const transport = new StdioServerTransport();
     await server.connect(transport);

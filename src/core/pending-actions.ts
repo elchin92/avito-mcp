@@ -1,4 +1,4 @@
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import { createHash, randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
@@ -644,16 +644,37 @@ interface PersistentPendingRecord extends Omit<PendingAction, 'execute'> {
   failedConfirmationAttempts?: number;
 }
 
+/**
+ * The slice of the SDK's per-request handler context that identity depends on.
+ *
+ * SDK v2 replaced v1's flat `RequestHandlerExtra` (`{ authInfo, sessionId,
+ * requestInfo.headers }`) with a nested `ServerContext`: the verified token now
+ * arrives as `ctx.http.authInfo` and the raw request as `ctx.http.req`, whose
+ * `headers` is a web-standard `Headers` (read via `.get()`, never bracket
+ * access — the old `requestInfo.headers.authorization` shape does not exist).
+ *
+ * This declaration is deliberately structural rather than an import of
+ * `ServerContext`: it keeps the store free of an SDK dependency. To stop it
+ * drifting away from the real context again — the v1 shape kept compiling under
+ * v2 and silently reduced every principal to `session:<id>` — the assignability
+ * of `ServerContext` to `CallerExtra` is asserted at compile time in
+ * `src/core/tool-factory.ts` and exercised over a live HTTP transport with a
+ * real OAuth token in `test/oauth-bearer-http.test.ts`.
+ */
 export interface CallerExtra {
-  authInfo?: { clientId?: string };
   sessionId?: string;
-  requestInfo?: { headers?: Record<string, string | string[] | undefined> };
+  http?: {
+    /** Populated by requireBearerAuth → transport → ServerContext. */
+    authInfo?: { clientId?: string };
+    /** The original web-standard HTTP request, when served over HTTP. */
+    req?: { headers: { get(name: string): string | null } };
+  };
 }
 
 export function callerPrincipal(extra: CallerExtra | undefined): string {
-  if (extra?.authInfo?.clientId) return `oauth:${extra.authInfo.clientId}`;
-  const raw = extra?.requestInfo?.headers?.authorization;
-  const authorization = Array.isArray(raw) ? raw[0] : raw;
+  const clientId = extra?.http?.authInfo?.clientId;
+  if (clientId) return `oauth:${clientId}`;
+  const authorization = extra?.http?.req?.headers.get('authorization');
   const bearer = /^Bearer\s+(.+)$/i.exec(authorization ?? '')?.[1];
   if (bearer) {
     return `bearer:${createHash('sha256').update(bearer).digest('base64url')}`;

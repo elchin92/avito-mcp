@@ -53,3 +53,9 @@ test/.sandbox/
 docs/mcp-2026-07-28/
 MIGRATION_PLAN.md
 MIGRATION_PROGRESS.md
+
+# Captured protocol handshakes used to prove the wire did not move across the
+# SDK migration (initialize/tools/prompts/resources dumps plus the throwaway
+# probes that produced them). Evidence for a review, not a source: it is large,
+# it is regenerated on demand, and it must never be staged by a wide `git add`.
+.wire-baseline/

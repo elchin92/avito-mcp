@@ -9,8 +9,7 @@
  * own `server` reference — so an HTTP deployment can hold many concurrent sessions
  * without duplicating the Avito client or token cache.
  */
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
+import { McpServer } from '@modelcontextprotocol/server';
 import type { Config } from './config.js';
 import type { ToolContext } from './core/tool-factory.js';
 import { domains } from './meta/domain-registry.js';
@@ -18,6 +17,7 @@ import { registerResources } from './resources.js';
 import { registerPrompts } from './prompts.js';
 import { PACKAGE_NAME, VERSION } from './version.js';
 import { hasConfiguredCredentials } from './core/credentials.js';
+import { applyLegacyWireDefaults } from './core/wire-compat.js';
 
 /**
  * Builds a fully-registered McpServer (all domains, resources, prompts) wired to
@@ -41,8 +41,16 @@ export function buildMcpServer(baseCtx: ToolContext): McpServer {
       capabilities: {
         logging: {},
         resources: { subscribe: true, listChanged: true },
-        prompts: { listChanged: false },
-        tools: { listChanged: false },
+        // M2: `true` here is what 1.3.x actually advertised, not a claim we make
+        // lightly. SDK v1's McpServer overwrote the declared value with
+        // `listChanged: true` the moment a tool/prompt was registered; v2 honours
+        // the declaration instead. The tool and prompt sets are static, so
+        // neither notification is ever emitted either way — but M2's contract is
+        // "identical to 1.3.x on the wire", and narrowing an advertised
+        // capability is a client-visible change that belongs in its own release,
+        // not smuggled in with an SDK bump. Revisit at M3.
+        prompts: { listChanged: true },
+        tools: { listChanged: true },
       },
       instructions:
         'Avito MCP — a server for the live (production) Avito API. Before any write/money/public ' +
@@ -54,6 +62,10 @@ export function buildMcpServer(baseCtx: ToolContext): McpServer {
         'webhook events (if the receiver is enabled) are in avito://webhook/events (subscribable).',
     },
   );
+
+  // M2: pin the tool-descriptor details v2 changed (JSON Schema dialect and the
+  // `execution` field) back to what 1.3.x emitted, before anything registers.
+  applyLegacyWireDefaults(server);
 
   // Per-session ctx: shares the singletons in baseCtx, but binds this server so
   // resources/prompts/logging target the right session.

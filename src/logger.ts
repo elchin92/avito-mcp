@@ -1,6 +1,6 @@
 import pino from 'pino';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 
 /**
  * The pino logger writes to stderr (fd=2). The MCP stdio transport uses stdout for JSON-RPC,
@@ -70,8 +70,7 @@ const REDACT_PATHS = [
  * same sensitive-key set must be applied here before the payload leaves the
  * process.
  */
-const SENSITIVE_KEY_RE =
-  /(authorization|secret|password|token|bearer|cookie|api[_-]?key)s?$/i;
+const SENSITIVE_KEY_RE = /(authorization|secret|password|token|bearer|cookie|api[_-]?key)s?$/i;
 const SENSITIVE_KEY_SET = new Set(SENSITIVE_KEYS.map((key) => key.toLowerCase()));
 
 function censorSensitive(value: unknown, depth = 0): unknown {

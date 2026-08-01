@@ -22,13 +22,10 @@
  * Host and Origin allowlists cannot be derived.
  */
 import { createHash, randomUUID } from 'node:crypto';
-
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { isInitializeRequest } from '@modelcontextprotocol/server';
+import type { McpServer, AuthInfo } from '@modelcontextprotocol/server';
+import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import type { RequestHandler } from 'express';
-import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-
 import type { HttpConfig } from '../config.js';
 import { buildMcpServer } from '../build-server.js';
 import type { ToolContext } from '../core/tool-factory.js';
@@ -37,7 +34,7 @@ import { bindMcpLogger, logger, runWithMcpLogger } from '../logger.js';
 /** A live MCP session: the per-session server, its HTTP transport, last activity. */
 interface Session {
   server: McpServer;
-  transport: StreamableHTTPServerTransport;
+  transport: NodeStreamableHTTPServerTransport;
   lastSeenAt: number;
   activeRequests: number;
   principal: string;
@@ -261,7 +258,7 @@ export function createMcpHttpHandler(
     res: Parameters<RequestHandler>[1],
   ): Promise<void> {
     const principal = requestPrincipal(req);
-    const transport = new StreamableHTTPServerTransport({
+    const transport = new NodeStreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       enableDnsRebindingProtection: rebinding.enabled,
       allowedHosts: rebinding.allowedHosts,

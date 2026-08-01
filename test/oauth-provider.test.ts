@@ -34,8 +34,7 @@ import type { HttpConfig } from '../src/config.js';
 
 type ProviderCtor = typeof import('../src/http/oauth/provider.js').AvitoOAuthProvider;
 type Provider = import('../src/http/oauth/provider.js').AvitoOAuthProvider;
-type OAuthClientInformationFull =
-  import('@modelcontextprotocol/sdk/shared/auth.js').OAuthClientInformationFull;
+type OAuthClientInformationFull = import('@modelcontextprotocol/server').OAuthClientInformationFull;
 
 let AvitoOAuthProvider: ProviderCtor;
 let createOAuthSubsystem:
@@ -203,7 +202,7 @@ function extractCode(redirectUrl: string): string | null {
 async function issueGrant(
   provider: Provider,
   client: OAuthClientInformationFull,
-): Promise<import('@modelcontextprotocol/sdk/shared/auth.js').OAuthTokens> {
+): Promise<import('@modelcontextprotocol/server').OAuthTokens> {
   const verifier = randomBytes(32).toString('base64url');
   const cap = fakeRes();
   await provider.approveConsent(

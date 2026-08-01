@@ -2,8 +2,7 @@
  * Tests for the idempotency store (v0.7.0). Isolated unit tests without MCP.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import {
   IdempotencyStore,
   IdempotencyConflictError,

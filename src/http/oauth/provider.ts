@@ -19,28 +19,35 @@
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
-
+import type {
+  AuthInfo,
+  OAuthClientInformationFull,
+  OAuthTokenRevocationRequest,
+  OAuthTokens,
+} from '@modelcontextprotocol/server';
+import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server';
+// Authorization-Server-side errors. mcpAuthRouter (server-legacy) maps these to
+// their OAuth status codes by `instanceof` against its own class hierarchy, so
+// the AS endpoints must keep throwing THESE classes.
+//
+// The Resource-Server side is the other brand: see verifyAccessToken, which must
+// throw the v2 `OAuthError` above — @modelcontextprotocol/express does not
+// recognise the legacy classes and turns them into 500 instead of 401. The two
+// hierarchies do not overlap (`new InvalidTokenError() instanceof OAuthError` is
+// false in both directions), so the split has to be maintained by hand.
 import {
   InvalidClientMetadataError,
   InvalidGrantError,
   InvalidRequestError,
   InvalidScopeError,
-  InvalidTokenError,
   ServerError,
-} from '@modelcontextprotocol/sdk/server/auth/errors.js';
-import { redirectUriMatches } from '@modelcontextprotocol/sdk/server/auth/handlers/authorize.js';
+  redirectUriMatches,
+} from '@modelcontextprotocol/server-legacy/auth';
 import type {
   AuthorizationParams,
   OAuthServerProvider,
-} from '@modelcontextprotocol/sdk/server/auth/provider.js';
-import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
-import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import type {
-  OAuthClientInformationFull,
-  OAuthTokenRevocationRequest,
-  OAuthTokens,
-} from '@modelcontextprotocol/sdk/shared/auth.js';
-
+  OAuthRegisteredClientsStore,
+} from '@modelcontextprotocol/server-legacy/auth';
 import type { HttpConfig } from '../../config.js';
 import { logger } from '../../logger.js';
 import { OAuthStore } from './store.js';
@@ -499,16 +506,18 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
   async verifyAccessToken(token: string): Promise<AuthInfo> {
     const rec = this.store.getAccessToken(token);
     if (!rec) {
-      // The bearerAuth middleware maps InvalidTokenError → 401 + WWW-Authenticate
-      // (so MCP clients re-run the OAuth flow); a generic OAuthError would map to
-      // 400 and a plain Error to 500 — both wrong for an unknown bearer token.
-      throw new InvalidTokenError('Invalid or expired access token');
+      // requireBearerAuth maps OAuthErrorCode.InvalidToken → 401 + WWW-Authenticate
+      // (so MCP clients re-run the OAuth flow); any other OAuth code maps to 400
+      // and a non-OAuthError to 500 — both wrong for an unknown bearer token.
+      // The server-legacy InvalidTokenError class is NOT interchangeable here: it
+      // is a different brand and would land on the 500 branch.
+      throw new OAuthError(OAuthErrorCode.InvalidToken, 'Invalid or expired access token');
     }
     if (
       !rec.scopes.includes(REQUIRED_SCOPE) ||
       rec.scopes.some((scope) => scope !== REQUIRED_SCOPE)
     ) {
-      throw new InvalidTokenError('Access token has invalid scope');
+      throw new OAuthError(OAuthErrorCode.InvalidToken, 'Access token has invalid scope');
     }
     const resource = this.requireExpectedResource(rec.resource, true);
     const info: AuthInfo = {
@@ -581,6 +590,12 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     return unique;
   }
 
+  /**
+   * `tokenValidation` selects the error BRAND, not just the wording: on the
+   * resource-server path (called from verifyAccessToken) it must be the v2
+   * OAuthError so requireBearerAuth answers 401; on the authorization-server
+   * path it must be the server-legacy class so mcpAuthRouter answers 400.
+   */
   private requireExpectedResource(value: string | undefined, tokenValidation = false): string {
     let normalized: string | undefined;
     try {
@@ -590,12 +605,16 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
         normalized = parsed.href;
       }
     } catch {
-      if (tokenValidation) throw new InvalidTokenError('Access token has invalid resource');
+      if (tokenValidation)
+        throw new OAuthError(OAuthErrorCode.InvalidToken, 'Access token has invalid resource');
       throw new InvalidRequestError('Invalid resource indicator');
     }
     if (normalized !== this.expectedResource) {
       if (tokenValidation)
-        throw new InvalidTokenError('Access token was issued for a different resource');
+        throw new OAuthError(
+          OAuthErrorCode.InvalidToken,
+          'Access token was issued for a different resource',
+        );
       throw new InvalidRequestError(`resource must be ${this.expectedResource}`);
     }
     return normalized;
