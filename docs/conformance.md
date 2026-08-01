@@ -5,14 +5,22 @@
 конкретным тестом, который это требование проверяет.
 
 Проверяется сам документ: `test/conformance/conformance-doc.test.ts` разбирает таблицы ниже и падает,
-если хотя бы одна строка со статусом «покрыто» ссылается на несуществующий файл теста или на
-название теста, которого в этом файле нет; если строка не «покрыто» и при этом не содержит
-обоснования; если сослались на документ, которого в корпусе нет; или если пропущен любой из
-шестнадцати пунктов раздела 1.2.A плана. То есть строку нельзя написать «на всякий случай» — она
-либо резолвится в репозитории, либо ломает сборку.
+если хотя бы одна ссылка на тест — в колонке «Тест» или внутри обоснования — не резолвится в файл на
+диске и в дословное название теста в нём; если сослались на документ, которого в корпусе нет; или
+если пропущен любой из шестнадцати пунктов раздела 1.2.A плана. То есть строку нельзя написать «на
+всякий случай» — она либо резолвится в репозитории, либо ломает сборку.
 
-- **Критерий**: раздел 1.2 [`MIGRATION_PLAN.md`](../MIGRATION_PLAN.md), блоки A–F.
-- **Корпус ревизии**: `docs/mcp-2026-07-28/` (65 документов, untracked — держится вне npm-пакета и
+Обоснования проверяются наравне со ссылками: **«не покрыто» — такое же утверждение о репозитории,
+как и «покрыто», и протухает точно так же.** Поэтому каждая строка, не помеченная «покрыто», обязана
+назвать задачу плана (`M<этап>.<номер>`), в которую отнесено требование, либо существующий артефакт
+репозитория (файл кода, ADR, гард-тест) — и прогон падает, если названная задача **уже закрыта**.
+Закрытой считается задача, чьё имя стоит в названии теста (`describe`/`it`) или в строке `Context:`
+принятого ADR. Именно эта проверка ловит случай, ради которого она написана: этап выполнен, тесты на
+него лежат в репозитории, а строка всё ещё сообщает, что он не выполнялся.
+
+- **Критерий**: раздел 1.2 [`MIGRATION_PLAN.md`](../MIGRATION_PLAN.md), блоки A–F (файл untracked,
+  как и корпус: ссылка резолвится только в рабочем чекауте, где план лежит рядом).
+- **Корпус ревизии**: `docs/mcp-2026-07-28/` (66 документов, untracked — держится вне npm-пакета и
   образа по M0.5; ссылки ниже относительны каталогу `docs/`).
 - **Эра по умолчанию**: `AVITO_MCP_PROTOCOL_ERA=legacy`. Требования блока A адресованы
   **modern-соединению** и проверяются на эрах `dual` и `modern`.
@@ -30,8 +38,8 @@ npm run verify                 # lint + три typecheck + покрытие с �
 | Статус | Что означает |
 | --- | --- |
 | покрыто | Есть автоматический тест; он перечислен в строке и существует в репозитории. |
-| не покрыто | Требование признано, теста нет. В той же ячейке — почему и куда это отнесено. |
-| неприменимо | Требование не адресовано этому серверу либо касается функциональности, сознательно не входящей в объём (раздел 1.3 плана). Причина — в той же ячейке. |
+| не покрыто | Требование признано, теста нет. В той же ячейке — почему и в какую **открытую** задачу плана это отнесено. Колонка «Тест» пуста, и ни один тест в такой строке не назван: строка утверждает отсутствие покрытия, а названный тест это утверждение опровергал бы. |
+| неприменимо | Требование не адресовано этому серверу либо касается функциональности, сознательно не входящей в объём (раздел 1.3 плана). Причина — в той же ячейке, вместе с задачей плана или артефактом репозитория (ADR, модуль, гард-тест), который эту причину держит. |
 
 ---
 
@@ -64,7 +72,7 @@ npm run verify                 # lint + три typecheck + покрытие с �
 | A3c | `cacheScope` одинаков на всех страницах одного списочного запроса | [`utilities-1.md`](mcp-2026-07-28/utilities-1.md) (K-24) | `test/caching-hints.test.ts` › `keeps cacheScope identical across every page of one list request` | покрыто |
 | A3d | `ttlMs` — неотрицательное целое | [`utilities-1.md`](mcp-2026-07-28/utilities-1.md) | `test/caching-hints.test.ts` › `uses non-negative safe integers for every ttlMs` | покрыто |
 | A3e | Кэш-хинты не протекают на провод 2025 | [`spec-transports.md`](mcp-2026-07-28/spec-transports.md) | `test/caching-hints.test.ts` › `never emits cache fields on the 2025 wire` | покрыто |
-| A3f | Результаты MRTR-ретраев (с `inputResponses` / `requestState`) не кэшируются | [`utilities-1.md`](mcp-2026-07-28/utilities-1.md), [`patterns.md`](mcp-2026-07-28/patterns.md) | — | неприменимо — MRTR сознательно не внедряется (раздел 1.3 плана: подтверждение остаётся на `confirmation_id` + `meta_confirm_action`), сервер не выдаёт ни одного `resultType: "input_required"`, поэтому кэшируемого MRTR-ретрая не существует; гард на появление `inputRequired` — `test/modern-hardening.test.ts` |
+| A3f | Результаты MRTR-ретраев (с `inputResponses` / `requestState`) не кэшируются | [`utilities-1.md`](mcp-2026-07-28/utilities-1.md), [`patterns.md`](mcp-2026-07-28/patterns.md) | — | неприменимо — MRTR сознательно не внедряется (раздел 1.3 плана: подтверждение остаётся на `confirmation_id` + `meta_confirm_action`), сервер не выдаёт ни одного `resultType: "input_required"`, поэтому кэшируемого MRTR-ретрая не существует; гард на появление `inputRequired` — `test/modern-hardening.test.ts` › `no primitive on this surface requires a client capability` |
 
 ### A4. Per-request `_meta`-конверт
 
@@ -193,6 +201,7 @@ npm run verify                 # lint + три typecheck + покрытие с �
 | A15a | Ни один `$ref` не указывает на сетевой URI; глубина и число подсхем ограничены; диалект задокументирован | [`server-tools.md`](mcp-2026-07-28/server-tools.md) | `test/modern-runtime.test.ts` › `declares exactly the documented dialect, contains no network $ref, and stays bounded` | покрыто |
 | A15b | Диалект стабилен на обеих эрах (`schemaHash` считается по схемам как они отдаются) | [`server-tools.md`](mcp-2026-07-28/server-tools.md) | `test/wire-conformance.test.ts` › `renders every inputSchema in the draft-07 dialect`<br>`test/wire-conformance.test.ts` › `renders every outputSchema in the draft-07 dialect` | покрыто |
 | A15c | `structuredContent` соответствует объявленному `outputSchema` | [`server-tools.md`](mcp-2026-07-28/server-tools.md) | `test/conformance/dual-matrix.test.ts` › `honours a tool outputSchema with a matching structuredContent` | покрыто |
+| A15d | Аннотация `x-mcp-header` — либо все шесть MUST, либо не использовать вовсе; здесь принято второе, и это закреплено гардом (M5.8) | [`server-tools.md`](mcp-2026-07-28/server-tools.md) | `test/openapi-contract.test.ts` › `puts no x-mcp-header annotation on any tool input schema` | покрыто |
 
 ### A16. Детерминированность поверхности
 
@@ -208,7 +217,7 @@ npm run verify                 # lint + три typecheck + покрытие с �
 | ID | Требование | Источник | Тест | Статус |
 | --- | --- | --- | --- | --- |
 | B1 | Legacy-клиент проходит `initialize` → `tools/list` → `tools/call` → `resources/subscribe` так же, как на 1.3.3 | план §1.2 B, [`versioning.md`](mcp-2026-07-28/versioning.md) | `test/modern-conformance.test.ts` › `serves a byte-identical 2025 handshake at era=legacy and era=dual`<br>`test/modern-runtime.test.ts` › `keeps resources/subscribe working on the legacy leg of the same process` | покрыто |
-| B2 | Wire-снапшот 1.3.3 проходит без правок: 144 инструмента, тот же `schema_hash` | план §1.2 B (M1.1) | `test/wire-conformance.test.ts` › `recomputes to the hash 1.3.3 published`<br>`test/wire-conformance.test.ts` › `exposes the full 148-tool surface` | покрыто |
+| B2 | Wire-снапшот 1.3.3 проходит без правок: тот же каталог инструментов (148 дескрипторов на полной поверхности; дефолтный конфиг показывает из них 144, остальные закрыты политикой) и тот же `schema_hash` | план §1.2 B (M1.1) | `test/wire-conformance.test.ts` › `recomputes to the hash 1.3.3 published`<br>`test/wire-conformance.test.ts` › `exposes the full 148-tool surface` | покрыто |
 | B3 | Capability-набор и `serverInfo` эры 2025 неизменны | план §1.2 B | `test/wire-conformance.test.ts` › `advertises exactly the 1.3.x capability set`<br>`test/wire-conformance.test.ts` › `keeps serverInfo identical, including title/description/websiteUrl` | покрыто |
 | B4 | Клиент, предлагающий 2026-07-28 в `initialize`, получает 2025-11-25 (а не отказ) | [`versioning.md`](mcp-2026-07-28/versioning.md) | `test/wire-conformance.test.ts` › `answers initialize with 2025-11-25 even when a client offers 2026-07-28` | покрыто |
 | B5 | Handshake при `era=dual` побайтово равен handshake при `era=legacy` | план §1.2 B | `test/http-dual-era.test.ts` › `produces a byte-identical 2025 handshake to era=legacy` | покрыто |
@@ -225,7 +234,7 @@ npm run verify                 # lint + три typecheck + покрытие с �
 | C2 | Существует тестовый шов эры 2026 для stdio (порождённый `serveStdio` дочерний процесс) | план §6.1, M3.9 | `test/modern-conformance.test.ts` › `answers server/discover over stdio too, as the first line of the connection` | покрыто |
 | C3 | Ключевые интеграционные сюиты прогоняются в ОБЕИХ эрах одной параметризацией | план §1.2 C, M6.1 | `test/conformance/dual-matrix.test.ts` › `lists tools with the era-appropriate result envelope`<br>`test/conformance/dual-matrix.test.ts` › `parks a money tool as a pending action instead of executing it`<br>`test/conformance/dual-matrix.test.ts` › `lists and renders prompts`<br>`test/conformance/dual-matrix.test.ts` › `lists resources and reads one with non-empty contents` | покрыто |
 | C4 | Обе ноги обслуживаются ОДНИМ процессом на одном эндпоинте, с общим состоянием | [`versioning.md`](mcp-2026-07-28/versioning.md) | `test/conformance/dual-matrix.test.ts` › `confirms on the legacy leg what the modern leg parked, in one process` | покрыто |
-| C5 | Таблица «требование → тест» существует и проверяется машинно | план §1.2 C, M6.2 | `test/conformance/conformance-doc.test.ts` › `finds every referenced test TITLE verbatim in the file it names`<br>`test/conformance/conformance-doc.test.ts` › `covers every one of the sixteen requirements of §1.2.A` | покрыто |
+| C5 | Таблица «требование → тест» существует и проверяется машинно — включая обоснования строк, не помеченных «покрыто» | план §1.2 C, M6.2 | `test/conformance/conformance-doc.test.ts` › `finds every referenced test TITLE verbatim in the file it names`<br>`test/conformance/conformance-doc.test.ts` › `covers every one of the sixteen requirements of §1.2.A`<br>`test/conformance/conformance-doc.test.ts` › `anchors every row that is not покрыто to a plan task or to an artifact`<br>`test/conformance/conformance-doc.test.ts` › `refuses a justification that defers to a task this repository has closed` | покрыто |
 | C6 | Legacy-only-тесты помечены как legacy-only, а не «починены под зелёный» | план M6.1 | `test/modern-runtime.test.ts` › `leaves the legacy answer for a missing swagger exactly where 1.3.x had it` | покрыто |
 | C7 | Пороги покрытия не понижены относительно 74/65/70/75; `npm run verify` держит lint, три typecheck и покрытие | план M6.5 | `test/conformance/gates.test.ts` › `keeps every coverage threshold at or above the 1.3.3 floor`<br>`test/conformance/gates.test.ts` › `keeps npm run verify covering lint, all three typechecks and coverage` | покрыто |
 | C8 | conformance-набор собирается обычным прогоном (`test/conformance/` не выпадает из `include`) | план M6.2 | `test/conformance/gates.test.ts` › `collects the conformance suites in the default test run` | покрыто |
@@ -241,8 +250,12 @@ npm run verify                 # lint + три typecheck + покрытие с �
 | D2 | Подтверждение, выданное на одной эре, действительно на другой в том же процессе (следствие D1) | план §1.2 D | `test/conformance/dual-matrix.test.ts` › `confirms on the legacy leg what the modern leg parked, in one process` | покрыто |
 | D3 | На `/mcp` действует количественный лимит после удаления сессий | план §1.2 D, M3.8 | `test/modern-hardening.test.ts` › `refuses a subscription stream past AVITO_MCP_HTTP_MAX_STREAMS`<br>`test/modern-hardening.test.ts` › `refuses a plain request past AVITO_MCP_HTTP_MAX_INFLIGHT` | покрыто |
 | D4 | Невалидный Bearer-токен → 401, никогда 500 | [`spec-authorization.md`](mcp-2026-07-28/spec-authorization.md) | `test/oauth-bearer-http.test.ts` › `answers an unknown Bearer token with 401 and a discoverable challenge, never 500`<br>`test/oauth-bearer-http.test.ts` › `answers an expired but genuinely issued token with 401, not 500` | покрыто |
-| D5 | Авторизационные требования ревизии: `iss` по RFC 9207, Authorization Server Binding, `application_type` при DCR, PRM во всех HTTP-режимах | [`spec-authorization.md`](mcp-2026-07-28/spec-authorization.md), [`extensions-auth.md`](mcp-2026-07-28/extensions-auth.md) | — | не покрыто — это объём этапа M5 (задачи M5.1–M5.7), который в этой ветке не выполнялся; до его завершения режим `oauth` не заявляет соответствия авторизационной части ревизии, и это должно быть записано в README при включении dual (M5.5) |
-| D6 | Иерархии scope и 403 `insufficient_scope` | [`spec-authorization.md`](mcp-2026-07-28/spec-authorization.md) | — | неприменимо — вынесено в M8.7 отдельным мажорным релизом: текущая проверка требует точного равенства множества scopes, и любое расширение немедленно провалит уже выданные токены установленной базы |
+| D5 | `iss` по RFC 9207 в каждом авторизационном ответе — успешном и ошибочном — байт в байт равный `issuer` из метаданных; параметр объявляется только потому, что редирект его действительно несёт | [`spec-authorization.md`](mcp-2026-07-28/spec-authorization.md), [`extensions-auth.md`](mcp-2026-07-28/extensions-auth.md) | `test/oauth-conformance.test.ts` › `stamps iss on the success redirect, byte-identical to the advertised issuer`<br>`test/oauth-conformance.test.ts` › `stamps iss on the SDK error redirect too`<br>`test/oauth-conformance.test.ts` › `advertises the parameter only because the redirect actually carries it (M5.2)`<br>`test/oauth-conformance.test.ts` › `keeps the explicit port and the trailing slash that a client compares byte-wise` | покрыто |
+| D6 | Иерархии scope и 403 `insufficient_scope` | [`spec-authorization.md`](mcp-2026-07-28/spec-authorization.md) | — | неприменимо — решение принято и записано в `docs/adr/0005-scopes.md`: `avito:mcp` остаётся единственным scope на весь мажор 1.x, реализация разделения вынесена в M8.7 двумя релизами. Причина в самой проверке: она требует точного равенства множества scopes, поэтому появление второго scope немедленно провалит все уже выданные токены установленной базы. Текущее поведение — не молчание: `test/oauth-provider.test.ts` › `rejects unknown scopes and a missing or cross-resource indicator` |
+| D7 | RFC 9728 PRM во всех HTTP-режимах: в `oauth` документ публикуется и на него указывает каждый 401; `bearer` и `none` его не публикуют и объявлены не заявляющими соответствия авторизационной части ревизии (решение M5.5, записано в обоих README и `SECURITY.md`) | [`spec-authorization.md`](mcp-2026-07-28/spec-authorization.md), [`extensions-auth.md`](mcp-2026-07-28/extensions-auth.md) | `test/oauth-bearer-http.test.ts` › `oauth: serves the document and points every 401 at it`<br>`test/oauth-bearer-http.test.ts` › `bearer: no metadata document, and the challenge says so`<br>`test/oauth-bearer-http.test.ts` › `none: no metadata document and no challenge at all` | покрыто |
+| D8 | Authorization Server Binding: HTTPS для issuer-эндпоинтов, схема `redirect_uris` при DCR, `application_type`, привязка выданных credentials к issuer identifier | [`spec-authorization.md`](mcp-2026-07-28/spec-authorization.md), [`extensions-auth.md`](mcp-2026-07-28/extensions-auth.md) | `test/config-parsing.test.ts` › `fails startup rather than serving an OAuth issuer over cleartext`<br>`test/oauth-provider.test.ts` › `accepts only https and loopback-http redirect_uris`<br>`test/oauth-provider.test.ts` › `honours application_type without requiring it`<br>`test/oauth-provider.test.ts` › `drops clients and tokens when the issuer identifier changes`<br>`test/oauth-conformance.test.ts` › `rejects %s with invalid_client_metadata` | покрыто |
+| D9 | Регрессионные гарды авторизационного контура: `offline_access` не публикуется, PKCE только S256, refresh-токен public-клиента ротируется, токен вызывающего не проходит насквозь к Avito, секреты потока не попадают в лог | [`spec-authorization.md`](mcp-2026-07-28/spec-authorization.md), [`guides-security.md`](mcp-2026-07-28/guides-security.md) | `test/oauth-conformance.test.ts` › `never publishes offline_access and offers S256 only`<br>`test/oauth-conformance.test.ts` › `rotates a public client refresh token and answers invalid_grant on reuse`<br>`test/oauth-conformance.test.ts` › `keeps every code, verifier, secret and token out of stderr at debug level`<br>`test/oauth-conformance.test.ts` › `never mentions authInfo or an inbound Authorization header in outbound code` | покрыто |
+| D10 | Авторизационный контур ревизии доставлен в прод, а не только в код ветки | план §1.2 D, M5.10 | — | не покрыто — задача M5.10 (релиз 1.8.0) не выполнялась: строки D5, D7–D9 доказаны на коде этой ветки, а работающая установка обслуживается прежним релизом. Релизные действия — за владельцем (мерж, аппрув environment, публикация), поэтому до выката формулировка «сервер соответствует» верна для ветки и не верна для продакшена |
 
 ---
 
@@ -257,7 +270,7 @@ npm run verify                 # lint + три typecheck + покрытие с �
 | E5 | README не рекламирует удалённый метод без указания эры | план §1.2 E | `test/conformance/public-contract.test.ts` › `never advertises a removed method as a live capability in either README` | покрыто |
 | E6 | Лимиты сессий помечены как legacy-only; лимиты, заменившие их на modern-ноге, задокументированы | план §1.2 E, M3.8 | `test/conformance/public-contract.test.ts` › `marks the session limits as legacy-only wherever they are documented`<br>`test/conformance/public-contract.test.ts` › `documents the quantitative limits that replaced them on the modern leg` | покрыто |
 | E7 | `package.json`, `server.json` согласованы между собой (имя, версия, идентификатор пакета) | план §1.2 E | `test/conformance/public-contract.test.ts` › `keeps the package metadata self-consistent` | покрыто |
-| E8 | `CHANGELOG.md` описывает поддерживаемые ревизии и обещание совместимости | план §1.2 E | — | не покрыто — запись CHANGELOG готовится релизными задачами M3.11/M4.16, а `scripts/check-release-version.mjs` блокирует релиз, у которого версия не синхронизирована во всех шести машинных местах; писать её сейчас значит либо зафиксировать версию, которую этот этап не выпускает, либо соврать |
+| E8 | `CHANGELOG.md` описывает поддерживаемые ревизии и обещание совместимости | план §1.2 E | — | не покрыто — заявление о ревизиях привязано к номеру выпуска и готовится релизными задачами M3.11/M4.16: `scripts/check-release-version.mjs` блокирует релиз, у которого версия не синхронизирована во всех шести машинных местах, поэтому писать заголовок версии сейчас значит либо зафиксировать версию, которую этот этап не выпускает, либо соврать. Изменения этапа при этом не замолчаны: раздел `[Unreleased]` уже несёт записи Security и Documentation по авторизационному контуру |
 | E9 | `server.json` и `glama.json` заявляют поддерживаемые ревизии в метаданных реестров | план §1.2 E, M7.4 | — | не покрыто — поля ревизий в схемах реестров заполняются задачей M7.4 вместе с выпуском версии; сейчас оба файла версионированы и проверяются на согласованность с `package.json` строкой E7 |
 
 ---
@@ -318,7 +331,17 @@ npm run verify                 # lint + три typecheck + покрытие с �
 1. Новое требование ревизии → новая строка с ID блока, ссылкой на документ корпуса и тестом.
 2. Тест переименован или перенесён → `test/conformance/conformance-doc.test.ts` упадёт с точным
    указанием строки; чинится правкой таблицы, а не ослаблением теста.
-3. Требование признано непокрытым → статус «не покрыто» с обоснованием длиннее двадцати символов;
-   пустой отказ документ не примет.
-4. Понижать пороги покрытия ради зелёного прогона запрещено (M6.5): новый транспортный слой
+3. Требование признано непокрытым → статус «не покрыто» с обоснованием длиннее двадцати символов,
+   которое называет **открытую** задачу плана (`M5.10`, `M7.4`, …); пустой отказ документ не примет,
+   ссылку на тест в такой строке — тоже.
+4. Задача из обоснования закрыта → строка обязана поменяться в том же изменении. Проверка это
+   форсирует: как только имя задачи появляется в названии теста (`describe`/`it`) или в строке
+   `Context:` принятого ADR, всякая строка, откладывающая требование в эту задачу, становится
+   красной. Обратный порядок («сначала позеленить, потом переписать строку») невозможен —
+   единственный способ вернуть зелёный прогон, не удаляя доказательство, это переписать строку.
+5. Отсюда конвенция, на которой держится пункт 4: **сюита, закрывающая задачу плана, называет её в
+   заголовке** — `describe('M5.1 — RFC 9207 issuer identification')`. Имя задачи в комментарии
+   ничего не закрывает: комментарий пишут и о чужой, ещё не сделанной работе, а заголовок теста
+   утверждает, что доказательство лежит здесь.
+6. Понижать пороги покрытия ради зелёного прогона запрещено (M6.5): новый транспортный слой
    покрывается тестами, а не порогом.

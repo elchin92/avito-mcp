@@ -13,13 +13,53 @@
  *
  *   • every row marked «покрыто» must name at least one test, and every named
  *     test must exist — the FILE must be on disk and the TITLE must appear in
- *     it verbatim;
- *   • every row NOT marked «покрыто» must carry a justification, so "не
- *     покрыто" can never be a silent shrug;
+ *     it verbatim, wherever in the row it is named (a guard test cited inside a
+ *     justification is a claim about this repository too);
+ *   • every row NOT marked «покрыто» must carry a justification, and that
+ *     justification must RESOLVE — see below;
  *   • every requirement of §1.2.A (all sixteen) must have a row, and blocks
  *     B–E must be represented;
  *   • every source link must name a document that exists in the research
  *     corpus.
+ *
+ * ── Why the justifications are checked at all ───────────────────────────────
+ * The first version of this file checked «покрыто» rows and nothing else, and
+ * the hole was not theoretical: row D5 went on saying "not covered — this is
+ * the scope of stage M5, which was not carried out on this branch" for the
+ * whole time stage M5 was being carried out ON THIS BRANCH, with
+ * `test/oauth-conformance.test.ts` sitting in the same commit range. A
+ * «покрыто» row rots loudly, because the test it names gets renamed and this
+ * file goes red. A «не покрыто» row rots SILENTLY: nothing it names can ever
+ * stop existing, because it names nothing.
+ *
+ * The fix is to make a non-covered row falsifiable in the same way a covered
+ * one is, and the only honest way to do that is to make it name something whose
+ * DISAPPEARANCE is what proves it wrong. What disappears when a deferral stops
+ * being true is the openness of the task it was deferred into. So:
+ *
+ *   • a «не покрыто» row must name at least one plan task (`M<stage>.<task>`),
+ *     and may name no test at all — a test in a row that claims no coverage is
+ *     a contradiction, not a citation;
+ *   • an «неприменимо» row must name a plan task or an artifact that carries
+ *     the decision (an ADR, a module, a guard test), and every path it names
+ *     must exist;
+ *   • and no non-covered row may defer into a task this repository has already
+ *     CLOSED. Closure is read off two things and nothing else: the task named
+ *     in a test TITLE (`describe('M5.1 — …')`), and the task named on the
+ *     `Context:` line of an accepted ADR. Both are places where naming a task
+ *     asserts "the work is here"; a task named in a comment asserts nothing,
+ *     which is why comments are not read.
+ *
+ * That last rule is the one that makes the table self-correcting rather than
+ * merely well-intentioned: the commit that closes M5.1 turns every row still
+ * deferring to M5.1 red, in the same run, and the only way back to green
+ * without deleting the evidence is to rewrite the row.
+ *
+ * What this CANNOT check, stated rather than implied: whether a cited task
+ * exists in the plan at all, or whether it is genuinely open. `MIGRATION_PLAN.md`
+ * is untracked (it is not in the package, the image, or a clean checkout), so a
+ * typo'd task id resolves to "open" here. The direction that rots — a deferral
+ * that outlives its task — is the direction that is checked.
  *
  * The corpus itself is untracked (8.4 MB, deliberately kept out of the package
  * and the image by M0.5), so its file list is frozen below rather than globbed.
@@ -27,15 +67,15 @@
  * typo or an invention, and either way the citation cannot be followed.
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DOC = 'docs/conformance.md';
 
 /**
- * The 65 documents of the research corpus captured on 2026-07-28. Frozen, not
+ * The 66 documents of the research corpus captured on 2026-07-28. Frozen, not
  * globbed: the directory is untracked by design, so on a clean checkout (and in
  * CI) there is nothing to glob.
  */
@@ -110,12 +150,44 @@ const CORPUS = new Set([
 
 const STATUSES = ['покрыто', 'не покрыто', 'неприменимо'] as const;
 
+/** `test/x.test.ts` › `a title`, wherever in a row it appears. */
+const TEST_REFERENCE = /`(test\/[^`]+\.test\.ts)`\s*›\s*`([^`]+)`/g;
+
+/** A plan task id. Ranges (`M5.1–M5.7`) are expanded by {@link citedTasks}. */
+const TASK = /M\d+\.\d+/g;
+
+/**
+ * A repository path in backticks: `src/…`, `docs/adr/…`, `scripts/…`. Anchored
+ * on a known top-level directory so `package.json` or `avito://state/config` is
+ * not mistaken for one.
+ */
+const REPO_PATH = /`((?:src|test|docs|scripts|deploy)\/[\w./-]+)`/g;
+
+interface TestReference {
+  file: string;
+  title: string;
+}
+
 interface Row {
   id: string;
   requirement: string;
   source: string;
-  tests: Array<{ file: string; title: string }>;
+  /** Tests named in the «Тест» column — the coverage claim itself. */
+  tests: TestReference[];
+  /** Tests named inside the justification — guards, not coverage. */
+  guards: TestReference[];
   status: string;
+  /** The status word: one of {@link STATUSES}. */
+  kind: string;
+  /** Everything after the status word. */
+  justification: string;
+}
+
+function testReferences(cell: string): TestReference[] {
+  return [...cell.matchAll(TEST_REFERENCE)].map((match) => ({
+    file: match[1]!,
+    title: match[2]!,
+  }));
 }
 
 function parseRows(markdown: string): Row[] {
@@ -128,23 +200,110 @@ function parseRows(markdown: string): Row[] {
       .map((cell) => cell.trim());
     if (cells.length < 5) continue;
     if (!/^[A-F]\d+[a-z]?$/.test(cells[0]!)) continue;
-    const tests: Array<{ file: string; title: string }> = [];
-    for (const match of cells[3]!.matchAll(/`(test\/[^`]+\.test\.ts)`\s*›\s*`([^`]+)`/g)) {
-      tests.push({ file: match[1]!, title: match[2]! });
-    }
+    const status = cells[4]!;
+    const kind = STATUSES.find((candidate) => status.startsWith(candidate)) ?? '';
     rows.push({
       id: cells[0]!,
       requirement: cells[1]!,
       source: cells[2]!,
-      tests,
-      status: cells[4]!,
+      tests: testReferences(cells[3]!),
+      guards: testReferences(status),
+      status,
+      kind,
+      justification: status.slice(kind.length).trim(),
     });
   }
   return rows;
 }
 
+/**
+ * Every task id a justification names, with `M5.1–M5.7` expanded into the seven
+ * it stands for. A range is how a deferral of a whole stage gets written, and
+ * leaving it unexpanded would check the two endpoints and skip the middle.
+ */
+function citedTasks(text: string): Set<string> {
+  const ids = new Set<string>();
+  for (const range of text.matchAll(/M(\d+)\.(\d+)\s*[–—-]\s*M(\d+)\.(\d+)/g)) {
+    const [, fromStage, fromTask, toStage, toTask] = range;
+    if (fromStage !== toStage) continue;
+    for (let task = Number(fromTask); task <= Number(toTask); task += 1) {
+      ids.add(`M${fromStage}.${task}`);
+    }
+  }
+  for (const id of text.matchAll(TASK)) ids.add(id[0]);
+  return ids;
+}
+
+function everyFileUnder(directory: string, suffix: string): string[] {
+  const found: string[] = [];
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current)) {
+      const path = join(current, entry);
+      if (statSync(path).isDirectory()) walk(path);
+      else if (path.endsWith(suffix)) found.push(path);
+    }
+  };
+  if (existsSync(directory)) walk(directory);
+  return found;
+}
+
+/** The string literal of a `describe(…)` / `it(…)` / `test(…)` call. */
+const SUITE_TITLE = /\b(?:describe|it|test)(?:\.\w+)?\s*\(\s*(['"`])((?:\\.|(?!\1)[^\\])*)\1/g;
+
+/**
+ * Plan tasks this repository claims to have CLOSED, mapped to the evidence.
+ *
+ * Two sources, both of them places where naming a task is an assertion that the
+ * work landed:
+ *
+ *   • a test title — `describe('M5.1 — RFC 9207 issuer identification')` says
+ *     the proof is in this file;
+ *   • the `Context:` line of an ADR whose `Status:` is `accepted` — the shape a
+ *     decision task takes when its outcome is a decision rather than a test.
+ *
+ * Comments are deliberately NOT read. A comment names tasks freely, including
+ * ones nobody has started ("the limit arrives in M3.8"), so reading them would
+ * turn this into a check that fires on intent rather than on work.
+ */
+function closedTasks(): Map<string, string> {
+  const closed = new Map<string, string>();
+  const record = (id: string, evidence: string): void => {
+    if (!closed.has(id)) closed.set(id, evidence);
+  };
+
+  for (const file of everyFileUnder(join(root, 'test'), '.ts')) {
+    // Comments are stripped BEFORE the titles are read, which is the whole
+    // point: this very file documents the convention with a `describe('M5.1 —
+    // …')` example in its header, and reading it would close M5.1 by talking
+    // about it. That is exactly the failure the rule exists to avoid.
+    const code = readFileSync(file, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    for (const call of code.matchAll(SUITE_TITLE)) {
+      const title = call[2]!;
+      for (const id of title.matchAll(TASK)) {
+        record(id[0], `${relative(root, file)} › «${title}»`);
+      }
+    }
+  }
+
+  for (const file of everyFileUnder(join(root, 'docs', 'adr'), '.md')) {
+    const text = readFileSync(file, 'utf8');
+    if (!/^Status:\s*accepted/im.test(text)) continue;
+    const context = /^Context:.*$/m.exec(text)?.[0] ?? '';
+    for (const id of context.matchAll(TASK)) {
+      record(id[0], `${relative(root, file)} (${context.trim()})`);
+    }
+  }
+
+  return closed;
+}
+
 const markdown = readFileSync(join(root, DOC), 'utf8');
 const rows = parseRows(markdown);
+const closed = closedTasks();
+/** Every test a row names, in the «Тест» column and in the justification alike. */
+const namedTests = (row: Row): TestReference[] => [...row.tests, ...row.guards];
 /** Files are read once: the table cites the same suite dozens of times. */
 const sources = new Map<string, string>();
 const sourceOf = (file: string): string => {
@@ -189,7 +348,7 @@ describe('docs/conformance.md is checkable, not merely written', () => {
 
   it('resolves every referenced test file to a file on disk', () => {
     for (const row of rows) {
-      for (const test of row.tests) {
+      for (const test of namedTests(row)) {
         expect(existsSync(join(root, test.file)), `${row.id}: no such file ${test.file}`).toBe(
           true,
         );
@@ -200,10 +359,13 @@ describe('docs/conformance.md is checkable, not merely written', () => {
   it('finds every referenced test TITLE verbatim in the file it names', () => {
     // The single most valuable assertion in this file. A renamed test silently
     // turns a "покрыто" row into fiction, and grepping the titles by hand is
-    // exactly the review step that gets skipped.
+    // exactly the review step that gets skipped. Guard tests cited inside a
+    // justification are held to the same standard: an «неприменимо» row that
+    // says "the guard against this is over there" is making a claim about this
+    // repository, and it decays the same way.
     const misses: string[] = [];
     for (const row of rows) {
-      for (const test of row.tests) {
+      for (const test of namedTests(row)) {
         if (!existsSync(join(root, test.file))) continue;
         if (!sourceOf(test.file).includes(test.title)) {
           misses.push(`${row.id}: "${test.title}" not found in ${test.file}`);
@@ -215,13 +377,93 @@ describe('docs/conformance.md is checkable, not merely written', () => {
 
   it('justifies every row that is not покрыто', () => {
     for (const row of rows) {
-      if (row.status.startsWith('покрыто')) continue;
-      const justification = row.status.replace(/^(не покрыто|неприменимо)/, '').trim();
+      if (row.kind === 'покрыто') continue;
       expect(
-        justification.length,
+        row.justification.length,
         `${row.id}: status "${row.status}" carries no justification`,
       ).toBeGreaterThan(20);
     }
+  });
+
+  it('names no test anywhere in a row it calls не покрыто', () => {
+    // «неприменимо» may cite a test in either cell, and several do: the
+    // requirement is out of scope AND a guard keeps it out (A3f, A13d). «не
+    // покрыто» may not — it asserts that nothing in the repository proves this
+    // requirement, so a test named in the same breath refutes it, and the
+    // reader has no way to tell which of the two statements is the false one.
+    for (const row of rows) {
+      if (row.kind !== 'не покрыто') continue;
+      expect(
+        namedTests(row).map((test) => `${test.file} › ${test.title}`),
+        `${row.id} claims не покрыто and names a test that would cover it`,
+      ).toEqual([]);
+    }
+  });
+
+  it('anchors every row that is not покрыто to a plan task or to an artifact', () => {
+    // What makes a justification checkable at all. "Out of scope" with nothing
+    // named is a sentence; "deferred into M8.7" and "decided in
+    // docs/adr/0005-scopes.md" are statements the next two assertions can
+    // falsify.
+    const unanchored: string[] = [];
+    for (const row of rows) {
+      if (row.kind === 'покрыто') continue;
+      const tasks = citedTasks(row.justification);
+      const paths = [...row.justification.matchAll(REPO_PATH)].map((match) => match[1]!);
+      if (row.kind === 'не покрыто' && tasks.size === 0) {
+        unanchored.push(`${row.id}: не покрыто names no plan task`);
+        continue;
+      }
+      if (tasks.size === 0 && paths.length === 0 && namedTests(row).length === 0) {
+        unanchored.push(`${row.id}: неприменимо names no plan task, file or guard test`);
+      }
+    }
+    expect(unanchored).toEqual([]);
+  });
+
+  it('resolves every repository path named in a justification', () => {
+    const missing: string[] = [];
+    for (const row of rows) {
+      for (const match of row.justification.matchAll(REPO_PATH)) {
+        if (!existsSync(join(root, match[1]!)))
+          missing.push(`${row.id}: no such file ${match[1]!}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('refuses a justification that defers to a task this repository has closed', () => {
+    // THE assertion this file was extended for. D5 said "this is the scope of
+    // stage M5, which was not carried out on this branch" while
+    // test/oauth-conformance.test.ts — `describe('M5.1 — …')` — sat two commits
+    // away in the same branch. Nothing could go red, because the row named
+    // nothing that could stop existing.
+    //
+    // Now the closing commit is what turns it red: the moment a task appears in
+    // a test title or on the Context: line of an accepted ADR, every row still
+    // deferring into it fails, and the failure names the evidence so the fix is
+    // a rewrite of the row rather than a hunt.
+    const stale: string[] = [];
+    for (const row of rows) {
+      if (row.kind === 'покрыто') continue;
+      for (const task of citedTasks(row.justification)) {
+        const evidence = closed.get(task);
+        if (evidence !== undefined) {
+          stale.push(
+            `${row.id}: status "${row.kind}" defers to ${task}, but ${task} is closed — ${evidence}`,
+          );
+        }
+      }
+    }
+    expect(stale).toEqual([]);
+  });
+
+  it('reads closure from titles and accepted ADRs, and finds some', () => {
+    // A guard on the guard: if the extraction above ever stops matching (a
+    // rename of `describe`, a change of ADR front matter), the previous
+    // assertion would pass vacuously and go on passing forever.
+    expect(closed.size).toBeGreaterThan(0);
+    expect([...closed.keys()].some((task) => task.startsWith('M5.'))).toBe(true);
   });
 
   it('cites only documents that exist in the research corpus', () => {
