@@ -226,9 +226,14 @@ describe('createStdioEraTransport (the seam the three stdio fixes hang on)', () 
     // revision's own rule is accept-and-drop, reported out of band.
     const h = await harness('modern');
     await h.deliver(modernMessage(1, 'tools/list'));
-    const notification = modernMessage(0, 'notifications/cancelled', { requestId: 1 }, {
-      [META.protocolVersion]: '2099-01-01',
-    }) as Record<string, unknown>;
+    const notification = modernMessage(
+      0,
+      'notifications/cancelled',
+      { requestId: 1 },
+      {
+        [META.protocolVersion]: '2099-01-01',
+      },
+    ) as Record<string, unknown>;
     delete notification.id;
     await h.deliver(notification);
     expect(h.forwarded).toHaveLength(1);
@@ -260,7 +265,9 @@ describe('createStdioEraTransport (the seam the three stdio fixes hang on)', () 
       },
     });
     await h.deliver(listen);
-    const params = (h.forwarded[0] as unknown as { params: { notifications: Record<string, unknown> } }).params;
+    const params = (
+      h.forwarded[0] as unknown as { params: { notifications: Record<string, unknown> } }
+    ).params;
     expect(params.notifications.resourceSubscriptions).toEqual([PENDING_ACTIONS_URI]);
     // Fields we do not own are carried through untouched.
     expect(params.notifications.toolsListChanged).toBe(true);
@@ -277,7 +284,9 @@ describe('createStdioEraTransport (the seam the three stdio fixes hang on)', () 
         notifications: { resourceSubscriptions: ['file:///etc/passwd'] },
       }),
     );
-    const params = (h.forwarded[0] as unknown as { params: { notifications: Record<string, unknown> } }).params;
+    const params = (
+      h.forwarded[0] as unknown as { params: { notifications: Record<string, unknown> } }
+    ).params;
     expect('resourceSubscriptions' in params.notifications).toBe(false);
   });
 
@@ -315,9 +324,7 @@ describe('F4 — a pinned modern stdio connection revalidates the protocol versi
     const pinned = await conn.next();
     expect(pinned.result).toBeDefined();
 
-    conn.send(
-      modernMessage(2, 'tools/list', {}, { [META.protocolVersion]: '2099-01-01' }),
-    );
+    conn.send(modernMessage(2, 'tools/list', {}, { [META.protocolVersion]: '2099-01-01' }));
     const answer = await conn.next();
     expect(answer.result).toBeUndefined();
     expect(answer.error?.code).toBe(-32022);
@@ -331,9 +338,7 @@ describe('F4 — a pinned modern stdio connection revalidates the protocol versi
     const conn = await startStdio('modern');
     conn.send(modernMessage(1, 'tools/list'));
     await conn.next();
-    conn.send(
-      modernMessage(2, 'resources/list', {}, { [META.protocolVersion]: '1900-01-01' }),
-    );
+    conn.send(modernMessage(2, 'resources/list', {}, { [META.protocolVersion]: '1900-01-01' }));
     const answer = await conn.next();
     expect(answer.error?.code).toBe(-32022);
     await conn.close();
@@ -499,27 +504,50 @@ describe('F2 — no answer allocates a code from the legacy sub-range', () => {
       if (code !== undefined) codes.add(code);
     };
     collect(errorOf(await modernPost(rig, 'no/such/method'))?.code);
-    collect(errorOf(await modernPost(rig, 'resources/subscribe', { uri: PENDING_ACTIONS_URI }))?.code);
     collect(
-      errorOf(await modernPost(rig, 'tools/list', {}, { meta: { [META.protocolVersion]: undefined } }))
-        ?.code,
+      errorOf(await modernPost(rig, 'resources/subscribe', { uri: PENDING_ACTIONS_URI }))?.code,
     );
-    collect(errorOf(await modernPost(rig, 'tools/list', {}, { headers: { 'Mcp-Method': null } }))?.code);
     collect(
-      errorOf(await modernPost(rig, 'tools/list', {}, { headers: { 'MCP-Protocol-Version': null } }))
-        ?.code,
+      errorOf(
+        await modernPost(rig, 'tools/list', {}, { meta: { [META.protocolVersion]: undefined } }),
+      )?.code,
+    );
+    collect(
+      errorOf(await modernPost(rig, 'tools/list', {}, { headers: { 'Mcp-Method': null } }))?.code,
+    );
+    collect(
+      errorOf(
+        await modernPost(rig, 'tools/list', {}, { headers: { 'MCP-Protocol-Version': null } }),
+      )?.code,
     );
     collect(errorOf(await modernPost(rig, 'resources/read', { uri: 'avito://nope' }))?.code);
     collect(
-      errorOf(await modernPost(modernOnly, 'tools/list', {}, { meta: { [META.protocolVersion]: '1900-01-01' } }))
-        ?.code,
+      errorOf(
+        await modernPost(
+          modernOnly,
+          'tools/list',
+          {},
+          { meta: { [META.protocolVersion]: '1900-01-01' } },
+        ),
+      )?.code,
     );
     collect(errorOf(await legacyPost(modernOnly, initializeMessage()))?.code);
     collect(
-      errorOf(await rawRequest(modernOnly, { method: 'DELETE', headers: { 'MCP-Protocol-Version': MODERN_REVISION } }))
-        ?.code,
+      errorOf(
+        await rawRequest(modernOnly, {
+          method: 'DELETE',
+          headers: { 'MCP-Protocol-Version': MODERN_REVISION },
+        }),
+      )?.code,
     );
-    collect(errorOf(await rawRequest(modernOnly, { method: 'GET', headers: { 'MCP-Protocol-Version': MODERN_REVISION } }))?.code);
+    collect(
+      errorOf(
+        await rawRequest(modernOnly, {
+          method: 'GET',
+          headers: { 'MCP-Protocol-Version': MODERN_REVISION },
+        }),
+      )?.code,
+    );
 
     expect([...codes].sort((a, b) => a - b)).toEqual(
       expect.arrayContaining([-32602, -32601, -32020, -32022]),
@@ -666,14 +694,31 @@ describe('F6 — model-facing text never names a method the era removed', () => 
       'resources/unsubscribe',
       'logging/setLevel',
       'notifications/initialized',
+      'notifications/roots/list_changed',
     ],
     legacy: ['subscriptions/listen', 'server/discover'],
+  } as const;
+
+  /**
+   * `ping` is the sixth method 2026-07-28 removed, and it is the one a
+   * substring check cannot look for: `grouping`, `shipping` and `mapping` all
+   * contain it, and two of those are in prompt text this suite scans. A word
+   * boundary is the whole difference between a guard and a false alarm.
+   */
+  const REMOVED_WORDS = {
+    modern: [/\bping\b/i],
+    legacy: [] as RegExp[],
   } as const;
 
   function assertClean(era: keyof typeof REMOVED, label: string, blob: string): void {
     for (const method of REMOVED[era]) {
       expect(blob, `${label} (era=${era}) names the removed method ${method}`).not.toContain(
         method,
+      );
+    }
+    for (const pattern of REMOVED_WORDS[era]) {
+      expect(blob, `${label} (era=${era}) names the removed method ${pattern.source}`).not.toMatch(
+        pattern,
       );
     }
   }
@@ -709,6 +754,13 @@ describe('F6 — model-facing text never names a method the era removed', () => 
       const read = resultOf(await modernPost(rig, 'resources/read', { uri: resource.uri }));
       assertClean('modern', `resources/read ${resource.uri}`, JSON.stringify(read));
     }
+    // A prompt's DESCRIPTION is in `prompts/list`; the messages it expands into
+    // are not, and those are the text the model is actually handed.
+    for (const { name, args } of promptCalls(resultOf(await modernPost(rig, 'prompts/list'))!)) {
+      const got = resultOf(await modernPost(rig, 'prompts/get', { name, arguments: args }));
+      expect(got, `prompts/get ${name} returned no result to scan`).toBeDefined();
+      assertClean('modern', `prompts/get ${name}`, JSON.stringify(got));
+    }
   }, 60_000);
 
   it('holds for every string the legacy era puts in front of the model', async () => {
@@ -716,16 +768,75 @@ describe('F6 — model-facing text never names a method the era removed', () => 
     const init = await legacyPost(rig, initializeMessage());
     assertClean('legacy', 'initialize', JSON.stringify(resultOf(init)));
     await legacyPost(rig, { jsonrpc: '2.0', method: 'notifications/initialized' }, init.sessionId);
-    for (const method of ['tools/list', 'resources/list', 'prompts/list']) {
+    const answers = new Map<string, Record<string, unknown> | undefined>();
+    for (const method of [
+      'tools/list',
+      'resources/list',
+      'resources/templates/list',
+      'prompts/list',
+    ]) {
       const answer = await legacyPost(
         rig,
         { jsonrpc: '2.0', id: 2, method, params: {} },
         init.sessionId,
       );
-      assertClean('legacy', method, JSON.stringify(resultOf(answer)));
+      answers.set(method, resultOf(answer));
+      assertClean('legacy', method, JSON.stringify(answers.get(method)));
+    }
+    // The bodies too — `docs/safety.md` is served verbatim as
+    // `avito://docs/safety` on BOTH eras, so one sentence naming
+    // `subscriptions/listen` there would reach every 2025 client at once.
+    const resources = (answers.get('resources/list') as { resources: Array<{ uri: string }> })
+      .resources;
+    for (const resource of resources) {
+      const answer = await legacyPost(
+        rig,
+        { jsonrpc: '2.0', id: 3, method: 'resources/read', params: { uri: resource.uri } },
+        init.sessionId,
+      );
+      assertClean('legacy', `resources/read ${resource.uri}`, JSON.stringify(resultOf(answer)));
+    }
+    for (const { name, args } of promptCalls(answers.get('prompts/list')!)) {
+      const answer = await legacyPost(
+        rig,
+        { jsonrpc: '2.0', id: 4, method: 'prompts/get', params: { name, arguments: args } },
+        init.sessionId,
+      );
+      const got = resultOf(answer);
+      expect(got, `prompts/get ${name} returned no result to scan`).toBeDefined();
+      assertClean('legacy', `prompts/get ${name}`, JSON.stringify(got));
     }
   }, 60_000);
 });
+
+/**
+ * Every prompt in a `prompts/list` result, paired with arguments good enough to
+ * make it expand.
+ *
+ * The filling is not cosmetic. Two of the five prompts declare a required
+ * argument, and `prompts/get` without it does not return the text a model would
+ * be handed — it returns an error, whose body a scan for removed method names
+ * would happily walk while proving nothing. A guard that passes because it read
+ * an error message is worse than no guard.
+ */
+function promptCalls(
+  result: Record<string, unknown>,
+): Array<{ name: string; args: Record<string, string> }> {
+  const prompts = (result.prompts ?? []) as Array<{
+    name: string;
+    arguments?: Array<{ name: string; required?: boolean }>;
+  }>;
+  return prompts.map((prompt) => {
+    const args: Record<string, string> = {};
+    for (const argument of prompt.arguments ?? []) {
+      if (!argument.required) continue;
+      // A real tool name, so `avito_explain_tool` expands its swagger branch
+      // rather than its "unknown tool" one; anything else takes a placeholder.
+      args[argument.name] = argument.name === 'tool_name' ? 'meta_capabilities' : '1';
+    }
+    return { name: prompt.name, args };
+  });
+}
 
 // ───────────────── F7 / A7 — -32021 is an explicit decision ──────────────────
 
