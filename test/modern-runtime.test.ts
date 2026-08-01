@@ -648,16 +648,23 @@ describe('A13 — error codes stay inside the allocation policy', () => {
     // are protocol answers, and every one of them must either be a code the
     // spec defines or a re-use of one the SDK itself already emits.
     //
-    // The two allowances are named explicitly rather than by range, so a NEW
-    // code cannot slip in under a range check:
+    // The allowances are named explicitly rather than by range, so a NEW code
+    // cannot slip in under a range check. Only base JSON-RPC and the three the
+    // revision defines are allowed:
     //   • -32603 / -32602 / -32601 / -32700 — base JSON-RPC.
-    //   • -32000 / -32001 — the grandfathered legacy sub-range, used only by
-    //     the 2025 session manager (whose wire this stage may not change) and,
-    //     for -32000, by the modern `405` whose body is a byte-for-byte copy of
-    //     the SDK's own `modernOnlyStrictRejection`.
-    const ALLOWED = new Set([-32000, -32001, -32020, -32021, -32022, -32601, -32602, -32603, -32700]);
+    //   • -32020 / -32021 / -32022 — defined by revision 2026-07-28.
+    //
+    // -32000 and -32001 used to be listed here as "grandfathered". They are not
+    // grandfathered for US: the grandfathering clause covers codes SDKs had
+    // already allocated, while "new implementations SHOULD NOT use codes from
+    // this sub-range at all" covers ours. Both were reassigned — see
+    // `src/core/rpc-codes.ts`, which is skipped below because it is the module
+    // that DEFINES the range boundaries and therefore has to name them.
+    const ALLOWED = new Set([-32020, -32021, -32022, -32601, -32602, -32603, -32700]);
+    const POLICY_MODULE = join(SRC_ROOT, 'core', 'rpc-codes.ts');
     const offenders: string[] = [];
     for (const file of sourceFiles(SRC_ROOT)) {
+      if (file === POLICY_MODULE) continue;
       const code = readFileSync(file, 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/\/\/.*$/gm, '');

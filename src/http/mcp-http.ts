@@ -68,6 +68,8 @@ import {
   WEBHOOK_EVENTS_URI,
   subscribableResourceUris,
 } from '../resources.js';
+import { APP_ERROR_CODES } from '../core/rpc-codes.js';
+import { droppedSubscriptionUris, narrowListenRequest } from '../core/subscriptions.js';
 import { MODERN_PROTOCOL_VERSION } from '../version.js';
 
 /** A live MCP session: the per-session server, its HTTP transport, last activity. */
@@ -80,12 +82,21 @@ interface Session {
   unbindLogger: () => void;
 }
 
-/** 400: request carries no session id where one is required. */
+/**
+ * 400: request carries no session id where one is required.
+ *
+ * `-32602` and not the `-32000` this used to send: the code says "a required
+ * parameter of this request is missing", which is exactly the condition, and
+ * the 2026-07-28 allocation policy closed `-32000…-32019` to new
+ * implementations. The research corpus assigns this very call site to `-32602`
+ * by name (`docs/mcp-2026-07-28/basic.md`). The HTTP status — the half a client
+ * actually branches on — is unchanged. See `src/core/rpc-codes.ts`.
+ */
 function missingSessionError(res: Parameters<RequestHandler>[1]): void {
   res.status(400).json({
     jsonrpc: '2.0',
     error: {
-      code: -32000,
+      code: -32602,
       message: 'Bad Request: Mcp-Session-Id header is required',
     },
     id: null,
@@ -96,12 +107,17 @@ function missingSessionError(res: Parameters<RequestHandler>[1]): void {
  * 404: session id present but unknown (terminated, reaped, or lost to a server
  * restart). The Streamable HTTP spec mandates 404 here — clients react to it by
  * re-initializing with a fresh session, so a 400 would leave them wedged.
+ *
+ * The code moved off `-32001` for two reasons, not one: that sub-range is
+ * closed to new implementations, AND `-32001` was the draft number of
+ * `HeaderMismatch` before the revision renumbered it to `-32020`, so keeping it
+ * meant emitting a number the spec has since given a different meaning.
  */
 function unknownSessionError(res: Parameters<RequestHandler>[1]): void {
   res.status(404).json({
     jsonrpc: '2.0',
     error: {
-      code: -32001,
+      code: APP_ERROR_CODES.sessionNotFound,
       message: 'Session not found',
     },
     id: null,
@@ -158,6 +174,15 @@ function namesModernRevision(value: string | undefined): boolean {
  * caller is speaking allows, and 2026-07-28 removed both the GET stream and the
  * DELETE session teardown. Under `dual` the endpoint does still answer GET and
  * DELETE — for 2025 callers, who reach the legacy branch and never see this.
+ *
+ * The BODY is no longer a byte-for-byte copy of the SDK's rejection. The SDK
+ * answers this cell with `-32000` (`modernOnlyStrictRejection`, cell
+ * `modern-only-method-not-allowed`), which is grandfathered SDK usage from
+ * before the revision partitioned the range; a new implementation may not
+ * allocate there ("new implementations SHOULD NOT use codes from this sub-range
+ * at all"). This branch is ours end to end — the modern era never delegates a
+ * non-POST to the SDK — so the code is ours to get right. `405` + `Allow` is
+ * what a client acts on either way.
  */
 function modernMethodNotAllowed(res: Parameters<RequestHandler>[1]): void {
   res
@@ -165,7 +190,7 @@ function modernMethodNotAllowed(res: Parameters<RequestHandler>[1]): void {
     .set('Allow', 'POST')
     .json({
       jsonrpc: '2.0',
-      error: { code: -32000, message: 'Method not allowed.' },
+      error: { code: APP_ERROR_CODES.methodNotAllowed, message: 'Method not allowed.' },
       id: null,
     });
 }
@@ -505,7 +530,10 @@ export function createMcpHttpHandler(
             );
             res.status(503).json({
               jsonrpc: '2.0',
-              error: { code: -32000, message: 'Too many concurrent sessions, try again later' },
+              error: {
+                code: APP_ERROR_CODES.sessionLimitReached,
+                message: 'Too many concurrent sessions, try again later',
+              },
               id: null,
             });
             return;
@@ -551,6 +579,31 @@ export function createMcpHttpHandler(
   let modern: McpHttpHandler | undefined;
   let modernNodeHandler: ReturnType<typeof toNodeHandler> | undefined;
   const modernPublishers: Array<() => void> = [];
+  /** The URIs `subscriptions/listen` may honour on this deployment. */
+  let publishableUris: ReadonlySet<string> = new Set<string>();
+  // ── M3.8: the modern leg's quantitative barrier ───────────────────────────
+  //
+  // Removing protocol sessions removed the only quantity `/mcp` ever counted.
+  // `AVITO_MCP_HTTP_MAX_SESSIONS` still guards the legacy leg — a session is a
+  // real, long-lived object there — but on the modern leg there is no session
+  // to cap, every request builds a fresh 148-tool `McpServer`, and a
+  // `subscriptions/listen` stream stays open indefinitely. Unbounded, one
+  // caller could hold arbitrarily many of each against a process holding live
+  // Avito credentials.
+  //
+  // Two counters, because they bound different failure modes:
+  //   • `modernInflight` — total concurrent modern exchanges (including open
+  //     streams). Bounds instantaneous memory and CPU.
+  //   • `modernStreams` — how many of those may be long-lived listen streams.
+  //     Without it, a caller that opens streams and never closes them would
+  //     consume the whole in-flight budget and lock out ordinary tool calls,
+  //     which is the worse outage of the two.
+  //
+  // Both release in a `finally`, and additionally on the response's `close`
+  // event, because a client that hangs up mid-stream never lets the handler
+  // promise settle through the normal path.
+  let modernInflight = 0;
+  let modernStreams = 0;
   if (protocolEra !== 'legacy') {
     modern = createMcpHandler(createServerFactory(baseCtx, { background: false }), {
       legacy: 'reject',
@@ -581,6 +634,7 @@ export function createMcpHttpHandler(
     // hidden from `resources/list` by `AVITO_MCP_MODE` or by
     // `AVITO_MCP_CONFIRMATION_MODE=off` must not announce its changes either.
     const publishable = new Set(subscribableResourceUris(baseCtx.config));
+    publishableUris = publishable;
     const notifier = modern.notify;
     if (publishable.has(PENDING_ACTIONS_URI)) {
       modernPublishers.push(
@@ -592,6 +646,69 @@ export function createMcpHttpHandler(
         baseCtx.webhookStore.onChange(() => notifier.resourceUpdated(WEBHOOK_EVENTS_URI)),
       );
     }
+  }
+
+  /** Whether a parsed body is a `subscriptions/listen` request (a long-lived stream). */
+  function isListenRequest(body: unknown): boolean {
+    return (
+      body !== null &&
+      typeof body === 'object' &&
+      !Array.isArray(body) &&
+      (body as { method?: unknown }).method === 'subscriptions/listen'
+    );
+  }
+
+  /**
+   * Reserves an in-flight slot, or names the limit that refused it.
+   *
+   * Reserves SYNCHRONOUSLY, before the first `await` on the request path:
+   * checking and then reserving across a suspension point is how concurrent
+   * arrivals all observe the same count and all get admitted.
+   */
+  function admitModernExchange(
+    isStream: boolean,
+  ): { code: number; message: string } | undefined {
+    if (closing) {
+      return {
+        code: APP_ERROR_CODES.inflightLimitReached,
+        message: 'Server is shutting down, try again later',
+      };
+    }
+    if (isStream && modernStreams >= httpConfig.maxStreams) {
+      logger.warn(
+        { era: 'modern', openStreams: modernStreams, max: httpConfig.maxStreams },
+        'mcp http modern stream limit reached',
+      );
+      return {
+        code: APP_ERROR_CODES.streamLimitReached,
+        message: 'Too many concurrent subscription streams, try again later',
+      };
+    }
+    if (modernInflight >= httpConfig.maxInflight) {
+      logger.warn(
+        { era: 'modern', inflight: modernInflight, max: httpConfig.maxInflight },
+        'mcp http modern in-flight limit reached',
+      );
+      return {
+        code: APP_ERROR_CODES.inflightLimitReached,
+        message: 'Too many concurrent requests, try again later',
+      };
+    }
+    modernInflight += 1;
+    if (isStream) modernStreams += 1;
+    return undefined;
+  }
+
+  /** 503 + `Retry-After`, shaped like every other refusal on this endpoint. */
+  function refuseModernExchange(
+    res: Parameters<RequestHandler>[1],
+    refusal: { code: number; message: string },
+  ): void {
+    res.status(503).set('Retry-After', '1').json({
+      jsonrpc: '2.0',
+      error: refusal,
+      id: null,
+    });
   }
 
   /**
@@ -669,7 +786,41 @@ export function createMcpHttpHandler(
           return;
         }
 
-        await modernNodeHandler!(req, res, req.body);
+        // A9: honour only the URIs this deployment actually publishes for. Done
+        // on the REQUEST, before the SDK's listen router builds its ack from it
+        // — see `src/core/subscriptions.ts` for why the ack cannot be patched
+        // afterwards and why `[]` becomes an absent key.
+        const dropped = droppedSubscriptionUris(req.body, publishableUris);
+        if (dropped.length > 0) {
+          logger.info(
+            { era: 'modern', dropped },
+            'subscriptions/listen filter narrowed to publishable resources',
+          );
+        }
+        const body = narrowListenRequest(req.body, publishableUris);
+
+        // M3.8: admit or refuse, then run with the slot held.
+        const isStream = isListenRequest(req.body);
+        const admission = admitModernExchange(isStream);
+        if (admission !== undefined) {
+          refuseModernExchange(res, admission);
+          return;
+        }
+        let released = false;
+        const release = (): void => {
+          if (released) return;
+          released = true;
+          modernInflight = Math.max(0, modernInflight - 1);
+          if (isStream) modernStreams = Math.max(0, modernStreams - 1);
+        };
+        // A client that hangs up mid-stream does not always let the handler
+        // promise settle, so the socket's own end-of-life is the backstop.
+        res.once('close', release);
+        try {
+          await modernNodeHandler!(req, res, body);
+        } finally {
+          release();
+        }
       } catch (err) {
         logger.error({ err }, 'mcp http era dispatch failed');
         if (!res.headersSent) {

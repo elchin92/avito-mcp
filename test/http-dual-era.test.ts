@@ -72,10 +72,14 @@ describe('era=legacy (default): the modern leg does not exist', () => {
     // NOT a modern error: the modern path is not mounted, so the request never
     // reaches a 2026 handler. It falls through the legacy manager's "no session
     // id on a non-initialize POST" branch — precisely what M2 answered.
+    //
+    // The CODE moved from -32000 to -32602 (a required field is absent) when
+    // the 2026-07-28 allocation policy closed -32000…-32019 to new
+    // implementations; the STATUS, which is what a client branches on, did not.
     expect(answer.status).toBe(400);
     expect(answer.body).toMatchObject({
       jsonrpc: '2.0',
-      error: { code: -32000 },
+      error: { code: -32602 },
       id: null,
     });
     expect(JSON.stringify(answer.body)).not.toContain('supportedVersions');

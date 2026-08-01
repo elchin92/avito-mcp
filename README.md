@@ -280,6 +280,8 @@ How a client asks for them depends on the protocol revision the connection speak
 | `tools` / `prompts` / `resources` `listChanged` | advertised `true` | advertised **`false`** |
 | Cancelling a call | `notifications/cancelled` | closing the response stream — the outgoing Avito call is aborted and its idempotency lease and rate-limiter slot are released |
 
+> **stdio: the era is decided once per connection.** On stdio there is no header layer, so a connection's revision is read from its FIRST classifiable message and held for the life of that connection — the rule and the code are the SDK's (`serveStdio`, `classifyOpeningMessage`). A 2026 client whose first frame carries no `_meta` envelope is therefore served as a 2025 client until it reconnects, even if every later frame carries one. Under `AVITO_MCP_PROTOCOL_ERA=dual` the server writes one `protocol era pinned to legacy` line to **stderr** when this happens, naming the method that pinned it; grep for it while rolling `dual` out. The fix is on the client side: send `io.modelcontextprotocol/protocolVersion` in `params._meta` on the first message. HTTP is unaffected — there every request is classified on its own. Full rationale, and why we do not fork the SDK entry to change it, in [`docs/adr/0001-protocol-era-limitations.md`](docs/adr/0001-protocol-era-limitations.md).
+
 The `listChanged` difference is deliberate. This server's tool, prompt and resource sets are fixed for the life of the process (membership is decided once, at registration, by the active safety policy), so it never emits a `list_changed` notification on either revision. On 2025-11-25 the advertised `true` is inert, and it is kept for wire compatibility with 1.3.x. On 2026-07-28 it is not inert: `subscriptions/listen` narrows a client's requested filter against exactly these bits, so advertising `true` would acknowledge a subscription to updates that never come, and the client would wait instead of polling. `false` tells it the truth immediately.
 
 ### Tool input schemas
@@ -435,8 +437,10 @@ Tokens are accepted only with the exact `avito:mcp` scope and this deployment's 
 | `AVITO_MCP_HTTP_ALLOW_NO_AUTH`    | `0`         | Allow `auth=none` on a non-loopback host (**discouraged**)                                                                                      |
 | `AVITO_MCP_HTTP_ALLOWED_HOSTS`    | derived     | CSV — DNS-rebinding protection (accepted `Host` values). Derived from public URL + bind address; an under-specified wildcard bind fails startup |
 | `AVITO_MCP_HTTP_ALLOWED_ORIGINS`  | derived     | CSV — accepted `Origin` values. Same fail-closed derivation as above                                                                            |
-| `AVITO_MCP_HTTP_MAX_SESSIONS`     | `100`       | Max concurrent Streamable HTTP sessions — `initialize` beyond it → 503                                                                          |
-| `AVITO_MCP_HTTP_SESSION_IDLE_SEC` | `1800`      | Sessions idle longer than this are reaped (clients that vanished without `DELETE`)                                                              |
+| `AVITO_MCP_HTTP_MAX_SESSIONS`     | `100`       | **Legacy era only.** Max concurrent Streamable HTTP sessions — `initialize` beyond it → 503                                                     |
+| `AVITO_MCP_HTTP_SESSION_IDLE_SEC` | `1800`      | **Legacy era only.** Sessions idle longer than this are reaped (clients that vanished without `DELETE`)                                         |
+| `AVITO_MCP_HTTP_MAX_INFLIGHT`     | `64`        | **2026 era.** Concurrent `/mcp` exchanges, counting open subscription streams; beyond it → `503` + `Retry-After`                                |
+| `AVITO_MCP_HTTP_MAX_STREAMS`      | `32`        | **2026 era.** How many of those may be long-lived `subscriptions/listen` streams, so streams cannot starve ordinary tool calls                  |
 
 > **Security model.** Node binds `127.0.0.1` by default and speaks plain HTTP. **TLS is terminated by a reverse proxy** (nginx / Caddy) on your domain, which forwards to `http://127.0.0.1:3000`. Never expose port 3000 directly to the internet. Host/Origin validation protects MCP and OAuth routes. `auth=none` on a public host is refused unless you set `AVITO_MCP_HTTP_ALLOW_NO_AUTH=1`.
 

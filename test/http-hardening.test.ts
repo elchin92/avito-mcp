@@ -5,7 +5,7 @@
  *   - DNS-rebinding protection defaults (resolveRebindingProtection): derived
  *     allowlists, validated explicit lists and fail-closed wildcard binds.
  *   - Streamable HTTP session contract: 400 for a missing Mcp-Session-Id,
- *     404 (-32001) for an unknown one (spec-mandated so clients re-initialize),
+ *     404 for an unknown one (spec-mandated so clients re-initialize),
  *     503 above the session cap.
  *   - /healthz exposes only { ok, name, version } without auth.
  *   - Uniform webhook responses for valid and invalid secret candidates.
@@ -23,6 +23,7 @@ import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 
 import { AvitoClient } from '../src/core/client.js';
+import { APP_ERROR_CODES } from '../src/core/rpc-codes.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import { IdempotencyStore } from '../src/core/idempotency.js';
 import { WebhookStore } from '../src/core/webhook-store.js';
@@ -115,6 +116,8 @@ function makeHttpConfig(overrides: Partial<HttpConfig> = {}): HttpConfig {
     allowedOrigins: [],
     maxSessions: 100,
     sessionIdleSec: 1800,
+    maxInflight: 64,
+    maxStreams: 32,
     oauthTokenTtlSec: 3600,
     ...overrides,
   };
@@ -290,11 +293,14 @@ describe('Streamable HTTP session contract + app surface', () => {
     });
     expect(r.status).toBe(400);
     const body = (await r.json()) as { error: { code: number; message: string } };
-    expect(body.error.code).toBe(-32000);
+    // Was -32000 through 1.3.x. The 2026-07-28 allocation policy closed
+    // -32000…-32019 to new implementations, and this condition — a required
+    // field is absent — is what -32602 means. Status and message unchanged.
+    expect(body.error.code).toBe(-32602);
     expect(body.error.message).toContain('Mcp-Session-Id');
   });
 
-  it('POST /mcp with an UNKNOWN session id → 404 -32001 (client must re-initialize)', async () => {
+  it('POST /mcp with an UNKNOWN session id → 404 outside the reserved range (client must re-initialize)', async () => {
     const rig = await startRig();
     handle = rig.handle;
 
@@ -306,9 +312,13 @@ describe('Streamable HTTP session contract + app surface', () => {
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     });
+    // The 404 is the contract clients react to (re-initialize with a fresh
+    // session); only the JSON-RPC number moved, off -32001, which the revision
+    // additionally renumbered into the spec's own HeaderMismatch slot.
     expect(r.status).toBe(404);
     const body = (await r.json()) as { error: { code: number; message: string } };
-    expect(body.error.code).toBe(-32001);
+    expect(body.error.code).toBe(APP_ERROR_CODES.sessionNotFound);
+    expect(body.error.code).toBeGreaterThan(-32000);
     expect(body.error.message).toContain('Session not found');
   });
 

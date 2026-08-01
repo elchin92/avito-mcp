@@ -72,6 +72,8 @@ function makeConfig(): Config {
       allowedOrigins: [],
       maxSessions: 100,
       sessionIdleSec: 1800,
+      maxInflight: 64,
+      maxStreams: 32,
       oauthTokenTtlSec: 3600,
     },
     webhook: { enabled: false, publicUrl: 'http://127.0.0.1:3000', path: '/x', bufferSize: 10 },

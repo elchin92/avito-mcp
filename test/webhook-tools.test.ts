@@ -41,6 +41,8 @@ function makeHttpConfig(): HttpConfig {
     allowedOrigins: [],
     maxSessions: 100,
     sessionIdleSec: 1800,
+    maxInflight: 64,
+    maxStreams: 32,
     oauthTokenTtlSec: 3600,
   };
 }

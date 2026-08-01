@@ -55,6 +55,8 @@ function makeConfig(): Config {
       allowedOrigins: [],
       maxSessions: 100,
       sessionIdleSec: 1800,
+      maxInflight: 64,
+      maxStreams: 32,
       oauthOwnerPassword: OWNER_PASSWORD,
       oauthTokenTtlSec: 3600,
       oauthStoreFile: '/var/lib/avito-mcp/oauth.json',

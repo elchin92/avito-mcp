@@ -35,6 +35,8 @@ function config(): HttpConfig {
     allowedOrigins: [],
     maxSessions: 1,
     sessionIdleSec: 1800,
+    maxInflight: 64,
+    maxStreams: 32,
     oauthTokenTtlSec: 3600,
   };
 }

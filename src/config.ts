@@ -87,10 +87,33 @@ export interface HttpConfig {
    */
   allowedHosts: string[];
   allowedOrigins: string[];
-  /** Max concurrent Streamable HTTP MCP sessions; initialize beyond this → 503. */
+  /**
+   * LEGACY LEG ONLY. Max concurrent Streamable HTTP MCP sessions; initialize
+   * beyond this → 503. Revision 2026-07-28 removed protocol sessions, so this
+   * bounds nothing on the modern leg — see `maxInflight` / `maxStreams`.
+   */
   maxSessions: number;
-  /** Sessions idle longer than this are reaped (a crashed client never DELETEs). */
+  /**
+   * LEGACY LEG ONLY. Sessions idle longer than this are reaped (a crashed
+   * client never DELETEs).
+   */
   sessionIdleSec: number;
+  /**
+   * M3.8 — the modern leg's replacement for `maxSessions`.
+   *
+   * The maximum number of 2026-era exchanges `/mcp` will have in flight at once,
+   * counting open `subscriptions/listen` streams (a stream holds its slot for as
+   * long as it stays open). Beyond it the endpoint answers 503 instead of
+   * building yet another 148-tool `McpServer`. Default 64.
+   */
+  maxInflight: number;
+  /**
+   * M3.8 — of the in-flight budget, how many exchanges may be long-lived
+   * `subscriptions/listen` streams. Keeps a caller that opens streams and never
+   * closes them from consuming the whole `maxInflight` budget and locking out
+   * ordinary tool calls. Default 32.
+   */
+  maxStreams: number;
   /** OAuth owner password gating the /authorize consent step (oauth mode). */
   oauthOwnerPassword?: string;
   /** Access-token TTL in seconds (oauth mode). */
@@ -378,6 +401,22 @@ function buildHttpConfig(): HttpConfig {
       1800,
       'AVITO_MCP_HTTP_SESSION_IDLE_SEC',
       86_400,
+    ),
+    // M3.8. Deliberately NOT derived from maxSessions: the two count different
+    // things (a session is idle most of its life, an in-flight exchange is
+    // work in progress), and tying them would make the modern budget move
+    // whenever an operator tuned the legacy one.
+    maxInflight: parsePositiveInt(
+      process.env.AVITO_MCP_HTTP_MAX_INFLIGHT,
+      64,
+      'AVITO_MCP_HTTP_MAX_INFLIGHT',
+      10_000,
+    ),
+    maxStreams: parsePositiveInt(
+      process.env.AVITO_MCP_HTTP_MAX_STREAMS,
+      32,
+      'AVITO_MCP_HTTP_MAX_STREAMS',
+      10_000,
     ),
     oauthOwnerPassword,
     oauthTokenTtlSec: parsePositiveInt(

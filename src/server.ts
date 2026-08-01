@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import type { ToolContext } from './core/tool-factory.js';
-import { PACKAGE_NAME, VERSION } from './version.js';
+import { MODERN_PROTOCOL_VERSION, PACKAGE_NAME, VERSION } from './version.js';
 
 function printHelp(): void {
   process.stdout.write(
@@ -63,8 +63,12 @@ function printHelp(): void {
       `  AVITO_MCP_OAUTH_TOKEN_TTL_SEC   access-token TTL (default: 3600)\n` +
       `  AVITO_MCP_OAUTH_STORE_FILE      optional durable single-writer OAuth state file\n` +
       `  AVITO_MCP_HTTP_AUTH_TOKEN       bearer-mode shared secret(s), comma-separated\n` +
-      `  AVITO_MCP_HTTP_MAX_SESSIONS     concurrent MCP session cap (default: 100)\n` +
-      `  AVITO_MCP_HTTP_SESSION_IDLE_SEC idle session TTL (default: 1800)\n` +
+      `  AVITO_MCP_HTTP_MAX_SESSIONS     legacy era only: concurrent MCP session cap (default: 100)\n` +
+      `  AVITO_MCP_HTTP_SESSION_IDLE_SEC legacy era only: idle session TTL (default: 1800)\n` +
+      `  AVITO_MCP_HTTP_MAX_INFLIGHT     2026 era: concurrent /mcp exchanges, incl. open\n` +
+      `                                  subscription streams; above it → 503 (default: 64)\n` +
+      `  AVITO_MCP_HTTP_MAX_STREAMS      2026 era: how many of those may be long-lived\n` +
+      `                                  subscriptions/listen streams (default: 32)\n` +
       `  AVITO_MCP_HTTP_ALLOWED_HOSTS    CSV — DNS-rebinding protection (Host allowlist)\n` +
       `  AVITO_MCP_HTTP_ALLOWED_ORIGINS  CSV — DNS-rebinding protection (Origin allowlist)\n` +
       `\n` +
@@ -192,8 +196,22 @@ async function startServer(): Promise<void> {
       // from the factory for the connection's lifetime. `legacy: 'serve'` keeps
       // 2025-era clients working exactly as before; `legacy: 'reject'` answers
       // them with the unsupported-protocol-version error naming our revisions.
+      //
+      // The transport is OURS rather than the default `StdioServerTransport`,
+      // for the two things the pin costs us — the silence about which era a
+      // connection landed on (M3.10) and the loss of per-message
+      // protocol-version validation — plus the `subscriptions/listen` filter
+      // narrowing the entry's own router does not do. See src/stdio-era.ts, and
+      // docs/adr/0001-protocol-era-limitations.md for what remains the SDK's.
+      const { createStdioEraTransport } = await import('./stdio-era.js');
+      const { subscribableResourceUris } = await import('./resources.js');
       stdioHandle = serveStdio(factory, {
         legacy: protocolEra === 'modern' ? 'reject' : 'serve',
+        transport: createStdioEraTransport({
+          era: protocolEra,
+          supportedModernVersions: [MODERN_PROTOCOL_VERSION],
+          subscribableUris: subscribableResourceUris(config),
+        }),
         onerror: (err) => logger.warn({ err }, 'stdio serving error'),
       });
     }

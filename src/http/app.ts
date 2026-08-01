@@ -101,6 +101,42 @@ function rebindingGuard(config: HttpConfig): RequestHandler {
 }
 
 /**
+ * Turns an `express.json()` body failure on `/mcp` into a JSON-RPC answer.
+ *
+ * Without this, a truncated or non-JSON POST never reaches the MCP layer at
+ * all: `express.json()` throws, the app-wide error handler catches it, and the
+ * caller gets `400 {"error":"bad_request"}` — an answer no MCP client can parse
+ * as a protocol error, on an endpoint whose entire content type is JSON-RPC.
+ * `-32700 Parse error` is the base JSON-RPC code for exactly this condition and
+ * is era-neutral: it means the same thing on 2025-11-25 and on 2026-07-28, so
+ * one handler covers both legs.
+ *
+ * `id: null` because there is, by construction, no id to echo — the bytes that
+ * would have carried it did not parse.
+ *
+ * A body that is too large keeps its `413`: that is a transport-level limit
+ * with its own status, and dressing it as a parse error would be a lie.
+ */
+const jsonRpcBodyError: ErrorRequestHandler = (err, _req, res, next) => {
+  const status = (err as { status?: number } | undefined)?.status;
+  const type = (err as { type?: string } | undefined)?.type;
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+  if (status === 400 && (type === 'entity.parse.failed' || err instanceof SyntaxError)) {
+    logger.warn({ err: (err as Error).message }, 'malformed JSON-RPC body on /mcp');
+    res.status(400).json({
+      jsonrpc: '2.0',
+      error: { code: -32700, message: 'Parse error: the request body is not valid JSON' },
+      id: null,
+    });
+    return;
+  }
+  next(err);
+};
+
+/**
  * Starts the Express listener. Throws (fail-closed) on an insecure remote config.
  * Only call when the HTTP MCP transport and/or the webhook receiver is enabled.
  */
@@ -219,7 +255,13 @@ export async function startHttpServer(
     // the handler. Encoding a second, era-shaped copy of it in the router is how
     // the two end up disagreeing about which method is allowed; `405` is
     // therefore answered by whoever owns the era decision.
-    app.all('/mcp', guard, express.json({ limit: '4mb' }), mcp.handleRequest);
+    app.all(
+      '/mcp',
+      guard,
+      express.json({ limit: '4mb' }),
+      jsonRpcBodyError,
+      mcp.handleRequest,
+    );
   }
 
   // ── uniform 404 + error contract ─────────────────────────────────────────────
