@@ -7,7 +7,6 @@ import { Client } from '@modelcontextprotocol/client';
 import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 
 import { AvitoClient } from '../src/core/client.js';
@@ -16,58 +15,28 @@ import { WebhookStore } from '../src/core/webhook-store.js';
 import { registerResources, PENDING_ACTIONS_URI, WEBHOOK_EVENTS_URI } from '../src/resources.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config } from '../src/config.js';
+import { makeConfig as makeBaseConfig } from './support/config-fixture.js';
 
 // Distinctive values so the leak assertions can grep the raw resource text.
 const OWNER_PASSWORD = 'owner-pass-LEAK-CANARY-1';
 const BEARER_TOKEN = 'bearer-LEAK-CANARY-2';
 const WEBHOOK_SECRET = 'webhook-LEAK-CANARY-3';
 
+/** Every secret-bearing field is populated so the redaction assertions have something to catch. */
 function makeConfig(): Config {
-  return {
-    clientId: 'cid',
-    clientSecret: 'sec',
-    profileId: 12345,
-    baseUrl: 'https://api.test.example',
-    cpaSource: 'avito-mcp-test',
-    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
-    logLevel: 'fatal',
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
-    exposeAuthTools: false,
+  return makeBaseConfig({
     allowedUploadDirs: ['/sensitive/operator/upload/root'],
-    maxUploadMb: 15,
-    confirmationMode: 'money_public',
-    confirmationTtlSec: 900,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
     http: {
-      transport: 'stdio',
-      host: '127.0.0.1',
-      port: 3000,
-      publicUrl: 'http://127.0.0.1:3000',
-      auth: 'oauth',
       authTokens: [BEARER_TOKEN],
-      allowNoAuth: false,
-      allowedHosts: [],
-      allowedOrigins: [],
-      maxSessions: 100,
-      sessionIdleSec: 1800,
       oauthOwnerPassword: OWNER_PASSWORD,
-      oauthTokenTtlSec: 3600,
       oauthStoreFile: '/var/lib/avito-mcp/oauth.json',
     },
     webhook: {
       enabled: true,
       secret: WEBHOOK_SECRET,
-      publicUrl: 'http://127.0.0.1:3000',
-      path: '/avito/webhook',
-      bufferSize: 100,
       logFile: '/var/log/avito-mcp/webhooks.jsonl',
     },
-  };
+  });
 }
 
 async function makeRig(

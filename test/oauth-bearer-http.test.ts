@@ -32,8 +32,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 
 import { AvitoClient } from '../src/core/client.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
@@ -42,6 +40,11 @@ import { WebhookStore } from '../src/core/webhook-store.js';
 import { startHttpServer, type HttpServerHandle } from '../src/http/app.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config, HttpConfig } from '../src/config.js';
+import {
+  makeConfig as makeBaseConfig,
+  makeHttpConfig,
+  type ConfigOverrides,
+} from './support/config-fixture.js';
 
 const OWNER_PASSWORD = 'bearer-http-owner-password-strong';
 const PUBLIC_URL = 'https://mcp.example.com';
@@ -73,56 +76,27 @@ interface Rig {
 
 async function startRig(
   httpOverrides: Partial<HttpConfig> = {},
-  configOverrides: Partial<Config> = {},
+  configOverrides: ConfigOverrides = {},
 ): Promise<Rig> {
   const port = await reservePort();
-  const http: HttpConfig = {
+  // Only what this suite actually needs to differ from an empty-env HTTP config:
+  // a real listening transport on a reserved port, the public URL the OAuth
+  // metadata is asserted against, and the owner password the flow logs in with.
+  const http: HttpConfig = makeHttpConfig({
     transport: 'http',
-    host: '127.0.0.1',
     port,
     publicUrl: PUBLIC_URL,
-    auth: 'oauth',
-    authTokens: [],
-    allowNoAuth: false,
-    allowedHosts: [],
-    allowedOrigins: [],
-    maxSessions: 100,
-    sessionIdleSec: 1800,
-    oauthTokenTtlSec: 3600,
     oauthOwnerPassword: OWNER_PASSWORD,
     ...httpOverrides,
-  };
-  const cfg = {
-    clientId: 'cid',
-    clientSecret: 'sec',
+  });
+  // Built by the shared fixture, so `tokenFile` and the runtime state directory
+  // land in this config's own sandbox rather than a shared os.tmpdir() namespace.
+  const cfg: Config = makeBaseConfig({
     profileId: 12345678,
-    baseUrl: 'https://api.test.example',
-    cpaSource: 'avito-mcp-test',
-    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
-    logLevel: 'fatal',
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
-    exposeAuthTools: false,
-    allowedUploadDirs: [],
-    maxUploadMb: 15,
-    confirmationMode: 'money_public',
-    confirmationTtlSec: 900,
-    confirmationSecret: undefined,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
     http,
-    webhook: {
-      enabled: false,
-      secret: undefined,
-      publicUrl: PUBLIC_URL,
-      path: '/avito/webhook',
-      bufferSize: 100,
-    },
+    webhook: { publicUrl: PUBLIC_URL },
     ...configOverrides,
-  } as unknown as Config;
+  });
 
   const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
   const ctx: ToolContext = {
@@ -302,8 +276,19 @@ describe('OAuth bearer auth over HTTP (SDK v2 resource-server path)', () => {
     expect(response.headers.get('www-authenticate') ?? '').toContain('resource_metadata=');
   });
 
+  /**
+   * The TTL is 2s where this was written with 1s. The mint flow ahead of the first
+   * assertion is three real HTTP round-trips whose login attempts go through the
+   * rate limiter, and the limiter persists under `runtimeStateDir` with
+   * withFileLock() + fsync. The shared config fixture puts that directory on the
+   * repository filesystem instead of tmpfs, so those flushes are real disk writes,
+   * and on a cold loaded run they can eat a 1s budget before `before` is even sent
+   * — seen once here as `expected 401 to be 200`. Only the clock margin moved; what
+   * the test asserts (an expired but genuinely issued token answers 401, not 500)
+   * is unchanged.
+   */
   it('answers an expired but genuinely issued token with 401, not 500', async () => {
-    const rig = await startRig({ oauthTokenTtlSec: 1 });
+    const rig = await startRig({ oauthTokenTtlSec: 2 });
     handle = rig.handle;
     const { token } = await mintAccessToken(rig.base);
 
@@ -315,9 +300,9 @@ describe('OAuth bearer auth over HTTP (SDK v2 resource-server path)', () => {
     });
     expect(before.status).toBe(200);
 
-    // … and expired a second later. Same verifier, different branch: the record
-    // has aged out of the store, which is the path an operator actually hits.
-    await new Promise((resolve) => setTimeout(resolve, 1_300));
+    // … and expired a couple of seconds later. Same verifier, different branch: the
+    // record has aged out of the store, which is the path an operator actually hits.
+    await new Promise((resolve) => setTimeout(resolve, 2_300));
     const after = await fetch(`${rig.base}/mcp`, {
       method: 'POST',
       headers: mcpHeaders(token),

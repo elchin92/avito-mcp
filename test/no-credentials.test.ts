@@ -9,9 +9,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/client';
 import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 
 import { AvitoClient } from '../src/core/client.js';
@@ -21,51 +18,17 @@ import { IdempotencyStore } from '../src/core/idempotency.js';
 import { domains } from '../src/meta/domain-registry.js';
 import { healthPayload } from '../src/build-server.js';
 import type { Config } from '../src/config.js';
+import { makeConfig as makeBaseConfig, type ConfigOverrides } from './support/config-fixture.js';
 
 /** Config with NO credentials — clientId/clientSecret empty, profileId undefined. */
-function makeUnconfiguredConfig(overrides: Partial<Config> = {}): Config {
-  return {
+function makeUnconfiguredConfig(overrides: ConfigOverrides = {}): Config {
+  return makeBaseConfig({
     clientId: '',
     clientSecret: '',
     profileId: undefined,
-    baseUrl: 'https://api.test.example',
-    cpaSource: 'avito-mcp-test',
-    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
-    logLevel: 'fatal',
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
-    exposeAuthTools: false,
-    allowedUploadDirs: [],
-    maxUploadMb: 15,
     confirmationMode: 'off',
-    confirmationTtlSec: 900,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
-    http: {
-      transport: 'stdio',
-      host: '127.0.0.1',
-      port: 3000,
-      publicUrl: 'http://127.0.0.1:3000',
-      auth: 'oauth',
-      authTokens: [],
-      allowNoAuth: false,
-      allowedHosts: [],
-      allowedOrigins: [],
-      maxSessions: 100,
-      sessionIdleSec: 1800,
-      oauthTokenTtlSec: 3600,
-    },
-    webhook: {
-      enabled: false,
-      publicUrl: 'http://127.0.0.1:3000',
-      path: '/avito/webhook',
-      bufferSize: 100,
-    },
     ...overrides,
-  };
+  });
 }
 
 async function makeRig(cfg: Config) {

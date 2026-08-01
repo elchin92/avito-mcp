@@ -28,8 +28,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { readFileSync, existsSync } from 'node:fs';
-import { createHash, randomBytes } from 'node:crypto';
-import { dirname, join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
@@ -38,6 +38,7 @@ import { PendingActionStore } from '../src/core/pending-actions.js';
 import { buildMcpServer } from '../src/build-server.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config } from '../src/config.js';
+import { makeConfig as makeBaseConfig } from './support/config-fixture.js';
 
 /** The revision M2 must NOT leave. `2026-07-28` is M3's job, not this stage's. */
 const LEGACY_PROTOCOL_VERSION = '2025-11-25';
@@ -55,52 +56,23 @@ const LEGACY_DIALECT = 'http://json-schema.org/draft-07/schema#';
  */
 const PUBLISHED_SCHEMA_HASH = '9c52d4c3f39300d267fba9bdcfb9a7aef9cb9664d325484f2a3967327f5f505f';
 
+/**
+ * The shared fixture supplies every field this suite does not care about, and —
+ * unlike the literal this used to be — puts `tokenFile` and the runtime state
+ * directory in a private sandbox on the repository filesystem instead of
+ * os.tmpdir(). Only the two fields that shape the published surface are set here.
+ *
+ * `confirmationMode` stays at the fixture default 'money_public': mode 'off'
+ * would hide meta_confirm_action / meta_cancel_action / meta_list_pending_actions,
+ * which the 148-tool baseline includes.
+ */
 function makeConfig(): Config {
-  return {
-    clientId: 'cid',
-    clientSecret: 'sec',
-    profileId: 12345,
-    baseUrl: 'https://api.test.example',
-    cpaSource: 'avito-mcp-test',
-    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
-    logLevel: 'fatal',
+  return makeBaseConfig({
     // The full surface, so the assertions below cover all 148 descriptors and
     // not just the 144 a default deployment exposes.
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
     exposeAuthTools: true,
     allowedUploadDirs: [tmpdir()],
-    maxUploadMb: 15,
-    // The default mode: 'off' would hide meta_confirm_action / meta_cancel_action
-    // / meta_list_pending_actions, which the 148-tool baseline includes.
-    confirmationMode: 'money_public',
-    confirmationTtlSec: 900,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
-    http: {
-      transport: 'stdio',
-      host: '127.0.0.1',
-      port: 3000,
-      publicUrl: 'http://127.0.0.1:3000',
-      auth: 'oauth',
-      authTokens: [],
-      allowNoAuth: false,
-      allowedHosts: [],
-      allowedOrigins: [],
-      maxSessions: 100,
-      sessionIdleSec: 1800,
-      oauthTokenTtlSec: 3600,
-    },
-    webhook: {
-      enabled: false,
-      publicUrl: 'http://127.0.0.1:3000',
-      path: '/avito/webhook',
-      bufferSize: 100,
-    },
-  };
+  });
 }
 
 interface ToolDescriptor {
