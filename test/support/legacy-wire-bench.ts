@@ -46,8 +46,8 @@
  * full JSON-RPC frame — including which of `result` / `error` it carries, the
  * numeric code, the message string, and the presence and content of `data`.
  *
- * TWO answers are allowed to differ, and both are declared in the plan itself
- * rather than waved through:
+ * THREE kinds of difference are allowed, and all are declared in the plan
+ * itself rather than waved through:
  *
  *   • {@link KnownAddition} — three new keys on `avito://state/config`, a
  *     diagnostic mirror of the process's own settings. Declared per FIELD, with
@@ -56,6 +56,10 @@
  *     1.3.3 REFUSED and this branch accepts, because 1.3.3 was refusing a
  *     well-formed request. Declared with both sides' values at every checked
  *     path, so the declaration fails the day it stops being true.
+ *   • {@link RebasedValue} — the digest of `avito://docs/safety`, which is a
+ *     property of `docs/safety.md` and not of the wire. Recomputed from the
+ *     live file, which makes the assertion stricter than the frozen one: the
+ *     branch must serve that file byte for byte.
  *
  * Nothing else in this file may differ.
  *
@@ -63,6 +67,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 
@@ -132,6 +137,48 @@ export function applyKnownAdditions(
       );
     }
     (parent as Record<string, unknown>)[leaf] = addition.value;
+  }
+  return out;
+}
+
+/**
+ * A value in the captured 1.3.3 answer that is a function of a REPOSITORY FILE
+ * rather than of the protocol.
+ *
+ * `avito://docs/safety` serves `docs/safety.md` verbatim, so its digest moves
+ * whenever the documentation is edited — and documentation is edited by commits
+ * that touch no protocol code at all. Comparing it against a value frozen at
+ * 1.3.3 turns every such commit into "the legacy wire moved", which is the one
+ * verdict this bench must never produce by accident; the pressure to silence
+ * that would land on the bench rather than on the code.
+ *
+ * A rebase says: this path's reference value is recomputed from the live file
+ * before comparison. What it leaves standing is STRONGER than the frozen value,
+ * not weaker — the branch must serve that file byte for byte — while everything
+ * else in the answer (uri, mimeType, the first line, the envelope, the shape)
+ * is still compared against 1.3.3 as captured.
+ *
+ * A rebase whose path does not already exist in the capture is a typo, and the
+ * test says so rather than quietly asserting nothing.
+ */
+export interface RebasedValue {
+  readonly path: readonly string[];
+  /** Recomputed at comparison time from whatever the answer is derived from. */
+  readonly value: () => unknown;
+  readonly why: string;
+}
+
+/** A deep copy of `value` with every rebased path recomputed from live sources. */
+export function applyRebases(value: unknown, rebases: readonly RebasedValue[] = []): unknown {
+  const out = structuredClone(value);
+  for (const rebase of rebases) {
+    const parentPath = rebase.path.slice(0, -1);
+    const leaf = rebase.path[rebase.path.length - 1]!;
+    const parent = readPath(out, parentPath);
+    if (parent === null || typeof parent !== 'object') {
+      throw new Error(`rebase ${rebase.path.join('.')} has no parent in the reference answer`);
+    }
+    (parent as Record<string, unknown>)[leaf] = rebase.value();
   }
   return out;
 }
@@ -208,6 +255,8 @@ export interface WireStep {
   knownAdditions?: readonly KnownAddition[];
   /** A reviewed, argued refusal to reproduce 1.3.3. See {@link DeclaredDivergence}. */
   divergence?: DeclaredDivergence;
+  /** Reference values recomputed from live repository files. See {@link RebasedValue}. */
+  rebase?: readonly RebasedValue[];
   /** JSON-RPC method, or `null` for the raw-HTTP probes below. */
   method: string | null;
   params?: Record<string, unknown>;
@@ -243,6 +292,11 @@ function condenseToolList(body: unknown): unknown {
       tools.map((tool) => [(tool as { name?: string }).name ?? '<unnamed>', digest(tool)]),
     ),
   };
+}
+
+/** The exact bytes `avito://docs/safety` is supposed to be serving right now. */
+function safetyDocument(): string {
+  return readFileSync(join(REPO_ROOT, 'docs', 'safety.md'), 'utf8');
 }
 
 /** A `resources/read` whose text is a large document: digest plus a shape probe. */
@@ -363,6 +417,24 @@ export const LEGACY_WIRE_STEPS: readonly WireStep[] = [
     method: 'resources/read',
     params: { uri: 'avito://docs/safety' },
     condense: condenseDocument,
+    // This resource is `docs/safety.md`, verbatim. Its digest is a property of
+    // the documentation, not of the wire, and the documentation is edited by
+    // commits that touch no protocol code — M5.8 recorded the x-mcp-header
+    // decision there, for one. Everything else about the answer still has to
+    // match 1.3.3 exactly; these two paths are recomputed from the file so the
+    // assertion becomes "the branch serves the current file byte for byte".
+    rebase: [
+      {
+        path: ['body', 'contents', '0', 'text', 'length'],
+        value: () => safetyDocument().length,
+        why: 'docs/safety.md is documentation; its length moves with every edit to it and with nothing else.',
+      },
+      {
+        path: ['body', 'contents', '0', 'text', 'sha256'],
+        value: () => digest(safetyDocument()),
+        why: 'Same file. Pinning the branch to the live digest still proves the resource returns that file unmodified.',
+      },
+    ],
   },
   {
     id: '09-resources-read-manifest',

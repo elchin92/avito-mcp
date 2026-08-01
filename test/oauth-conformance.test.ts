@@ -227,6 +227,97 @@ describe('M5.1 — RFC 9207 issuer identification', () => {
   });
 });
 
+/**
+ * M5.3/M5.4 over HTTP, and specifically the STATUS the new rejections carry.
+ *
+ * Two error hierarchies live side by side in this subsystem and they are not
+ * interchangeable: `mcpAuthRouter` maps the `server-legacy` classes to their
+ * OAuth status by `instanceof`, while `@modelcontextprotocol/express` recognises
+ * only the v2 `OAuthError`. An error thrown with the wrong brand does not
+ * produce a wrong message — it produces a `500` with no OAuth body at all, and
+ * a client that cannot tell "your metadata is invalid" from "this server is
+ * broken". Every rejection added to the registration path is therefore asserted
+ * on the wire, not on the thrown value.
+ */
+describe('M5.3/M5.4 — registration rejections answer 400, never 500', () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ['cleartext callback on a routable host', { redirect_uris: ['http://evil.example.com/cb'] }],
+    ['private-use scheme', { redirect_uris: ['com.example.app:/cb'] }],
+    ['fragment in the callback', { redirect_uris: ['https://app.example.com/cb#frag'] }],
+    [
+      'unknown application_type',
+      { redirect_uris: ['https://app.example.com/cb'], application_type: 'service' },
+    ],
+    [
+      'web client with a loopback callback',
+      { redirect_uris: ['http://127.0.0.1:8765/cb'], application_type: 'web' },
+    ],
+    [
+      'native client asking for a secret',
+      {
+        redirect_uris: ['http://127.0.0.1:8765/cb'],
+        application_type: 'native',
+        token_endpoint_auth_method: 'client_secret_post',
+      },
+    ],
+  ];
+
+  it.each(cases)('rejects %s with invalid_client_metadata', async (_label, metadata) => {
+    rig = await startOAuthRig();
+    const response = await fetch(`${rig.base}/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        scope: 'avito:mcp',
+        ...metadata,
+      }),
+    });
+    expect(response.status).not.toBe(500);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'invalid_client_metadata' });
+  });
+
+  it('still accepts the shapes it is supposed to', async () => {
+    rig = await startOAuthRig();
+    const send = async (metadata: Record<string, unknown>) => {
+      const response = await fetch(`${rig!.base}/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+          scope: 'avito:mcp',
+          ...metadata,
+        }),
+      });
+      expect(response.status, JSON.stringify(metadata)).toBe(201);
+      return (await response.json()) as Record<string, unknown>;
+    };
+
+    expect(await send({ redirect_uris: ['https://app.example.com/cb'] })).toMatchObject({
+      token_endpoint_auth_method: 'client_secret_post',
+      client_secret: expect.any(String),
+    });
+    // The SDK's registration handler mints a secret for anything that did not
+    // declare `none`. A native client declares its public-ness the other way,
+    // through application_type — so the secret must be gone from the RESPONSE,
+    // not merely unused: whatever is returned here is what the client stores.
+    const native = await send({
+      redirect_uris: ['http://127.0.0.1:8765/cb'],
+      application_type: 'native',
+    });
+    expect(native.token_endpoint_auth_method).toBe('none');
+    expect(native.client_secret).toBeUndefined();
+    expect(native.client_secret_expires_at).toBeUndefined();
+
+    expect(
+      await send({ redirect_uris: ['https://app.example.com/cb'], application_type: 'web' }),
+    ).toMatchObject({ client_secret: expect.any(String) });
+  });
+});
+
 describe('M5.6 — regression guards on the authorization contour', () => {
   it('never publishes offline_access and offers S256 only', async () => {
     rig = await startOAuthRig();

@@ -29,12 +29,14 @@
  * says which exchanges moved and leaves the rest standing as evidence that the
  * transport, the handshake and the happy paths did not.
  *
- * TWO steps are allowed to differ from 1.3.3, and neither is waved through: a
- * `KnownAddition` names a single field and the value it must hold, a
- * `DeclaredDivergence` names both sides' values at every path it checks. Both
- * fail when they stop being true — an exception that outlives its argument is
- * indistinguishable from a regression nobody noticed, which is the failure mode
- * this whole file exists to prevent.
+ * THREE kinds of difference from 1.3.3 are allowed, and none is waved through:
+ * a `KnownAddition` names a single field and the value it must hold, a
+ * `DeclaredDivergence` names both sides' values at every path it checks, and a
+ * `RebasedValue` recomputes one reference value from a live repository file
+ * (the documentation this server serves as a resource is not part of the wire).
+ * All three fail when they stop being true — an exception that outlives its
+ * argument is indistinguishable from a regression nobody noticed, which is the
+ * failure mode this whole file exists to prevent.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -48,6 +50,7 @@ import {
   REFERENCE_VERSION,
   REPO_ROOT,
   applyKnownAdditions,
+  applyRebases,
   bootServer,
   canonical,
   captureWire,
@@ -164,8 +167,20 @@ describe('legacy wire vs the published 1.3.3 build', () => {
         ).toEqual(addition.value);
       }
 
+      // A rebase recomputes a reference value from a live repository file, so a
+      // path it names must already exist in the capture — otherwise it is a
+      // typo silently asserting nothing, which is worse than no rebase at all.
+      for (const rebase of step.rebase ?? []) {
+        const where = rebase.path.join('.');
+        expect(
+          readPath(expected, rebase.path),
+          `${where} is declared as a REBASE, but 1.3.3 has no value there — ` +
+            `fix the path in LEGACY_WIRE_STEPS. Reason on record: ${rebase.why}`,
+        ).toBeDefined();
+      }
+
       expect(canonical(actual[step.id])).toEqual(
-        canonical(applyKnownAdditions(expected, step.knownAdditions)),
+        canonical(applyRebases(applyKnownAdditions(expected, step.knownAdditions), step.rebase)),
       );
     });
   }

@@ -360,9 +360,20 @@ class ClientsStore implements OAuthRegisteredClientsStore {
     client: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>,
   ): OAuthClientInformationFull {
     const nowSec = Math.floor(Date.now() / 1000);
+    const declaredAuthMethod = client.token_endpoint_auth_method;
     const sanitized = sanitizeClientMetadata(client);
     if (sanitized.token_endpoint_auth_method === 'none' && sanitized.client_secret) {
-      throw new InvalidClientMetadataError('Public clients must not include client_secret');
+      if (declaredAuthMethod === 'none') {
+        throw new InvalidClientMetadataError('Public clients must not include client_secret');
+      }
+      // The SDK's registration handler mints a `client_secret` for anything that
+      // did not declare `none` itself, and that happens BEFORE we get to see the
+      // metadata. A `native` client declares its public-ness through
+      // `application_type` instead, so the secret exists by the time we can
+      // decide it must not — dropping it is the correct answer, refusing the
+      // registration would make `application_type: native` unusable.
+      delete sanitized.client_secret;
+      delete sanitized.client_secret_expires_at;
     }
     if (sanitized.token_endpoint_auth_method === 'client_secret_post' && !sanitized.client_secret) {
       sanitized.client_secret = OAuthStore.newSecret();
