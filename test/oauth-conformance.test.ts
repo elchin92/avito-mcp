@@ -188,6 +188,24 @@ describe('M5.1 — RFC 9207 issuer identification', () => {
     expect(redirect.searchParams.get('iss')).toBe(meta.issuer);
   });
 
+  it('advertises the parameter only because the redirect actually carries it (M5.2)', async () => {
+    rig = await startOAuthRig();
+    const meta = await metadata(rig.base);
+    expect(meta.authorization_response_iss_parameter_supported).toBe(true);
+    // The ordering rule, expressed as a test rather than as a comment: the claim
+    // above is allowed to be true only while the redirect below carries `iss`.
+    // Removing the emission without first retracting the claim leaves the pair
+    // in the state that obliges a conformant client to reject a valid response,
+    // and this assertion is what stops that landing.
+    const client = await register(rig.base);
+    const verifier = randomBytes(32).toString('base64url');
+    const approval = await approve(
+      rig.base,
+      await consentTokenFor(rig.base, client.client_id, verifier),
+    );
+    expect(new URL(approval.headers.get('location')!).searchParams.get('iss')).toBe(meta.issuer);
+  });
+
   it('keeps the explicit port and the trailing slash that a client compares byte-wise', async () => {
     rig = await startOAuthRig({ publicUrl: 'https://mcp.example.com:8443' });
     const meta = await metadata(rig.base);

@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **The authorization response now carries `iss` (RFC 9207), and the metadata claim that it does is pinned to the code that emits it.** The callback redirect is issued from the owner consent POST, which the SDK's authorization router never sees, so the router's own `iss` handling did not cover it: the deployment advertised `authorization_response_iss_parameter_supported: true` and then omitted the parameter — the one combination the validation table turns into a mandatory client-side rejection. The value is `new URL(publicUrl).href`, byte-identical to the `issuer` of `/.well-known/oauth-authorization-server`, because a client compares the two by simple string comparison and is forbidden from folding case, eliding a default port or normalising the trailing slash. `publicUrl` itself is one byte away from that value and is not usable for it.
+
+  > ⚠️ **Roll-out order is not negotiable, in either direction.** The emission ships first and reaches production before the claim. A deployment that advertises the parameter without emitting it — including one that rolls the emission back while the claim stays `true` — does not degrade authorization for conformant clients, it stops it. To withdraw `iss`, set `authorizationResponseIssParameterSupported` to `false`, ship that, and only then remove the emission.
+
 ## [1.3.3] - 2026-07-27
 
 Availability patch for a permanent cross-process lock deadlock: a lease directory left behind by a process killed at the wrong moment could block its domain indefinitely, failing every call in it until the directory was removed by hand. Tool names, schemas, and configuration are unchanged. Upgrading is strongly recommended for every deployment that runs more than one avito-mcp process against the same runtime state. The release gate passes **382 tests across 33 files** with **81.41% statements / 73.61% branches / 82.06% functions / 84.34% lines** coverage.

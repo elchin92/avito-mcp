@@ -304,6 +304,26 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
   // Local PKCE validation stays ON (SDK verifies via challengeForAuthorizationCode).
   // Leaving this undefined === false.
 
+  /**
+   * M5.2 — what `/.well-known/oauth-authorization-server` claims about `iss`.
+   *
+   * Pinned here rather than left to the SDK's default so the claim lives next to
+   * the code that has to back it. The value is readable in exactly one
+   * direction:
+   *
+   *   `true` MEANS `approveConsent()` stamps `iss` on the callback redirect.
+   *
+   * ⚠️ ORDER IS NOT NEGOTIABLE. Emission ships and reaches production first; the
+   * claim follows. Never the reverse and never together in a rollback. By the
+   * validation table in the authorization spec, a client that recorded
+   * `authorization_response_iss_parameter_supported: true` MUST REJECT an
+   * authorization response with no `iss` — so advertising ahead of (or rolling
+   * back behind) the emission does not degrade authorization, it stops it
+   * outright for every conformant client. If `iss` ever has to be withdrawn,
+   * set this to `false`, ship that, and only then remove the emission.
+   */
+  readonly authorizationResponseIssParameterSupported = true;
+
   get clientsStore(): OAuthRegisteredClientsStore {
     return this.clients;
   }
