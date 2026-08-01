@@ -54,6 +54,22 @@ One `defineTool(server, ctx, { ... })` call in the appropriate `src/domains/<nam
 - **Complex nested bodies** — model the bundled OpenAPI contract with explicit Zod schemas. Use `z.unknown()` only when the upstream schema is genuinely unconstrained, and document that exception in `test/openapi-contract.test.ts`.
 - **Custom execution still goes through `defineTool`** via `customExecute` / `buildDryRunPreview`. Do not register a business tool directly with `server.registerTool`: that bypasses the shared policy, confirmation, dry-run, idempotency, and error pipeline.
 
+## Deprecated MCP surfaces
+
+The MCP revision `2026-07-28` publishes a [registry of Deprecated features](https://modelcontextprotocol.io/specification/2026-07-28/deprecated). Four rows of it are features this server has never used — and **must not start using**. Each already has a published removal horizon and a migration path, so adopting one now means writing code with an expiry date.
+
+- **Sampling** — `sampling/createMessage`, `server.createMessage()`. Deprecated in `2026-07-28` (SEP-2577). Call an LLM provider directly; a server that needs an answer back from its caller uses the multi round-trip request pattern, not a server-initiated request.
+- **Roots** — `roots/list`, `listRoots()`, `notifications/roots/list_changed` (the notification is already removed, not just deprecated). Deprecated in `2026-07-28` (SEP-2577). Take directories and files as tool parameters, resource URIs, or configuration — `AVITO_MCP_ALLOWED_UPLOAD_DIRS` is exactly that.
+- **`includeContext: "thisServer"` / `"allServers"`** — deprecated by SEP-2596, removed no later than Sampling itself. Nothing to migrate: the field only exists on Sampling requests, which this server never sends.
+- **HTTP+SSE transport** — `SSEServerTransport`, `@modelcontextprotocol/sdk/*/sse.js`. Deprecated by SEP-2596 (soft-deprecated since `2025-03-26`). Use Streamable HTTP, already wired in `src/http/mcp-http.ts`.
+
+`test/deprecated-surface.test.ts` enforces this: it parses every `src/**/*.ts` with the TypeScript parser and fails on any of those identifiers, string literals or module specifiers. It looks at **code tokens only** — comments are trivia and are not scanned, so you can (and should) name a deprecated feature in a comment when explaining why it is absent.
+
+Two clarifications, since the registry is easy to misread:
+
+- Deprecated is not removed. Features already present in `src/` (Logging, Dynamic Client Registration) stay; the rule is only that no _new_ code path may depend on them. Widening their use is a review question, not an automatic no.
+- If an exception ever becomes genuinely necessary, change the rule list in `test/deprecated-surface.test.ts` in the same PR and state the reason — do not delete the test or skip the case.
+
 ## Tests
 
 - Unit tests (`vitest`) are required for anything in `src/core/`. Run: `npm test`.
