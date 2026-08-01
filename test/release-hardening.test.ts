@@ -32,6 +32,8 @@ const RESEARCH_DIR = 'docs/mcp-2026-07-28';
 const RESEARCH_ONLY_ROOT_FILES = ['MIGRATION_PLAN.md', 'MIGRATION_PROGRESS.md'];
 /** Everything under docs/ that is allowed to ship (docs/safety.md backs avito://docs/safety). */
 const PACKABLE_DOCS = new Set(['docs/safety.md']);
+/** The one file the secret scan is allowed to hold schema digests in. */
+const LEGACY_WIRE_BASELINE = 'test/baselines/legacy-1.3.3-wire.json';
 
 /** Paths npm would put in the tarball, resolved without building or touching the network. */
 function packedFilePaths(cwd: string): string[] {
@@ -287,6 +289,88 @@ describe('release and deployment hardening', () => {
     expect(dockerignore).toContain('.remote.env*');
     expect(dockerignore).toContain('.mcp.json*');
     expect(dockerignore).toContain('*.pem');
+  });
+
+  /**
+   * The secret scan has exactly one exemption, and it exists because the 1.3.3
+   * wire baseline stores a truncated sha256 of every tool definition — values
+   * the generic-api-key rule reads as credentials whenever the tool name
+   * contains "auth" or "api". An exemption is only tolerable while it stays too
+   * narrow to hide anything else, so this gate re-runs the two regexes the
+   * config actually ships against credentials a future commit might drop into
+   * the same file or the same directory.
+   */
+  it('keeps the gitleaks exemption too narrow to hide a real secret', () => {
+    const config = read('.gitleaks.toml');
+
+    // The upstream ruleset stays in force: this file only adds an exemption.
+    expect(config).toMatch(/\[extend\]\nuseDefault = true/);
+    expect(config).not.toContain('disabledRules');
+    // Scoped to the one rule that misfires, not to every rule in the scanner.
+    expect(config).not.toMatch(/^\[allowlist\]/m);
+    expect(config).not.toMatch(/^\[\[allowlists\]\]/m);
+    expect(config).toMatch(/\[\[rules\]\]\nid = "generic-api-key"/);
+    // Path and value shape must BOTH hold; either alone would exempt too much.
+    expect(config).toContain('condition = "AND"');
+    expect(config).toContain('regexTarget = "match"');
+
+    const literals = (key: string): string[] =>
+      [...config.matchAll(new RegExp(`${key} = \\['''(.+?)'''\\]`, 'g'))].map((m) => m[1]!);
+
+    const paths = literals('paths');
+    expect(paths).toHaveLength(1);
+    const allowedPath = new RegExp(paths[0]!);
+    expect(allowedPath.test(LEGACY_WIRE_BASELINE)).toBe(true);
+    // Not the directory, not a sibling, not a lookalike of the baseline itself.
+    expect(allowedPath.test('test/baselines/')).toBe(false);
+    expect(allowedPath.test('test/baselines/credentials.json')).toBe(false);
+    expect(allowedPath.test('test/baselines/legacy-1.3.3-wire.json.bak')).toBe(false);
+    expect(allowedPath.test('src/config.ts')).toBe(false);
+
+    const regexes = literals('regexes');
+    expect(regexes).toHaveLength(1);
+    const allowedMatch = new RegExp(regexes[0]!);
+
+    // The positive cases are read out of the baseline instead of being written
+    // here: a literal `<auth-named key>": "<32 hex>"` in this file would be a
+    // finding in its own right, because this file is deliberately outside the
+    // exemption. Every pinned per-tool value must be a digest of that shape, so
+    // the config covers the whole map and nothing besides it. gitleaks hands
+    // the allowlist the match without its opening quote.
+    const baseline = JSON.parse(read(LEGACY_WIRE_BASELINE)) as {
+      steps: Record<string, { body?: { perTool?: Record<string, string> } }>;
+    };
+    const perTool = baseline.steps['04-tools-list']?.body?.perTool;
+    expect(perTool).toBeDefined();
+    const digests = Object.entries(perTool!);
+    expect(digests.length).toBeGreaterThan(100);
+    for (const [tool, value] of digests) {
+      expect(allowedMatch.test(`${tool}": "${value}"`), `${tool} is not a 32-hex digest`).toBe(
+        true,
+      );
+    }
+    // The entries that actually trip the rule are the ones whose names carry a
+    // generic-api-key keyword, so those must be among the covered ones.
+    expect(digests.filter(([tool]) => /auth|api/.test(tool)).length).toBeGreaterThan(0);
+
+    // Anything that is not exactly a 32-hex digest is still a finding. The
+    // counter-examples are derived rather than pasted, for the same reason: a
+    // realistic credential literal in a test fixture is itself a leak, and the
+    // property under test is the shape, not any particular vendor.
+    const sample = digests[0]![1];
+    const notDigests = [
+      `${sample}0123456789abcdef`, // longer than a digest
+      sample.slice(1), // shorter than a digest
+      sample.toUpperCase(), // not lowercase
+      'Zm9vYmFyYmF6cXV1eDEyMzQ1Njc4OTBhYmNkZWZnaGlqaw', // base64url, not hex
+      `${sample} trailing`, // a digest plus a payload
+    ];
+    for (const value of notDigests) {
+      expect(allowedMatch.test(`api_key": "${value}"`), `${value} was exempted`).toBe(false);
+      expect(allowedMatch.test(`meta_auth_token": "${value}"`), `${value} was exempted`).toBe(
+        false,
+      );
+    }
   });
 
   it.skipIf(process.platform === 'win32')(
