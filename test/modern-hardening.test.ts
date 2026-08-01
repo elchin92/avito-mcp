@@ -700,13 +700,23 @@ describe('F6 — model-facing text never names a method the era removed', () => 
   } as const;
 
   /**
-   * `ping` is the sixth method 2026-07-28 removed, and it is the one a
-   * substring check cannot look for: `grouping`, `shipping` and `mapping` all
-   * contain it, and two of those are in prompt text this suite scans. A word
-   * boundary is the whole difference between a guard and a false alarm.
+   * The removed methods a plain substring check cannot look for.
+   *
+   * `ping` is the one `grouping`, `shipping` and `mapping` all contain, and two
+   * of those are in prompt text this suite scans. A word boundary is the whole
+   * difference between a guard and a false alarm.
+   *
+   * `initialize` is the headline removal of the revision — the handshake is
+   * gone and `server/discover` replaced it — and this list originally missed it
+   * because `notifications/initialized` was already here and looked like the
+   * same check. It is not: text that tells a 2026 client to `initialize` names
+   * a method answering -32601, whether or not the notification is mentioned
+   * anywhere near it. The boundary is needed for the opposite reason to
+   * `ping`'s — it stops this pattern from also firing on `initialized`, which
+   * has its own entry and deserves its own message.
    */
   const REMOVED_WORDS = {
-    modern: [/\bping\b/i],
+    modern: [/\bping\b/i, /\binitialize\b/i],
     legacy: [] as RegExp[],
   } as const;
 
