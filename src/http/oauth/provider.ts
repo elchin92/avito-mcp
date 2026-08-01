@@ -270,6 +270,23 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
   private readonly ttlSec: number;
   private readonly ownerPassword?: string;
   private readonly expectedResource: string;
+  /**
+   * M5.1 (RFC 9207 §2) — the issuer identifier that goes into `iss` on every
+   * authorization response.
+   *
+   * It is deliberately `new URL(publicUrl).href` and NOT `publicUrl`: that is the
+   * exact expression `mcpAuthRouter` evaluates for the `issuer` field of
+   * `/.well-known/oauth-authorization-server` (see `createOAuthMetadata`, which
+   * does `issuer: issuerUrl.href` on the very `new URL(httpConfig.publicUrl)`
+   * built in ./index.ts). The two differ by one byte — `publicUrl` is documented
+   * WITHOUT a trailing slash, `href` always has one — and a conformant client
+   * compares `iss` to the recorded issuer by simple string comparison, forbidden
+   * from folding case, eliding a default port or normalising a trailing slash
+   * (spec-authorization requirement 26, RFC 3986 §6.2.2–6.2.3). Deriving `iss`
+   * from `publicUrl` would therefore make every correct authorization response
+   * look like a mix-up attack.
+   */
+  private readonly issuer: string;
   /** Scopes this AS supports; tokens default to these when a client asks none. */
   private readonly supportedScopes = [REQUIRED_SCOPE];
 
@@ -277,6 +294,7 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     // Validate URL-derived state before acquiring the durable store lease. A bad
     // public URL must not leave the next corrected startup locked out.
     this.expectedResource = new URL(`${httpConfig.publicUrl}/mcp`).href;
+    this.issuer = new URL(httpConfig.publicUrl).href;
     this.ttlSec = httpConfig.oauthTokenTtlSec;
     this.ownerPassword = httpConfig.oauthOwnerPassword;
     this.store = new OAuthStore(httpConfig.oauthStoreFile);
@@ -302,6 +320,12 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
+    // The router hands us its own issuer identifier. It has to be byte-identical
+    // to ours, because ours is what approveConsent() will put in `iss` while the
+    // router's is what the metadata document advertises — a divergence here is a
+    // wiring bug that would make every authorization response fail RFC 9207
+    // validation at the client, and it must not reach a browser silently.
+    this.assertRouterIssuerMatches(params.issuer);
     const scopes = this.normalizeScopes(params.scopes);
     const resource = this.requireExpectedResource(params.resource?.href);
     const consentToken = this.store.createConsent({
@@ -420,6 +444,12 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     const target = new URL(approved.redirectUri);
     target.searchParams.set('code', code);
     if (approved.state !== undefined) target.searchParams.set('state', approved.state);
+    // M5.1 / RFC 9207 §2. The SDK appends `iss` for us only on redirects issued
+    // from the response object it handed to authorize(); this final callback
+    // redirect comes out of a SEPARATE consent POST, so it is ours to stamp.
+    // Without it the metadata claim `authorization_response_iss_parameter_supported`
+    // would be a lie and a conformant client would reject the successful response.
+    target.searchParams.set('iss', this.issuer);
     logger.info(
       { clientId: approved.clientId },
       'oauth: owner approved, authorization code issued',
@@ -553,6 +583,22 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
   }
 
   // ───────────────────────────────── internals ───────────────────────────────
+
+  /**
+   * Fails closed when the router's issuer identifier is not the one this provider
+   * stamps into `iss`. Both are `new URL(publicUrl).href` today, so the only way
+   * to reach this is a future refactor that starts feeding the two halves from
+   * different expressions — precisely the change that would silently break RFC
+   * 9207 validation for every client.
+   */
+  private assertRouterIssuerMatches(routerIssuer: string | undefined): void {
+    if (routerIssuer === undefined || routerIssuer === this.issuer) return;
+    logger.error(
+      { routerIssuer, providerIssuer: this.issuer },
+      'oauth: issuer identifier mismatch between the auth router and the provider',
+    );
+    throw new ServerError('Authorization server issuer is misconfigured');
+  }
 
   /** Mints + stores an access/refresh token pair and shapes the OAuthTokens. */
   private issueTokens(clientId: string, scopes: string[], resource?: string): OAuthTokens {
