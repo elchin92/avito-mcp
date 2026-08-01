@@ -12,6 +12,13 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { DEFAULT_PROTOCOL_ERA } from '../src/config.js';
+import {
+  LEGACY_PROTOCOL_VERSION,
+  MODERN_PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from '../src/version.js';
+
 const root = resolve(import.meta.dirname, '..');
 const read = (path: string): string => readFileSync(resolve(root, path), 'utf8');
 
@@ -387,5 +394,168 @@ describe('release and deployment hardening', () => {
 
   it('keeps the service installer executable', () => {
     expect(statSync(resolve(root, 'deploy/install-services.sh')).mode & 0o111).not.toBe(0);
+  });
+});
+
+// ───────── E / M7.4 — one statement of supported revisions, on every surface ──
+
+/**
+ * The public contract says which protocol revisions this server speaks. It says
+ * it in seven places, and the only interesting failure is the one where the
+ * places disagree — a registry entry claiming a revision the build cannot serve
+ * is a checkably false claim, and it damages trust more than saying nothing.
+ *
+ * So the declaration is not asserted as a literal here. It is tied to
+ * `SUPPORTED_PROTOCOL_VERSIONS`, the constant the runtime itself advertises
+ * from, and to the `AVITO_MCP_PROTOCOL_ERA` default that decides which subset a
+ * default deployment actually answers.
+ */
+describe('public contract — supported protocol revisions', () => {
+  const REGISTRY_SCHEMA =
+    'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json';
+  const PUBLISHER_META = 'io.modelcontextprotocol.registry/publisher-provided';
+
+  interface ServerJson {
+    $schema?: string;
+    name?: string;
+    description?: string;
+    packages?: Array<{
+      identifier?: string;
+      environmentVariables?: Array<{
+        name?: string;
+        default?: string;
+        choices?: string[];
+        isRequired?: boolean;
+        description?: string;
+      }>;
+    }>;
+    _meta?: Record<string, { protocolRevisions?: Record<string, unknown> }>;
+  }
+
+  const serverJson = (): ServerJson => JSON.parse(read('server.json')) as ServerJson;
+
+  /** The `## [Unreleased]` section only — a released section is a different claim. */
+  function unreleasedSection(): string {
+    const changelog = read('CHANGELOG.md');
+    const start = changelog.indexOf('## [Unreleased]');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const next = changelog.indexOf('\n## [', start + 1);
+    return next === -1 ? changelog.slice(start) : changelog.slice(start, next);
+  }
+
+  it('declares in server.json exactly the revisions the code advertises', () => {
+    const server = serverJson();
+    const declared = server._meta?.[PUBLISHER_META]?.protocolRevisions as
+      | {
+          served?: string[];
+          servedByDefault?: string[];
+          selectedBy?: {
+            environmentVariable?: string;
+            default?: string;
+            values?: Record<string, string[]>;
+          };
+          documentation?: string;
+        }
+      | undefined;
+    expect(
+      declared,
+      `server.json._meta["${PUBLISHER_META}"].protocolRevisions is missing`,
+    ).toBeDefined();
+
+    // The claim and the constant the server advertises from are the same list.
+    expect(declared?.served).toEqual([...SUPPORTED_PROTOCOL_VERSIONS]);
+    expect(declared?.selectedBy?.environmentVariable).toBe('AVITO_MCP_PROTOCOL_ERA');
+    expect(declared?.selectedBy?.values).toEqual({
+      legacy: [LEGACY_PROTOCOL_VERSION],
+      dual: [...SUPPORTED_PROTOCOL_VERSIONS],
+      modern: [MODERN_PROTOCOL_VERSION],
+    });
+    // What a deployment that sets nothing actually answers. Getting this wrong
+    // is the difference between "we support 2026-07-28" and "we will, if asked".
+    const fallback = declared?.selectedBy?.default ?? '';
+    expect(declared?.servedByDefault).toEqual(declared?.selectedBy?.values?.[fallback]);
+    expect(fallback).toBe(DEFAULT_PROTOCOL_ERA);
+    expect(declared?.documentation).toContain('#protocol-revisions');
+  });
+
+  it('describes the era selector as a launch option the registry schema understands', () => {
+    const server = serverJson();
+    const era = server.packages?.[0]?.environmentVariables?.find(
+      (entry) => entry.name === 'AVITO_MCP_PROTOCOL_ERA',
+    );
+    expect(era, 'server.json does not declare AVITO_MCP_PROTOCOL_ERA').toBeDefined();
+    expect(era?.isRequired).toBe(false);
+    expect(era?.choices).toEqual(['legacy', 'dual', 'modern']);
+    expect(era?.default).toBe(DEFAULT_PROTOCOL_ERA);
+    for (const revision of SUPPORTED_PROTOCOL_VERSIONS) {
+      expect(era?.description).toContain(revision);
+    }
+  });
+
+  it('stays on the registry schema that exists, and inside its length limit', () => {
+    const server = serverJson();
+    // There is no revision-aligned successor to this schema: `/registry/*`
+    // carries no protocol-revision marker and no changelog, and the registry
+    // asks nothing of a 2026-07-28 server. Moving the pin to a date that looks
+    // newer would point at a document that does not exist.
+    expect(server.$schema).toBe(REGISTRY_SCHEMA);
+    // `description` is capped at 100 characters by that schema, which is why
+    // the revision statement lives in `_meta` and in the env-var entry instead.
+    expect(server.description?.length).toBeLessThanOrEqual(100);
+  });
+
+  it('binds package.json and server.json to one identity', () => {
+    const pkg = JSON.parse(read('package.json')) as { name?: string; mcpName?: string };
+    const server = serverJson();
+    expect(pkg.mcpName).toBe(server.name);
+    expect(server.packages?.[0]?.identifier).toBe(pkg.name);
+    // The release gate has to enforce it too: this test is not in the publish path.
+    const gate = read('scripts/check-release-version.mjs');
+    expect(gate).toContain('package.json.mcpName');
+    expect(gate).toContain('server.json.packages[0].identifier');
+  });
+
+  it('leaves glama.json at the one property its schema defines', () => {
+    // https://glama.ai/mcp/schemas/server.json declares `maintainers` and
+    // nothing else, so there is no field on that surface for a revision
+    // statement. Glama reads the README for everything else; inventing a key
+    // here would be metadata no consumer looks at. Recorded as a test so the
+    // absence stays a decision instead of turning into an oversight.
+    const glama = JSON.parse(read('glama.json')) as Record<string, unknown>;
+    expect(Object.keys(glama).sort()).toEqual(['$schema', 'maintainers']);
+    expect(glama.$schema).toBe('https://glama.ai/mcp/schemas/server.json');
+  });
+
+  it('says the same thing in the changelog and in both READMEs', () => {
+    const unreleased = unreleasedSection();
+    // Not pinned to a version section: the release that carries this is the
+    // owner's to cut, and a numbered heading here would date a claim twice.
+    expect(unreleased).not.toMatch(/^## \[\d/m);
+    for (const revision of SUPPORTED_PROTOCOL_VERSIONS) {
+      expect(unreleased, `CHANGELOG [Unreleased] never names ${revision}`).toContain(revision);
+    }
+    expect(unreleased).toContain('AVITO_MCP_PROTOCOL_ERA');
+
+    // Both locales carry the section, at the same line, in the same order —
+    // server.json points a registry consumer at the English anchor, and a
+    // Russian reader who follows the same link must land on the same table.
+    const headings: Record<string, string> = {
+      'README.md': '### Protocol revisions',
+      'README.ru.md': '### Ревизии протокола',
+    };
+    const lineOf: number[] = [];
+    for (const [locale, heading] of Object.entries(headings)) {
+      const lines = read(locale).split('\n');
+      const at = lines.indexOf(heading);
+      expect(at, `${locale} has no "${heading}" section`).toBeGreaterThanOrEqual(0);
+      lineOf.push(at);
+      const body = lines.slice(at, at + 40).join('\n');
+      for (const revision of SUPPORTED_PROTOCOL_VERSIONS) {
+        expect(body, `${locale} names ${revision} outside its era section`).toContain(revision);
+      }
+      expect(body).toContain('AVITO_MCP_PROTOCOL_ERA');
+    }
+    expect(new Set(lineOf).size, 'the era section sits on different lines per locale').toBe(1);
+    expect(read('README.md').split('\n').length).toBe(read('README.ru.md').split('\n').length);
   });
 });

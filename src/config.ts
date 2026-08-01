@@ -56,6 +56,18 @@ export type ApprovalMode = 'self' | 'external';
  */
 export type ProtocolEraMode = 'legacy' | 'dual' | 'modern';
 
+/**
+ * The era a deployment that sets nothing serves.
+ *
+ * A named constant rather than a literal inside `resolveProtocolEra`, because
+ * it is also a published claim: `server.json` declares this value as the
+ * `default` of `AVITO_MCP_PROTOCOL_ERA` and derives `servedByDefault` from it,
+ * and `test/release-hardening.test.ts` holds the two against each other. A
+ * registry entry saying a default install answers 2026-07-28 when it does not
+ * is a claim anyone can check and find false.
+ */
+export const DEFAULT_PROTOCOL_ERA: ProtocolEraMode = 'legacy';
+
 // ───────────────────────── v0.9.0: HTTP transport + webhook ─────────────────────────
 
 /** Which MCP transport(s) to run. `both` = stdio + HTTP in one process. */
@@ -384,11 +396,12 @@ function resolveTransport(): TransportMode {
  * by discovering months later that the canary never actually served 2026-07-28.
  */
 function resolveProtocolEra(): ProtocolEraMode {
-  return parseChoice(process.env.AVITO_MCP_PROTOCOL_ERA, 'legacy', 'AVITO_MCP_PROTOCOL_ERA', [
-    'legacy',
-    'dual',
-    'modern',
-  ] as const);
+  return parseChoice(
+    process.env.AVITO_MCP_PROTOCOL_ERA,
+    DEFAULT_PROTOCOL_ERA,
+    'AVITO_MCP_PROTOCOL_ERA',
+    ['legacy', 'dual', 'modern'] as const,
+  );
 }
 
 function resolveHttpAuth(): HttpAuthMode {

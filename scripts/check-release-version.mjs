@@ -23,6 +23,19 @@ for (const [source, actual] of [
   if (actual !== expected) mismatches.push(`${source}=${String(actual)}`);
 }
 
+// Registry identity, not version. npm ownership of the `server.json` name is
+// proven by `package.json.mcpName`, and the registry resolves the artifact
+// through `packages[0].identifier`; either one a typo away leaves a publish
+// that fails only after npm has already gone out, which is not revocable.
+for (const [source, actual, expectedValue] of [
+  ['package.json.mcpName', pkg.mcpName, server.name],
+  ['server.json.packages[0].identifier', server.packages?.[0]?.identifier, pkg.name],
+]) {
+  if (actual !== expectedValue) {
+    mismatches.push(`${source}=${String(actual)} != ${String(expectedValue)}`);
+  }
+}
+
 if (!read('CHANGELOG.md').includes(`## [${expected}]`)) {
   mismatches.push(`CHANGELOG.md lacks ## [${expected}]`);
 }
