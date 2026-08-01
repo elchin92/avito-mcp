@@ -10,7 +10,7 @@
   "main": "dist/server.js",
   "files": [
     "dist/",
-    "docs/",
+    "docs/safety.md",
     "swaggers/",
     "README.md",
     "README.ru.md",

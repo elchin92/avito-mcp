@@ -1,11 +1,76 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(import.meta.dirname, '..');
 const read = (path: string): string => readFileSync(resolve(root, path), 'utf8');
+
+/**
+ * Paths that must never reach the published tarball: the 2026-07-28 protocol
+ * corpus (8.4 MB of research material) and the migration notes. They are
+ * untracked by design, so the only thing standing between them and every npm
+ * consumer is the `files` allowlist — this gate proves the allowlist holds.
+ */
+const RESEARCH_DIR = 'docs/mcp-2026-07-28';
+const RESEARCH_ONLY_ROOT_FILES = ['MIGRATION_PLAN.md', 'MIGRATION_PROGRESS.md'];
+/** Everything under docs/ that is allowed to ship (docs/safety.md backs avito://docs/safety). */
+const PACKABLE_DOCS = new Set(['docs/safety.md']);
+
+/** Paths npm would put in the tarball, resolved without building or touching the network. */
+function packedFilePaths(cwd: string): string[] {
+  const stdout = execFileSync(
+    process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    ['pack', '--dry-run', '--ignore-scripts', '--json'],
+    {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 32 * 1024 * 1024,
+    },
+  );
+  const json = stdout.slice(stdout.indexOf('['));
+  const packed = JSON.parse(json) as Array<{ files: Array<{ path: string }> } | undefined>;
+  const tarball = packed[0];
+  if (!tarball) throw new Error('npm pack --json reported no tarball');
+  return tarball.files.map((file) => file.path);
+}
+
+/**
+ * Packs this package.json against a planted research corpus, so the gate keeps
+ * proving something on a clean checkout — CI never has the corpus on disk.
+ * The decoys go into a scratch tree rather than the repository: writing them
+ * next to a running suite would churn inodes the lease tests depend on.
+ */
+function packedFilePathsAgainstDecoys(): string[] {
+  const temp = mkdtempSync(resolve(tmpdir(), 'avito-pack-gate-'));
+  try {
+    writeFileSync(resolve(temp, 'package.json'), read('package.json'));
+    const decoys = [
+      'docs/safety.md',
+      `${RESEARCH_DIR}/00-INDEX.md`,
+      `${RESEARCH_DIR}/spec-core.md`,
+      ...RESEARCH_ONLY_ROOT_FILES,
+    ];
+    for (const decoy of decoys) {
+      const path = resolve(temp, decoy);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, '# pack gate decoy\n');
+    }
+    return packedFilePaths(temp);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
 
 function extractRunBlock(workflow: string, stepName: string): string {
   const marker = `      - name: ${stepName}\n`;
@@ -257,6 +322,54 @@ describe('release and deployment hardening', () => {
     },
     15_000,
   );
+
+  it('keeps the research corpus and migration notes out of the published package', () => {
+    const excluded = (paths: string[]): string[] =>
+      paths.filter(
+        (path) =>
+          path === RESEARCH_DIR ||
+          path.startsWith(`${RESEARCH_DIR}/`) ||
+          RESEARCH_ONLY_ROOT_FILES.includes(path),
+      );
+
+    // What this checkout would actually publish right now.
+    const packed = packedFilePaths(root);
+    // The resource body must still ship — excluding the corpus must not empty docs/.
+    expect(packed).toContain('docs/safety.md');
+    expect(excluded(packed)).toEqual([]);
+
+    // Any future docs/ subtree must be added to the allowlist deliberately,
+    // rather than riding along on a directory-wide entry.
+    const unexpectedDocs = packed.filter(
+      (path) => path.startsWith('docs/') && !PACKABLE_DOCS.has(path),
+    );
+    expect(unexpectedDocs).toEqual([]);
+
+    // Same packing contract, this time with the corpus present on disk: the gate
+    // must fail on a widened allowlist even when CI checks out a corpus-free tree.
+    const packedWithDecoys = packedFilePathsAgainstDecoys();
+    expect(packedWithDecoys).toContain('docs/safety.md');
+    expect(excluded(packedWithDecoys)).toEqual([]);
+
+    // Second barrier: the allowlist itself must name files under docs/, never the directory.
+    const pkg = JSON.parse(read('package.json')) as { files?: string[] };
+    expect(pkg.files).toBeDefined();
+    expect(pkg.files).toContain('docs/safety.md');
+    expect(pkg.files?.filter((entry) => /^docs\/?$/.test(entry))).toEqual([]);
+
+    // Third barrier: the same paths never enter the build context or the image.
+    const dockerignore = read('.dockerignore');
+    expect(dockerignore).toContain(RESEARCH_DIR);
+    for (const file of RESEARCH_ONLY_ROOT_FILES) expect(dockerignore).toContain(file);
+    const dockerfile = read('Dockerfile');
+    expect(dockerfile).toContain('COPY docs/safety.md ./docs/safety.md');
+    expect(dockerfile).not.toMatch(/^COPY docs \.\/docs$/m);
+
+    // Fourth barrier: the paths stay untracked, so they can never reach git either.
+    const gitignore = read('.gitignore');
+    expect(gitignore).toContain(`${RESEARCH_DIR}/`);
+    for (const file of RESEARCH_ONLY_ROOT_FILES) expect(gitignore).toContain(file);
+  }, 120_000);
 
   it('keeps the service installer executable', () => {
     expect(statSync(resolve(root, 'deploy/install-services.sh')).mode & 0o111).not.toBe(0);

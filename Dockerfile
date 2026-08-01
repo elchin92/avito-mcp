@@ -51,13 +51,15 @@ ENV NODE_ENV=production \
     XDG_STATE_HOME=/home/node/.local/state
 
 # Runtime artifacts. node_modules + dist (incl. generated manifest.json) come from
-# the build stage; swaggers/ and docs/ are static and copied straight from context
-# (they back the MCP resources). package.json is read by version.ts.
+# the build stage; swaggers/ and docs/safety.md are static and copied straight from
+# the context (they back the MCP resources). docs/ is copied file by file on
+# purpose: a whole-directory COPY silently drags research material such as
+# docs/mcp-2026-07-28/ into the image. package.json is read by version.ts.
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./package.json
 COPY swaggers ./swaggers
-COPY docs ./docs
+COPY docs/safety.md ./docs/safety.md
 COPY deploy/container-healthcheck.sh /usr/local/bin/avito-mcp-healthcheck
 
 RUN mkdir -p /home/node/.local/state/avito-mcp && \
