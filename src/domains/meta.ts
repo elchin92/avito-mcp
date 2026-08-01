@@ -430,12 +430,15 @@ export const register: DomainRegister = (server, ctx) => {
         },
         _meta: { risk: 'write', environment: 'local' },
       },
-      /* @mcp-codemod-error Cannot rename 'extra' to 'ctx': 'ctx' is already referenced in this scope. Manual migration required. */
-      async (args, extra): Promise<CallToolResult> => {
+      // The SDK's per-request context. v2 calls it `ctx`, a name already taken in
+      // this scope by the ToolContext closed over above, so it keeps a distinct
+      // one. What matters is the shape, not the name: callerPrincipal() reads
+      // `mcpCtx.http.authInfo` / `mcpCtx.http.req.headers`, the v2 locations.
+      async (args, mcpCtx): Promise<CallToolResult> => {
         const id = String(args.confirmation_id ?? '');
 
         if (requireSecret) {
-          const rate = ctx.pendingStore.checkConfirmationRateLimit(callerPrincipal(extra));
+          const rate = ctx.pendingStore.checkConfirmationRateLimit(callerPrincipal(mcpCtx));
           if (!rate.allowed) {
             logger.warn(
               { retryAfterMs: rate.retryAfterMs },
@@ -514,7 +517,7 @@ export const register: DomainRegister = (server, ctx) => {
           }
           ctx.pendingStore.resetConfirmationFailures(id);
         }
-        const confirmer = requireSecret ? 'external:secret-provider' : callerPrincipal(extra);
+        const confirmer = requireSecret ? 'external:secret-provider' : callerPrincipal(mcpCtx);
         if (ctx.config.approvalMode === 'external' && confirmer === pending.initiator) {
           return {
             isError: true,

@@ -12,15 +12,34 @@
  * authorization server. We derive that URL from the SDK's own helper so it is
  * guaranteed to match the path the router serves
  * (`/.well-known/oauth-protected-resource/mcp` for a resource server at /mcp).
+ *
+ * SDK v2 split this surface in two, and so do the imports below:
+ *   - the Authorization Server half (`mcpAuthRouter` and the `OAuthServerProvider`
+ *     contract) exists ONLY in the deprecated `@modelcontextprotocol/server-legacy`
+ *     — `@modelcontextprotocol/server@2` ships no AS layer at all. It stays there
+ *     as the deliberate transitional choice until an external IdP is picked.
+ *   - the Resource Server half (`requireBearerAuth`) is maintained in
+ *     `@modelcontextprotocol/express`, and that is what protects /mcp. It is the
+ *     only variant whose `AuthInfo` reaches tool handlers as `ctx.http.authInfo`
+ *     via `req.auth`, which is what `callerPrincipal()` needs.
+ *
+ * The split has one sharp edge, covered by test/oauth-bearer-http.test.ts: the v2
+ * middleware recognises only the v2 `OAuthError` brand. A verifier throwing the
+ * server-legacy error classes falls through to `500 Internal Server Error`
+ * instead of `401` + `WWW-Authenticate`, which would silently strip clients of
+ * the discovery mechanism. Hence AvitoOAuthProvider.verifyAccessToken — the only
+ * method the middleware calls — throws v2 `OAuthError(OAuthErrorCode.InvalidToken)`,
+ * while the AS-side methods keep throwing the legacy classes that mcpAuthRouter
+ * understands.
  */
 import express from 'express';
 import type { Router, RequestHandler } from 'express';
 import { rateLimit } from 'express-rate-limit';
+import { mcpAuthRouter } from '@modelcontextprotocol/server-legacy/auth';
 import {
-  mcpAuthRouter,
   getOAuthProtectedResourceMetadataUrl,
   requireBearerAuth,
-} from '@modelcontextprotocol/server-legacy/auth';
+} from '@modelcontextprotocol/express';
 import type { HttpConfig } from '../../config.js';
 import { AvitoOAuthProvider } from './provider.js';
 
@@ -83,12 +102,10 @@ export function createOAuthSubsystem(httpConfig: HttpConfig): OAuthSubsystem {
       }),
     );
 
-    /* @mcp-codemod-error requireBearerAuth: resource-server auth helpers routed to the frozen @modelcontextprotocol/server-legacy/auth copy. The maintained v2 home is @modelcontextprotocol/express — when re-pointing, verifiers must throw the v2 OAuthError (the express middleware does not recognize the legacy error classes). See the migration guide's server auth split section. */
     const requireAuth = requireBearerAuth({
       verifier: provider,
       requiredScopes: ['avito:mcp'],
-      // Matches the path mcpAuthMetadataRouter serves for a resource server at /mcp.
-      /* @mcp-codemod-error getOAuthProtectedResourceMetadataUrl: resource-server auth helpers routed to the frozen @modelcontextprotocol/server-legacy/auth copy. The maintained v2 home is @modelcontextprotocol/express — when re-pointing, verifiers must throw the v2 OAuthError (the express middleware does not recognize the legacy error classes). See the migration guide's server auth split section. */
+      // Matches the path mcpAuthRouter serves for a resource server at /mcp.
       resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
     });
 

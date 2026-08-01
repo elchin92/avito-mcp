@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { McpServer } from '@modelcontextprotocol/server';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
-import { z, type ZodRawShape } from 'zod';
+import { z, type ZodType } from 'zod';
 
 import type { Config } from '../src/config.js';
 import { AvitoClient } from '../src/core/client.js';
@@ -525,15 +525,19 @@ function dereference(document: JsonObject, value: unknown): JsonObject {
 function runtimeTools(): Map<string, RuntimeTool> {
   const tools = new Map<string, RuntimeTool>();
   const server = {
+    // SDK v2 takes a Standard Schema object rather than a raw ZodRawShape, so
+    // defineTool now hands us a ZodObject that is already wrapped — wrapping it a
+    // second time here would make z.toJSONSchema choke on a nested schema used as
+    // a shape entry. Mirror the real signature instead of re-wrapping.
     registerTool(
       name: string,
       config: {
-        inputSchema?: ZodRawShape;
+        inputSchema?: ZodType;
         _meta?: { risk?: string; environment?: string };
       },
     ): void {
       tools.set(name, {
-        schema: z.toJSONSchema(z.object(config.inputSchema ?? {}), {
+        schema: z.toJSONSchema(config.inputSchema ?? z.object({}), {
           reused: 'inline',
         }) as JsonObject,
         risk: config._meta?.risk,

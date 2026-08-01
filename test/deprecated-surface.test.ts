@@ -74,6 +74,17 @@ const RULES: readonly Rule[] = [
     identifiers: ['SSEServerTransport'],
     literalContains: ['server/sse.js', 'client/sse.js'],
   },
+  {
+    // M2: added when the server moved onto the @modelcontextprotocol/*@2 line.
+    // In test/ and scripts/ a leftover v1 specifier is caught by tsc (the
+    // package is gone, so TS2307), but src/ is the half where a v1 path could
+    // still resolve through a transitive copy and quietly pull in a second,
+    // incompatible set of protocol types.
+    feature: 'The retired v1 SDK package `@modelcontextprotocol/sdk`',
+    migration:
+      'import from the v2 line — @modelcontextprotocol/{core,server,node,express,client}; the frozen authorization-server helpers live in @modelcontextprotocol/server-legacy/auth',
+    literalContains: ['@modelcontextprotocol/sdk'],
+  },
 ];
 
 interface Violation {
@@ -168,7 +179,7 @@ describe('deprecated MCP surfaces (2026-07-28 registry)', () => {
     expect(sources).toContain('src/build-server.ts');
   });
 
-  it('does not reference Roots, Sampling, deprecated includeContext values or HTTP+SSE', () => {
+  it('does not reference Roots, Sampling, deprecated includeContext values, HTTP+SSE or the v1 SDK', () => {
     const violations = sources.flatMap((file) =>
       scanSource(file, readFileSync(resolve(root, file), 'utf8')),
     );
@@ -187,6 +198,8 @@ describe('deprecated MCP surfaces (2026-07-28 registry)', () => {
         ['includeContext value', 'const p = { fld: "allServers" };'],
         ['SSE transport', 'const t = new SSEServerTransport("/messages", res);'],
         ['SSE module', 'import { X } from "@modelcontextprotocol/sdk/server/sse.js";'],
+        ['v1 SDK package', 'import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";'],
+        ['v1 SDK dynamic import', 'const m = await import("@modelcontextprotocol/sdk/types.js");'],
         ['template literal', 'const m = `sampling/createMessage`;'],
       ];
       for (const [label, code] of cases) {

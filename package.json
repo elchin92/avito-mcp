@@ -86,7 +86,6 @@
   "author": "elchin92 <52755600+elchin92@users.noreply.github.com> (https://github.com/elchin92)",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/core": "^2.0.0",
     "@modelcontextprotocol/express": "^2.0.0",
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",

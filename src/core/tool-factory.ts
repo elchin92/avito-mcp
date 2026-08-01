@@ -1,4 +1,9 @@
-import type { McpServer, CallToolResult, ToolAnnotations } from '@modelcontextprotocol/server';
+import type {
+  McpServer,
+  CallToolResult,
+  ToolAnnotations,
+  ServerContext,
+} from '@modelcontextprotocol/server';
 import { z, type ZodRawShape } from 'zod';
 
 import type { Config } from '../config.js';
@@ -23,6 +28,35 @@ import { callerPrincipal, type CallerExtra, type PendingActionStore } from './pe
 import { evaluatePolicy, requiresConfirmation } from './policy.js';
 import type { Primitive, QueryValue } from './url.js';
 import type { WebhookStore } from './webhook-store.js';
+
+type Assert<T extends true> = T;
+type ServerContextHttp = NonNullable<ServerContext['http']>;
+
+/**
+ * Compile-time contract between the SDK's handler context and {@link CallerExtra},
+ * the subset `callerPrincipal()` reads to decide WHO is calling.
+ *
+ * This exists because the v1→v2 move of `authInfo`/`requestInfo` from the top of
+ * the context down into `ctx.http` is otherwise invisible: `CallerExtra` is a weak
+ * type (every field optional), so the old v1 shape stayed assignable to the new
+ * context and every principal silently degraded to `session:<id>` — no compiler
+ * error, no test failure. These assertions fail the build if either side moves
+ * again; `test/oauth-bearer-http.test.ts` covers the runtime half over a live
+ * HTTP transport with a real OAuth token.
+ */
+export type CallerIdentityContract = [
+  // The verified token still hangs off ctx.http.authInfo, not the v1 top-level ctx.authInfo.
+  Assert<NonNullable<ServerContextHttp['authInfo']>['clientId'] extends string ? true : false>,
+  // The raw request still hangs off ctx.http.req, with web-standard Headers access.
+  Assert<
+    NonNullable<ServerContextHttp['req']>['headers'] extends { get(name: string): string | null }
+      ? true
+      : false
+  >,
+  // What callerPrincipal() reads is exactly what the SDK hands the handler.
+  Assert<ServerContextHttp extends NonNullable<CallerExtra['http']> ? true : false>,
+  Assert<ServerContext extends CallerExtra ? true : false>,
+];
 
 /** Names of internal fields automatically added to destructive tools. */
 const META_PARAMS = ['dryRun', 'idempotencyKey'] as const;
@@ -309,7 +343,7 @@ export function defineTool<I extends ZodRawShape>(
 
   const handler = async (
     rawArgs: Record<string, unknown>,
-    extra?: CallerExtra,
+    extra: CallerExtra,
   ): Promise<CallToolResult> => {
     const args = rawArgs ?? {};
     const cleanArgs = destructive ? stripMeta(args) : args;
@@ -537,18 +571,18 @@ export function defineTool<I extends ZodRawShape>(
     metaRecord.supportsIdempotency = true;
   }
 
-  /* @mcp-codemod-error Could not verify `inputSchema` is a schema object. Raw shapes are deprecated in v2 — pass a Standard Schema object (e.g. z.object({ … })); no change is needed if it already is one. */
   server.registerTool(
     spec.name,
     {
       title: spec.title,
       description: spec.description,
-      inputSchema: finalInputSchema,
+      // SDK v2 takes a Standard Schema object, not a raw ZodRawShape; v1 wrapped
+      // the shape internally, so the emitted JSON Schema is unchanged.
+      inputSchema: z.object(finalInputSchema),
       annotations,
       _meta: metaRecord,
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    handler as any,
+    handler,
   );
 }
 
