@@ -1,7 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
 import { promises as fs } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IdempotencyStore } from '../src/core/idempotency.js';
@@ -9,20 +6,25 @@ import { PendingActionStore } from '../src/core/pending-actions.js';
 import { RateLimiter } from '../src/core/rate-limiter.js';
 import { syncDirectory } from '../src/core/runtime-state.js';
 import { normalizeBbipResult } from '../src/domains/promotion.js';
+import { createSandbox, removeSandbox } from './support/sandbox.js';
 
 const directories: string[] = [];
 
+/**
+ * Every store below publishes its lease with mkdir and then has to recognise that
+ * directory again. os.tmpdir() is tmpfs on most hosts and never hands a freed inode
+ * back, so those ownership checks are untestable there; the repo filesystem is the one
+ * a deployment actually keeps its state on. Same reasoning as test/file-lock.test.ts.
+ */
 async function stateDir(): Promise<string> {
-  const path = await mkdtemp(join(tmpdir(), 'avito-mcp-1.3-'));
+  const path = await createSandbox('reliability-1.3');
   directories.push(path);
   return path;
 }
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(
-    directories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
-  );
+  await Promise.all(directories.splice(0).map((path) => removeSandbox(path)));
 });
 
 describe('BBIP item-level outcome', () => {
@@ -175,12 +177,14 @@ describe('1.3 durable reliability state', () => {
       'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 60),
     });
     first.observe('stats', headers);
+    // observe() is synchronous and only queues the write, so polling until the file
+    // appears proves nothing beyond the rename — the lease around it is still held, and
+    // releasing it renames the lease to a `<file>.lock.transitioned-<id>` sibling inside
+    // this very directory. A teardown rm() racing that sibling dies on ENOTEMPTY.
+    // flushPersisted() is the drain the server runs on shutdown: it returns once the
+    // snapshot is durable and the lease is gone, which is what the assertion needs.
+    await first.flushPersisted();
 
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const shared = await second.getSharedStatus('stats');
-      if (shared.length > 0) break;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
     expect(await second.getSharedStatus('stats')).toMatchObject([
       { domain: 'stats', limit: 10, remaining: 7 },
     ]);
