@@ -260,6 +260,22 @@ export interface WireStep {
   /** JSON-RPC method, or `null` for the raw-HTTP probes below. */
   method: string | null;
   params?: Record<string, unknown>;
+  /**
+   * The whole JSON-RPC frame, replacing `method`/`params`/`id`.
+   *
+   * Two classes of step need this and cannot be expressed any other way. A
+   * MALFORMED frame — `params` absent, `name` of the wrong type — cannot be
+   * built from a `Record<string, unknown>` typed `params`, and `id` has to stay
+   * under the step's control so a rejection can be matched to it. And an
+   * UNREADABLE body is by definition not a frame at all: the bytes are the test.
+   *
+   * A step that sets this must still say what it is doing in `method`, which
+   * becomes documentation rather than an instruction — `captureWire` sends these
+   * bytes verbatim.
+   */
+  rawBody?: string;
+  /** Overrides the request content type. Only useful with {@link rawBody}. */
+  contentType?: string;
   /** A notification carries no `id` and expects no JSON-RPC answer. */
   notification?: boolean;
   /** Sent before the session exists / with a deliberately wrong session id. */
@@ -630,6 +646,144 @@ export const LEGACY_WIRE_STEPS: readonly WireStep[] = [
     method: 'prompts/get',
     params: { name: 'avito_explain_tool', arguments: {} },
   },
+  // ── a MALFORMED tools/call FRAME ──────────────────────────────────────────
+  //
+  // Steps 15–17 and 26–27 all send a WELL-FORMED `tools/call`: a `params`
+  // object with a `name` string in it. Every one of them therefore reaches the
+  // SDK's tool dispatch, which is the code `src/core/wire-errors.ts` reshapes.
+  // Nothing in the plan sent a frame that fails BEFORE dispatch — where v2 added
+  // a codec validation step (`Server._wrapHandler`, `tools/call` only) that v1
+  // did not have. So the whole class was invisible: v1 let a `ZodError` escape
+  // the handler and answered `-32603` with the pretty-printed ISSUE ARRAY as the
+  // message; v2 catches the same failure first and answers `-32602 Invalid
+  // tools/call request: <the same array>`. Both the code and the wording moved,
+  // on the single most-called method in the protocol.
+  //
+  // Four inputs, chosen to cover the distinct shapes the codec can refuse: a
+  // required member absent, the whole `params` object absent, a required member
+  // of the wrong type, and an OPTIONAL member of the wrong type. The fourth is
+  // the one that proves the class is about validation and not about `name`
+  // specifically — `arguments` is optional (step 27 omits it and succeeds), so
+  // the only way to fail on it is to send it wrong.
+  {
+    id: '31-tools-call-name-absent',
+    note: 'REGRESSION 1a — a tools/call frame whose params carry no `name`',
+    method: 'tools/call',
+    rawBody: JSON.stringify({
+      jsonrpc: '2.0',
+      id: '31-tools-call-name-absent',
+      method: 'tools/call',
+      params: { arguments: {} },
+    }),
+  },
+  {
+    id: '32-tools-call-params-absent',
+    note: 'REGRESSION 1b — a tools/call frame with no `params` member at all',
+    method: 'tools/call',
+    rawBody: JSON.stringify({
+      jsonrpc: '2.0',
+      id: '32-tools-call-params-absent',
+      method: 'tools/call',
+    }),
+  },
+  {
+    id: '33-tools-call-name-wrong-type',
+    note: 'REGRESSION 1c — tools/call whose `name` is a number',
+    method: 'tools/call',
+    rawBody: JSON.stringify({
+      jsonrpc: '2.0',
+      id: '33-tools-call-name-wrong-type',
+      method: 'tools/call',
+      params: { name: 42, arguments: {} },
+    }),
+  },
+  {
+    id: '34-tools-call-arguments-wrong-type',
+    note: 'REGRESSION 1d — tools/call whose optional `arguments` is a string',
+    method: 'tools/call',
+    rawBody: JSON.stringify({
+      jsonrpc: '2.0',
+      id: '34-tools-call-arguments-wrong-type',
+      method: 'tools/call',
+      params: { name: 'meta_capabilities', arguments: 'not an object' },
+    }),
+  },
+  // The neighbours of the class, both directions.
+  //
+  // v2's pre-dispatch codec validation is installed for `tools/call` AND FOR
+  // NOTHING ELSE, so the same malformation on another primitive still takes v1's
+  // route. Pinning two of them here is what stops a fix aimed at `tools/call`
+  // from being written as a blanket rule that drags these with it — the failure
+  // mode of every repair in `src/core/wire-errors.ts` so far.
+  {
+    id: '35-resources-read-uri-absent',
+    note: 'the same malformation on resources/read, which v2 does NOT pre-validate',
+    method: 'resources/read',
+    params: {},
+  },
+  {
+    id: '36-prompts-get-name-absent',
+    note: 'the same malformation on prompts/get, for the same reason',
+    method: 'prompts/get',
+    params: {},
+  },
+  {
+    id: '37-tools-call-params-null',
+    note: 'tools/call with `params: null` — refused by the TRANSPORT, above any era',
+    method: 'tools/call',
+    rawBody: JSON.stringify({
+      jsonrpc: '2.0',
+      id: '37-tools-call-params-null',
+      method: 'tools/call',
+      params: null,
+    }),
+  },
+  // ── an UNREADABLE request body ────────────────────────────────────────────
+  //
+  // Every step above carries a body that at least PARSES as JSON, so the plan
+  // never exercised the layer below the protocol. 1.3.3 let `express.json()`
+  // throw and answered its app-wide `400 {"error":"bad_request"}` — not a
+  // JSON-RPC frame at all. This branch answers `-32700` there, which is the
+  // right answer on revision 2026-07-28 (`ParseError`, `PARSE_ERROR = -32700`;
+  // `docs/mcp-2026-07-28/schema-2.md`) and the wrong one for a 2025 client that
+  // was shipped the other. Three bodies, because `express.json()` refuses for
+  // three different reasons and only one of them is "not JSON".
+  {
+    id: '38-body-truncated-json',
+    note: 'REGRESSION 2a — a body that stops mid-frame',
+    method: null,
+    rawBody: '{"jsonrpc":"2.0","id":"38-body-truncated-json",',
+  },
+  {
+    id: '39-body-not-json',
+    note: 'REGRESSION 2b — a body that is not JSON at all',
+    method: null,
+    rawBody: 'this is not json',
+  },
+  {
+    id: '40-body-json-but-not-an-object',
+    note: 'REGRESSION 2c — valid JSON that express.json() refuses in strict mode',
+    method: null,
+    rawBody: '"hello"',
+  },
+  // The neighbours of THAT class: the two body failures 1.3.3 already answered
+  // as JSON-RPC, and which therefore must not move when the three above are
+  // split by era. An empty body is not a parse failure — `express.json()` hands
+  // the MCP layer `{}` and the SDK refuses the envelope — and a wrong media type
+  // is refused before any parsing is attempted at all.
+  {
+    id: '41-body-empty',
+    note: 'an empty body: refused by the SDK envelope check, not by express.json()',
+    method: null,
+    rawBody: '',
+  },
+  {
+    id: '42-body-wrong-content-type',
+    note: 'a body under the wrong media type: refused before parsing, with 415',
+    method: null,
+    rawBody: 'jsonrpc=2.0',
+    contentType: 'text/plain',
+  },
 ];
 
 // ────────────────────────────── booting a server ─────────────────────────────
@@ -915,13 +1069,15 @@ export async function captureWire(server: BootedServer): Promise<WireCapture> {
 
     let body: string | undefined;
     if (step.http === undefined) {
-      headers['content-type'] = 'application/json';
-      body = JSON.stringify({
-        jsonrpc: '2.0',
-        ...(step.notification ? {} : { id: step.id }),
-        method: step.method,
-        ...(step.params ? { params: step.params } : {}),
-      });
+      headers['content-type'] = step.contentType ?? 'application/json';
+      body =
+        step.rawBody ??
+        JSON.stringify({
+          jsonrpc: '2.0',
+          ...(step.notification ? {} : { id: step.id }),
+          method: step.method,
+          ...(step.params ? { params: step.params } : {}),
+        });
     }
 
     const res = await fetch(`${server.base}/mcp`, {

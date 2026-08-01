@@ -1,6 +1,6 @@
 {
   "$provenance": {
-    "capturedAt": "2026-08-01T18:30:43.805Z",
+    "capturedAt": "2026-08-01T20:11:32.719Z",
     "capturedByNode": "v22.23.1",
     "reference": {
       "entrypoint": "/srv/avito_mcp/dist/server.js",
@@ -1097,6 +1097,159 @@
       "contentType": "sse",
       "sessionHeader": "<session-id>",
       "status": 200
+    },
+    "31-tools-call-name-absent": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32603,
+          "message": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"params\",\n      \"name\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+        },
+        "id": "31-tools-call-name-absent",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "32-tools-call-params-absent": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32603,
+          "message": "[\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"params\"\n    ],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]"
+        },
+        "id": "32-tools-call-params-absent",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "33-tools-call-name-wrong-type": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32603,
+          "message": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"params\",\n      \"name\"\n    ],\n    \"message\": \"Invalid input: expected string, received number\"\n  }\n]"
+        },
+        "id": "33-tools-call-name-wrong-type",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "34-tools-call-arguments-wrong-type": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32603,
+          "message": "[\n  {\n    \"expected\": \"record\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"params\",\n      \"arguments\"\n    ],\n    \"message\": \"Invalid input: expected record, received string\"\n  }\n]"
+        },
+        "id": "34-tools-call-arguments-wrong-type",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "35-resources-read-uri-absent": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32603,
+          "message": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"params\",\n      \"uri\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+        },
+        "id": "35-resources-read-uri-absent",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "36-prompts-get-name-absent": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32603,
+          "message": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"params\",\n      \"name\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+        },
+        "id": "36-prompts-get-name-absent",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "37-tools-call-params-null": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32700,
+          "message": "Parse error: Invalid JSON-RPC message"
+        },
+        "id": null,
+        "jsonrpc": "2.0"
+      },
+      "contentType": "json",
+      "sessionHeader": null,
+      "status": 400
+    },
+    "38-body-truncated-json": {
+      "allow": null,
+      "body": {
+        "error": "bad_request"
+      },
+      "contentType": "json",
+      "sessionHeader": null,
+      "status": 400
+    },
+    "39-body-not-json": {
+      "allow": null,
+      "body": {
+        "error": "bad_request"
+      },
+      "contentType": "json",
+      "sessionHeader": null,
+      "status": 400
+    },
+    "40-body-json-but-not-an-object": {
+      "allow": null,
+      "body": {
+        "error": "bad_request"
+      },
+      "contentType": "json",
+      "sessionHeader": null,
+      "status": 400
+    },
+    "41-body-empty": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32700,
+          "message": "Parse error: Invalid JSON-RPC message"
+        },
+        "id": null,
+        "jsonrpc": "2.0"
+      },
+      "contentType": "json",
+      "sessionHeader": null,
+      "status": 400
+    },
+    "42-body-wrong-content-type": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32000,
+          "message": "Unsupported Media Type: Content-Type must be application/json"
+        },
+        "id": null,
+        "jsonrpc": "2.0"
+      },
+      "contentType": "json",
+      "sessionHeader": null,
+      "status": 415
     }
   }
 }
