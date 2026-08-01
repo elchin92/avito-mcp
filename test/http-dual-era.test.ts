@@ -25,6 +25,8 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 
+import { LEGACY_WIRE_ERROR_CODES } from '../src/core/rpc-codes.js';
+
 import {
   LEGACY_REVISION,
   MODERN_REVISION,
@@ -73,13 +75,14 @@ describe('era=legacy (default): the modern leg does not exist', () => {
     // reaches a 2026 handler. It falls through the legacy manager's "no session
     // id on a non-initialize POST" branch — precisely what M2 answered.
     //
-    // The CODE moved from -32000 to -32602 (a required field is absent) when
-    // the 2026-07-28 allocation policy closed -32000…-32019 to new
-    // implementations; the STATUS, which is what a client branches on, did not.
+    // Down to the CODE: this is the 2025 leg answering, so it answers 1.3.3's
+    // -32000. (M3 briefly renumbered it under the 2026-07-28 allocation policy
+    // — a policy about the answers a 2026 client receives, which is not this
+    // one. See LEGACY_WIRE_ERROR_CODES in src/core/rpc-codes.ts.)
     expect(answer.status).toBe(400);
     expect(answer.body).toMatchObject({
       jsonrpc: '2.0',
-      error: { code: -32602 },
+      error: { code: LEGACY_WIRE_ERROR_CODES.missingSessionId },
       id: null,
     });
     expect(JSON.stringify(answer.body)).not.toContain('supportedVersions');

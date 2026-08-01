@@ -55,6 +55,7 @@ import {
 } from '../src/build-server.js';
 import {
   APP_ERROR_CODES,
+  LEGACY_WIRE_ERROR_CODES,
   SPEC_RESERVED_CODES,
   isLegacySubRangeCode,
 } from '../src/core/rpc-codes.js';
@@ -461,28 +462,30 @@ describe('F2 — no answer allocates a code from the legacy sub-range', () => {
     expect(code).toBeGreaterThan(-32000);
   });
 
-  it('the legacy leg answers a missing session id with -32602, not -32000', async () => {
+  // The two session answers below are the SCOPE of this heading, stated as
+  // tests: the sub-range is closed to what a 2026 client can receive, and these
+  // two are structurally unreachable from that era (2026-07-28 has no
+  // sessions). They therefore keep 1.3.3's numbers — which is also what the v2
+  // SDK's own legacy transport answers — and the guard below still holds for
+  // every modern answer. See LEGACY_WIRE_ERROR_CODES in src/core/rpc-codes.ts.
+  it('the legacy leg still answers a missing session id with 1.3.3 -32000', async () => {
     const rig = await startRig('legacy');
     const answer = await legacyPost(rig, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
     expect(answer.status).toBe(400);
-    // A required field is absent: that is what -32602 means, and the corpus
-    // assigns exactly this case to it.
-    expect(errorOf(answer)!.code).toBe(-32602);
+    expect(errorOf(answer)!.code).toBe(LEGACY_WIRE_ERROR_CODES.missingSessionId);
   });
 
-  it('the legacy leg answers an unknown session id outside the reserved range', async () => {
+  it('the legacy leg still answers an unknown session id with 1.3.3 -32001', async () => {
     const rig = await startRig('legacy');
     const answer = await legacyPost(
       rig,
       { jsonrpc: '2.0', id: 1, method: 'tools/list' },
       '00000000-0000-4000-8000-000000000000',
     );
-    // The status is the contract clients react to (re-initialize); only the
-    // number moves.
+    // The status is the contract clients react to (re-initialize); the number
+    // beside it is the one 1.3.3 shipped.
     expect(answer.status).toBe(404);
-    const code = errorOf(answer)!.code;
-    expect(code).toBe(APP_ERROR_CODES.sessionNotFound);
-    expect(code).toBeGreaterThan(-32000);
+    expect(errorOf(answer)!.code).toBe(LEGACY_WIRE_ERROR_CODES.sessionNotFound);
   });
 
   it('never answers a modern request with a code in -32000…-32019', async () => {

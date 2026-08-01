@@ -29,9 +29,12 @@
  *     `-32602` by name (`basic.md`, "Убрать коды -32000 и -32001 из HTTP-слоя").
  *   • Everything else — conditions the protocol does not model at all, which is
  *     to say TRANSPORT-CAPACITY and TRANSPORT-SHAPE answers — gets a code from
- *     the block below. They are application-defined by construction: no MCP
- *     client is expected to branch on them, and the HTTP status carries the
- *     actionable half (`404` ⇒ re-initialize, `405` + `Allow`, `503` ⇒ retry).
+ *     {@link APP_ERROR_CODES}. They are application-defined by construction: no
+ *     MCP client is expected to branch on them, and the HTTP status carries the
+ *     actionable half (`405` + `Allow`, `503` ⇒ retry).
+ *   • …and the rule applies to answers a 2026 client can RECEIVE. The three
+ *     session answers of the 2025 leg are frozen at what 1.3.3 shipped; see
+ *     {@link LEGACY_WIRE_ERROR_CODES} for why the policy does not reach them.
  *
  * ── Why a block starting at -31000 ──────────────────────────────────────────
  *
@@ -42,24 +45,59 @@
  * asserted in `test/modern-hardening.test.ts` and must not be renumbered
  * without a CHANGELOG entry.
  */
+/**
+ * The three answers that belong to the 2025-11-25 LEG, frozen at the numbers
+ * 1.3.3 shipped.
+ *
+ * ── Why these do not move, when the modern leg's answers did ────────────────
+ *
+ * M3 renumbered every application code in this server out of `-32000…-32019`,
+ * on the strength of «new implementations SHOULD NOT use codes from this
+ * sub-range at all». That reasoning is sound for the answers a 2026 client can
+ * receive. It does not reach these three, for two reasons that both have to
+ * hold:
+ *
+ *   • They are structurally unreachable from the modern era. All three are
+ *     about an MCP SESSION, and revision 2026-07-28 has no sessions — the
+ *     modern leg answers every non-POST `405` and never consults
+ *     `Mcp-Session-Id`. A 2026 client cannot be handed one of these numbers.
+ *   • The clause binds a NEW implementation. The legacy leg is not one: it is
+ *     the 2025-11-25 implementation this project already shipped, whose wire
+ *     `test/legacy-wire-regression.test.ts` pins against a real 1.3.3 process.
+ *     Renumbering it silently changed an answer under existing clients for a
+ *     policy those clients are not governed by.
+ *
+ * The SDK agrees, and that is the decisive evidence rather than a comfort: the
+ * v2 legacy transport still answers exactly these numbers. From the corpus
+ * (`docs/mcp-2026-07-28/sdk-typescript-1.md`):
+ *
+ *   «Запросы, требующие сессию, но опускающие заголовок `Mcp-Session-Id`,
+ *    по-прежнему отвечают `400` с JSON-RPC `-32000` […], без изменений с v1 —
+ *    код является конвенцией SDK»
+ *   «Несовпадение session ID по-прежнему отвечает `404` с JSON-RPC `-32001`
+ *    […], без изменений с v1.»
+ *
+ * So a 2025 client that meets any OTHER server built on this SDK sees `-32000`
+ * / `-32001` here. Emitting our own numbers made this server the odd one out on
+ * its own era while fixing nothing a 2026 client could observe.
+ *
+ * These live in this module and not at their call sites so the static scan in
+ * `test/modern-runtime.test.ts` — which forbids any `-32xxx` literal in `src/`
+ * outside the codes the spec defines — keeps working unchanged: this file is
+ * the one it skips, because it is the file that has to name the boundaries.
+ */
+export const LEGACY_WIRE_ERROR_CODES = {
+  /** `400` — a session-requiring request arrived with no `Mcp-Session-Id`. */
+  missingSessionId: -32000,
+
+  /** `404` — the presented session id is unknown (terminated, reaped, restarted). */
+  sessionNotFound: -32001,
+
+  /** `503` — `AVITO_MCP_HTTP_MAX_SESSIONS` reached; no new session will be minted. */
+  sessionLimitReached: -32000,
+} as const;
+
 export const APP_ERROR_CODES = {
-  /**
-   * `404` — a session id was presented that this process does not know
-   * (terminated, reaped, or lost to a restart). Legacy leg only: the modern era
-   * has no sessions.
-   *
-   * Was `-32001`, which the revision additionally RENUMBERED into the spec's
-   * own `HeaderMismatch` slot in an earlier draft — so the old value did not
-   * merely come from a closed sub-range, it collided in meaning.
-   */
-  sessionNotFound: -31001,
-
-  /**
-   * `503` — the legacy leg refuses to mint another session because
-   * `AVITO_MCP_HTTP_MAX_SESSIONS` is reached. Was `-32000`.
-   */
-  sessionLimitReached: -31002,
-
   /**
    * `405` — the modern era serves POST only (the revision removed the GET
    * stream and the DELETE teardown). Was `-32000`, copied from the SDK's own

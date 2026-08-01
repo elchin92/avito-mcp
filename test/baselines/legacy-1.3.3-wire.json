@@ -1,6 +1,6 @@
 {
   "$provenance": {
-    "capturedAt": "2026-08-01T17:50:16.665Z",
+    "capturedAt": "2026-08-01T18:30:43.805Z",
     "capturedByNode": "v22.23.1",
     "reference": {
       "entrypoint": "/srv/avito_mcp/dist/server.js",
@@ -1020,6 +1020,83 @@
       "contentType": "json",
       "sessionHeader": null,
       "status": 400
+    },
+    "26-tools-call-hidden-tool": {
+      "allow": null,
+      "body": {
+        "id": "26-tools-call-hidden-tool",
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "MCP error -32602: Tool auth_get_access_token not found",
+              "type": "text"
+            }
+          ],
+          "isError": true
+        }
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "27-tools-call-no-arguments": {
+      "allow": null,
+      "body": {
+        "envelope": {
+          "id": "27-tools-call-no-arguments",
+          "jsonrpc": "2.0",
+          "result": {
+            "isError": true
+          }
+        },
+        "unparseable": "MCP error -32602: Input validation error: Invalid arguments for tool meta_capabilities: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "28-resources-read-invalid-uri": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32603,
+          "message": "Invalid URL"
+        },
+        "id": "28-resources-read-invalid-uri",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "29-resources-read-missing-swagger": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32603,
+          "message": "Swagger 'no_such_swagger' not found. Available: account-hierarchy.json, authorization.json, autoload.json, calltracking.json, cpa-auction.json, cpa-target-action.json, cpa.json, delivery.json, items.json, messenger-discounts.json, messenger.json, orders.json, promotion.json, reviews.json, stock-management.json, tariffs.json, trxpromo.json, user.json"
+        },
+        "id": "29-resources-read-missing-swagger",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "30-prompts-get-bad-arguments": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32602,
+          "message": "MCP error -32602: Invalid arguments for prompt avito_explain_tool: [\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"tool_name\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+        },
+        "id": "30-prompts-get-bad-arguments",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
     }
   }
 }

@@ -28,6 +28,13 @@
  * capture would report "the wire changed" and stop; a red list of named steps
  * says which exchanges moved and leaves the rest standing as evidence that the
  * transport, the handshake and the happy paths did not.
+ *
+ * TWO steps are allowed to differ from 1.3.3, and neither is waved through: a
+ * `KnownAddition` names a single field and the value it must hold, a
+ * `DeclaredDivergence` names both sides' values at every path it checks. Both
+ * fail when they stop being true — an exception that outlives its argument is
+ * indistinguishable from a regression nobody noticed, which is the failure mode
+ * this whole file exists to prevent.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -40,9 +47,11 @@ import {
   LEGACY_WIRE_STEPS,
   REFERENCE_VERSION,
   REPO_ROOT,
+  applyKnownAdditions,
   bootServer,
   canonical,
   captureWire,
+  readPath,
   type Baseline,
   type BootedServer,
   type WireCapture,
@@ -113,7 +122,51 @@ describe('legacy wire vs the published 1.3.3 build', () => {
         `no reference answer for ${step.id}; regenerate ${BASELINE_RELATIVE_PATH} ` +
           'with `npm run capture:legacy-baseline`',
       ).toBeDefined();
-      expect(canonical(actual[step.id])).toEqual(canonical(expected));
+
+      const divergence = step.divergence;
+      if (divergence !== undefined) {
+        // A declared divergence replaces the comparison, so it has to carry its
+        // own weight: both sides are pinned at every declared path, and the two
+        // must still differ. A declaration that has become true of 1.3.3 as
+        // well is stale, and stale is how an exception outlives its argument.
+        for (const fact of divergence.facts) {
+          const where = fact.path.join('.');
+          expect(readPath(expected, fact.path), `1.3.3 at ${where}: ${divergence.why}`).toEqual(
+            fact.reference,
+          );
+          expect(
+            readPath(actual[step.id], fact.path),
+            `this branch at ${where}: ${divergence.why}`,
+          ).toEqual(fact.branch);
+          expect(
+            fact.branch,
+            `${where} is declared a DIVERGENCE but both sides hold the same value; ` +
+              'delete the declaration',
+          ).not.toEqual(fact.reference);
+        }
+        return;
+      }
+
+      // A declared addition is only an allowance while it is still true of both
+      // sides. Checking it here — rather than only letting the reconciliation
+      // paper over the diff — means a stale entry fails instead of hiding.
+      for (const addition of step.knownAdditions ?? []) {
+        const where = addition.path.join('.');
+        expect(
+          readPath(expected, addition.path),
+          `${where} is declared as an ADDITION, but 1.3.3 already answers it — ` +
+            `delete the entry in LEGACY_WIRE_STEPS. Reason on record: ${addition.why}`,
+        ).toBeUndefined();
+        expect(
+          readPath(actual[step.id], addition.path),
+          `${where} is declared as an addition this branch makes, and it is not ` +
+            `there. Reason on record: ${addition.why}`,
+        ).toEqual(addition.value);
+      }
+
+      expect(canonical(actual[step.id])).toEqual(
+        canonical(applyKnownAdditions(expected, step.knownAdditions)),
+      );
     });
   }
 });

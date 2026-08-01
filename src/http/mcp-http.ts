@@ -68,7 +68,7 @@ import {
   WEBHOOK_EVENTS_URI,
   subscribableResourceUris,
 } from '../resources.js';
-import { APP_ERROR_CODES } from '../core/rpc-codes.js';
+import { APP_ERROR_CODES, LEGACY_WIRE_ERROR_CODES } from '../core/rpc-codes.js';
 import { droppedSubscriptionUris, narrowListenRequest } from '../core/subscriptions.js';
 import { MODERN_PROTOCOL_VERSION } from '../version.js';
 
@@ -85,18 +85,23 @@ interface Session {
 /**
  * 400: request carries no session id where one is required.
  *
- * `-32602` and not the `-32000` this used to send: the code says "a required
- * parameter of this request is missing", which is exactly the condition, and
- * the 2026-07-28 allocation policy closed `-32000…-32019` to new
- * implementations. The research corpus assigns this very call site to `-32602`
- * by name (`docs/mcp-2026-07-28/basic.md`). The HTTP status — the half a client
- * actually branches on — is unchanged. See `src/core/rpc-codes.ts`.
+ * Reachable only from `handleLegacyRequest`, i.e. only by a 2025-11-25 client:
+ * the modern leg has no sessions and answers every non-POST `405` without ever
+ * reading `Mcp-Session-Id`. So this is a 2025-wire answer, and it is frozen at
+ * the `-32000` 1.3.3 shipped — which is also what the v2 SDK's own legacy
+ * transport still answers. `LEGACY_WIRE_ERROR_CODES` in `src/core/rpc-codes.ts`
+ * carries the full argument, including the corpus quotes.
+ *
+ * M3 briefly moved this to `-32602` on the strength of the 2026-07-28
+ * allocation policy; `test/legacy-wire-regression.test.ts`, diffing against a
+ * live 1.3.3, is what showed that the policy was being applied to a wire it
+ * does not govern.
  */
 function missingSessionError(res: Parameters<RequestHandler>[1]): void {
   res.status(400).json({
     jsonrpc: '2.0',
     error: {
-      code: -32602,
+      code: LEGACY_WIRE_ERROR_CODES.missingSessionId,
       message: 'Bad Request: Mcp-Session-Id header is required',
     },
     id: null,
@@ -108,16 +113,16 @@ function missingSessionError(res: Parameters<RequestHandler>[1]): void {
  * restart). The Streamable HTTP spec mandates 404 here — clients react to it by
  * re-initializing with a fresh session, so a 400 would leave them wedged.
  *
- * The code moved off `-32001` for two reasons, not one: that sub-range is
- * closed to new implementations, AND `-32001` was the draft number of
- * `HeaderMismatch` before the revision renumbered it to `-32020`, so keeping it
- * meant emitting a number the spec has since given a different meaning.
+ * Legacy leg only, and frozen at 1.3.3's `-32001` for the same reason as
+ * {@link missingSessionError}. (The concern that `-32001` was the DRAFT number
+ * of `HeaderMismatch` does not survive contact with the final revision, which
+ * renumbered that code to `-32020` precisely so the two could not collide.)
  */
 function unknownSessionError(res: Parameters<RequestHandler>[1]): void {
   res.status(404).json({
     jsonrpc: '2.0',
     error: {
-      code: APP_ERROR_CODES.sessionNotFound,
+      code: LEGACY_WIRE_ERROR_CODES.sessionNotFound,
       message: 'Session not found',
     },
     id: null,
@@ -528,10 +533,12 @@ export function createMcpHttpHandler(
               },
               'mcp http session limit reached',
             );
+            // Legacy leg only, like the two answers above: minting a session is
+            // a 2025-era operation. Frozen at 1.3.3's number.
             res.status(503).json({
               jsonrpc: '2.0',
               error: {
-                code: APP_ERROR_CODES.sessionLimitReached,
+                code: LEGACY_WIRE_ERROR_CODES.sessionLimitReached,
                 message: 'Too many concurrent sessions, try again later',
               },
               id: null,

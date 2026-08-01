@@ -23,7 +23,7 @@ import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 
 import { AvitoClient } from '../src/core/client.js';
-import { APP_ERROR_CODES } from '../src/core/rpc-codes.js';
+import { LEGACY_WIRE_ERROR_CODES } from '../src/core/rpc-codes.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import { IdempotencyStore } from '../src/core/idempotency.js';
 import { WebhookStore } from '../src/core/webhook-store.js';
@@ -293,14 +293,17 @@ describe('Streamable HTTP session contract + app surface', () => {
     });
     expect(r.status).toBe(400);
     const body = (await r.json()) as { error: { code: number; message: string } };
-    // Was -32000 through 1.3.x. The 2026-07-28 allocation policy closed
-    // -32000…-32019 to new implementations, and this condition — a required
-    // field is absent — is what -32602 means. Status and message unchanged.
-    expect(body.error.code).toBe(-32602);
+    // -32000, as in 1.3.x, and as the v2 SDK's own legacy transport still
+    // answers. M3 briefly moved this to -32602 under the 2026-07-28 allocation
+    // policy; that policy governs answers a 2026 client can RECEIVE, and this
+    // branch is reachable only from the sessionful 2025 leg — a distinction
+    // test/legacy-wire-regression.test.ts made visible by diffing against a
+    // live 1.3.3. See LEGACY_WIRE_ERROR_CODES in src/core/rpc-codes.ts.
+    expect(body.error.code).toBe(LEGACY_WIRE_ERROR_CODES.missingSessionId);
     expect(body.error.message).toContain('Mcp-Session-Id');
   });
 
-  it('POST /mcp with an UNKNOWN session id → 404 outside the reserved range (client must re-initialize)', async () => {
+  it('POST /mcp with an UNKNOWN session id → 404 (client must re-initialize)', async () => {
     const rig = await startRig();
     handle = rig.handle;
 
@@ -313,12 +316,11 @@ describe('Streamable HTTP session contract + app surface', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     });
     // The 404 is the contract clients react to (re-initialize with a fresh
-    // session); only the JSON-RPC number moved, off -32001, which the revision
-    // additionally renumbered into the spec's own HeaderMismatch slot.
+    // session), and the number beside it is 1.3.3's -32001 — the value the v2
+    // SDK's own legacy transport still answers for this case.
     expect(r.status).toBe(404);
     const body = (await r.json()) as { error: { code: number; message: string } };
-    expect(body.error.code).toBe(APP_ERROR_CODES.sessionNotFound);
-    expect(body.error.code).toBeGreaterThan(-32000);
+    expect(body.error.code).toBe(LEGACY_WIRE_ERROR_CODES.sessionNotFound);
     expect(body.error.message).toContain('Session not found');
   });
 

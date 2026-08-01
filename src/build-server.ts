@@ -25,6 +25,7 @@ import { bindMcpLogger, runWithRequestLogSink, type RequestLogSink } from './log
 import { PACKAGE_NAME, VERSION } from './version.js';
 import { hasConfiguredCredentials } from './core/credentials.js';
 import { applyLegacyWireDefaults } from './core/wire-compat.js';
+import { applyWireErrorShapes } from './core/wire-errors.js';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -294,7 +295,8 @@ export function buildMcpServer(
 
   // M2: pin the tool-descriptor details v2 changed (JSON Schema dialect and the
   // `execution` field) back to what 1.3.x emitted, before anything registers.
-  applyLegacyWireDefaults(server);
+  // The era selects the one pin that is not era-neutral — see the function.
+  applyLegacyWireDefaults(server, era);
 
   // M3 item 10. Modern only: on the legacy era `notifications/message` is a
   // connection-level feature gated by `logging/setLevel`, and re-routing it
@@ -313,6 +315,11 @@ export function buildMcpServer(
   }
   registerResources(server, ctx);
   registerPrompts(server, ctx);
+
+  // LAST, and it has to be last: this replaces the request handlers that are
+  // already installed, so anything registered after it would keep the SDK's own
+  // error shapes. See src/core/wire-errors.ts for what each era gets.
+  applyWireErrorShapes(server, era);
 
   return server;
 }

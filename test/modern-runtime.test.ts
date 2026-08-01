@@ -654,12 +654,14 @@ describe('A13 — error codes stay inside the allocation policy', () => {
     //   • -32603 / -32602 / -32601 / -32700 — base JSON-RPC.
     //   • -32020 / -32021 / -32022 — defined by revision 2026-07-28.
     //
-    // -32000 and -32001 used to be listed here as "grandfathered". They are not
-    // grandfathered for US: the grandfathering clause covers codes SDKs had
-    // already allocated, while "new implementations SHOULD NOT use codes from
-    // this sub-range at all" covers ours. Both were reassigned — see
-    // `src/core/rpc-codes.ts`, which is skipped below because it is the module
-    // that DEFINES the range boundaries and therefore has to name them.
+    // -32000 and -32001 are NOT listed here, and the two places that still
+    // answer them are not exempt from this scan — they read the numbers from
+    // `LEGACY_WIRE_ERROR_CODES` in `src/core/rpc-codes.ts`, the one module
+    // skipped below because it is the module that DEFINES the boundaries and
+    // therefore has to name them. That is deliberate: those two answers belong
+    // to the frozen 2025 wire (no 2026 client can reach a session error), and
+    // keeping them behind a named constant means a THIRD use of the sub-range
+    // cannot appear without editing the file this scan skips.
     const ALLOWED = new Set([-32020, -32021, -32022, -32601, -32602, -32603, -32700]);
     const POLICY_MODULE = join(SRC_ROOT, 'core', 'rpc-codes.ts');
     const offenders: string[] = [];

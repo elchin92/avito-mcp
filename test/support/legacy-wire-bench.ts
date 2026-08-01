@@ -46,6 +46,19 @@
  * full JSON-RPC frame — including which of `result` / `error` it carries, the
  * numeric code, the message string, and the presence and content of `data`.
  *
+ * TWO answers are allowed to differ, and both are declared in the plan itself
+ * rather than waved through:
+ *
+ *   • {@link KnownAddition} — three new keys on `avito://state/config`, a
+ *     diagnostic mirror of the process's own settings. Declared per FIELD, with
+ *     the value each must hold, so nothing else in that answer may move.
+ *   • {@link DeclaredDivergence} — one call (`27-tools-call-no-arguments`) that
+ *     1.3.3 REFUSED and this branch accepts, because 1.3.3 was refusing a
+ *     well-formed request. Declared with both sides' values at every checked
+ *     path, so the declaration fails the day it stops being true.
+ *
+ * Nothing else in this file may differ.
+ *
  * Not named *.test.ts, so vitest's include pattern does not collect it.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -86,6 +99,43 @@ export function canonical(value: unknown): unknown {
   return value;
 }
 
+/** The value at `path`, or `undefined` if any step of it is missing. */
+export function readPath(value: unknown, path: readonly string[]): unknown {
+  let cursor: unknown = value;
+  for (const key of path) {
+    if (cursor === null || typeof cursor !== 'object') return undefined;
+    cursor = (cursor as Record<string, unknown>)[key];
+  }
+  return cursor;
+}
+
+/**
+ * A deep copy of `value` with every declared addition inserted.
+ *
+ * Copies rather than mutates: the baseline is parsed once for the whole file,
+ * and a step that edited it in place would leak into every step after it.
+ * Throws when the parent of a path does not exist — a mis-typed path must be a
+ * loud failure, not a silently skipped assertion.
+ */
+export function applyKnownAdditions(
+  value: unknown,
+  additions: readonly KnownAddition[] = [],
+): unknown {
+  const out = structuredClone(value);
+  for (const addition of additions) {
+    const parentPath = addition.path.slice(0, -1);
+    const leaf = addition.path[addition.path.length - 1]!;
+    const parent = readPath(out, parentPath);
+    if (parent === null || typeof parent !== 'object') {
+      throw new Error(
+        `known addition ${addition.path.join('.')} has no parent in the reference answer`,
+      );
+    }
+    (parent as Record<string, unknown>)[leaf] = addition.value;
+  }
+  return out;
+}
+
 export function digest(value: unknown): string {
   return createHash('sha256')
     .update(JSON.stringify(canonical(value)))
@@ -95,11 +145,69 @@ export function digest(value: unknown): string {
 
 // ───────────────────────────────── the plan ─────────────────────────────────
 
+/**
+ * A field this branch adds to an answer that 1.3.3 did not have, DECLARED.
+ *
+ * The bench's verdict is "the legacy wire moved", so an exception to it has to
+ * be narrower than "this step is allowed to differ". A `KnownAddition` names one
+ * path, one value and one reason; the comparison then inserts it into the
+ * REFERENCE and demands equality on everything else. That keeps every property
+ * of the assertion except the single reviewed key:
+ *
+ *   • drop the field  ⇒ red (the reference now has it and the branch does not);
+ *   • change its value ⇒ red (the declared value is the one that must appear);
+ *   • add a SECOND field ⇒ red (nothing declared it);
+ *   • and the step also fails if the reference turns out to have the key after
+ *     all, so an allowance cannot outlive the reason for it.
+ *
+ * Use only where the difference is a decision someone made, not an accident.
+ */
+export interface KnownAddition {
+  /** Path into the recorded answer; array elements are addressed by index. */
+  readonly path: readonly string[];
+  /** The value the branch must produce there. */
+  readonly value: unknown;
+  /** Why this is a decision rather than a regression. */
+  readonly why: string;
+}
+
+/**
+ * A place where this branch DELIBERATELY does not reproduce 1.3.3.
+ *
+ * Distinct from {@link KnownAddition}, which is a field that grew on an answer
+ * that is otherwise identical. A divergence is a different ANSWER, and it is
+ * only ever the right call when reproducing 1.3.3 would mean re-introducing a
+ * defect: the compatibility contract exists to stop clients breaking, and a
+ * request that 1.3.3 REFUSED and this branch accepts breaks nobody.
+ *
+ * Declaring one costs more than allowing one, on purpose. Each `facts` entry
+ * names a path and BOTH values — what 1.3.3 answers there and what this branch
+ * answers — so the step fails if either side moves, and fails if the two ever
+ * stop differing (a stale declaration is as bad as an undetected regression).
+ * The rest of the answer is not compared, which is why a divergence has to be
+ * argued in `why` rather than merely noted.
+ */
+export interface DeclaredDivergence {
+  /** The argument for not reproducing 1.3.3 here. Read in review; keep it complete. */
+  readonly why: string;
+  readonly facts: readonly {
+    readonly path: readonly string[];
+    /** What the captured 1.3.3 answer holds at `path`. */
+    readonly reference: unknown;
+    /** What this branch must hold at `path`. Must not equal `reference`. */
+    readonly branch: unknown;
+  }[];
+}
+
 export interface WireStep {
   /** Stable identifier; it is the key in the baseline and the test name. */
   id: string;
   /** Why the step is in the plan — printed with the assertion. */
   note: string;
+  /** Reviewed, per-field differences from 1.3.3. See {@link KnownAddition}. */
+  knownAdditions?: readonly KnownAddition[];
+  /** A reviewed, argued refusal to reproduce 1.3.3. See {@link DeclaredDivergence}. */
+  divergence?: DeclaredDivergence;
   /** JSON-RPC method, or `null` for the raw-HTTP probes below. */
   method: string | null;
   params?: Record<string, unknown>;
@@ -192,15 +300,20 @@ function condenseCapabilities(body: unknown): unknown {
   if (!Array.isArray(content) || content.length !== 1) return { unexpected: body };
   const text = (content[0] as { text?: string }).text;
   if (typeof text !== 'string') return { unexpected: body };
+  // The envelope is kept on EVERY branch, including the failure ones: a step
+  // that condenses a big positive answer may also be used where the answer is a
+  // small tool error, and losing `isError` there would hide the one bit that
+  // says which of the two happened.
+  const envelope = { ...(body as Frame), result: { isError: resultOf(body)?.isError ?? false } };
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(text) as Record<string, unknown>;
   } catch {
-    return { unparseable: text };
+    return { envelope, unparseable: text };
   }
   const { tools, ...rest } = parsed;
   return {
-    envelope: { ...(body as Frame), result: { isError: resultOf(body)?.isError ?? false } },
+    envelope,
     payload: rest,
     toolCount: Array.isArray(tools) ? tools.length : null,
     toolsSha256: digest(tools),
@@ -264,6 +377,35 @@ export const LEGACY_WIRE_STEPS: readonly WireStep[] = [
     method: 'resources/read',
     params: { uri: 'avito://state/config' },
     condense: condenseConfigSnapshot,
+    // The ONE declared difference in this bench. `avito://state/config` is a
+    // diagnostic mirror of the process's own configuration, not a protocol
+    // surface: its keys are whatever this deployment is configured with, and
+    // they already differ between any two deployments. M3 gave the process
+    // three new settings, so three new keys appear here.
+    //
+    // Filtering them back out was the alternative and it is the worse answer:
+    // on a `dual` deployment the modern leg IS bounded by maxInflight/
+    // maxStreams, and an operator debugging a `503` would be reading a snapshot
+    // that hid the limit that produced it. A diagnostic resource that lies
+    // about live configuration is a worse defect than a JSON object growing a
+    // key that no 1.3.x client reads by position.
+    knownAdditions: [
+      {
+        path: ['body', 'contents', '0', 'text', 'config', 'protocolEra'],
+        value: 'legacy',
+        why: 'AVITO_MCP_PROTOCOL_ERA, new in M3. Reporting which wire this process serves is the single most useful line in a diagnostic snapshot of a dual-era build.',
+      },
+      {
+        path: ['body', 'contents', '0', 'text', 'config', 'http', 'maxInflight'],
+        value: 64,
+        why: 'AVITO_MCP_HTTP_MAX_INFLIGHT, new in M3.8: the modern leg has no sessions to cap, so concurrency is bounded here instead. Hiding it would hide the cause of a 503.',
+      },
+      {
+        path: ['body', 'contents', '0', 'text', 'config', 'http', 'maxStreams'],
+        value: 32,
+        why: 'AVITO_MCP_HTTP_MAX_STREAMS, new in M3.8: the bound on open subscriptions/listen streams, for the same reason.',
+      },
+    ],
   },
   {
     id: '11-resources-read-unregistered',
@@ -356,6 +498,65 @@ export const LEGACY_WIRE_STEPS: readonly WireStep[] = [
     method: null,
     session: 'none',
     http: { method: 'DELETE' },
+  },
+  // ── the neighbours of the five reported scenarios ─────────────────────────
+  //
+  // Added after the five were fixed, precisely because a fix aimed at one cell
+  // of a table is the classic way to leave the cell next to it broken. Each of
+  // these reaches the SAME SDK code path as a step above, one branch over:
+  // the other side of the tool-lookup test, the other error the `resources/read`
+  // dispatcher can raise, the template callback rather than the dispatcher, the
+  // argument validator of a different primitive, and the arguments-absent form
+  // of a call the plan already makes with `arguments: {}`.
+  {
+    id: '26-tools-call-hidden-tool',
+    note: 'tools/call on a tool this deployment’s policy hides (the other half of scenario 1)',
+    method: 'tools/call',
+    params: { name: 'auth_get_access_token', arguments: {} },
+  },
+  {
+    id: '27-tools-call-no-arguments',
+    note: 'tools/call with the `arguments` member absent rather than empty',
+    method: 'tools/call',
+    params: { name: 'meta_capabilities' },
+    condense: condenseCapabilities,
+    divergence: {
+      why:
+        '1.3.3 REFUSES this call. SDK v1 validated `request.params.arguments` as it ' +
+        'arrived, so an absent member reached `z.object({})` as `undefined` and failed ' +
+        'with "expected object, received undefined" — for every tool, including the ones ' +
+        'that take no arguments at all. But `arguments` is OPTIONAL in CallToolRequest on ' +
+        'revision 2025-11-25, so 1.3.3 was rejecting a well-formed request; SDK v2 ' +
+        'normalises it (`validateToolInput(tool, args ?? {})`) and the call succeeds. ' +
+        'Reproducing 1.3.3 here would mean deliberately re-introducing that refusal. The ' +
+        'compatibility contract is there so that clients which WORKED keep working, and ' +
+        'no client can depend on a rejection: accepting more than 1.3.3 accepted cannot ' +
+        'break one. So this stays fixed, and the difference is declared rather than hidden.',
+      facts: [
+        // Same path, both sides: 1.3.3 answers a tool error whose text is not
+        // JSON at all, this branch answers the capabilities payload.
+        { path: ['body', 'envelope', 'result', 'isError'], reference: true, branch: false },
+        { path: ['body', 'toolCount'], reference: undefined, branch: 148 },
+      ],
+    },
+  },
+  {
+    id: '28-resources-read-invalid-uri',
+    note: 'resources/read whose uri does not parse as a URI at all',
+    method: 'resources/read',
+    params: { uri: 'not a uri' },
+  },
+  {
+    id: '29-resources-read-missing-swagger',
+    note: 'resources/read reaching the swagger TEMPLATE callback, not the dispatcher',
+    method: 'resources/read',
+    params: { uri: 'avito://swaggers/no_such_swagger' },
+  },
+  {
+    id: '30-prompts-get-bad-arguments',
+    note: 'prompts/get on a real prompt with its required argument missing',
+    method: 'prompts/get',
+    params: { name: 'avito_explain_tool', arguments: {} },
   },
 ];
 
