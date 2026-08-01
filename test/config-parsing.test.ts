@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 
 import {
   EnvValidationError,
+  assertSecureOAuthPublicUrl,
   parseBool,
   parseChoice,
   parsePositiveInt,
@@ -79,6 +80,81 @@ describe('strict environment parsing', () => {
     expect(result.stderr).toContain(
       'AVITO_MCP_OAUTH_OWNER_PASSWORD must contain at least 32 bytes',
     );
+  });
+
+  // ── M5.3: the HTTPS MUST on authorization-server endpoints ────────────────
+  //
+  // In oauth mode this URL is the issuer identifier, the `resource` every token
+  // is bound to, and the base of the endpoint clients POST an authorization code
+  // and code_verifier to. Cleartext there is not a warning-level problem.
+  describe('AVITO_MCP_HTTP_PUBLIC_URL in oauth mode', () => {
+    it('accepts https and http on any loopback spelling', () => {
+      for (const url of [
+        'https://mcp.example.com',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'http://[::1]:3000',
+      ]) {
+        expect(() => assertSecureOAuthPublicUrl(url, false)).not.toThrow();
+      }
+    });
+
+    it('refuses cleartext on a routable host', () => {
+      expect(() => assertSecureOAuthPublicUrl('http://mcp.example.com', false)).toThrow(
+        EnvValidationError,
+      );
+      // A host that merely contains a loopback literal is routable.
+      expect(() => assertSecureOAuthPublicUrl('http://127.0.0.1.evil.example.com', false)).toThrow(
+        EnvValidationError,
+      );
+      expect(() => assertSecureOAuthPublicUrl('http://mcp.example.com', true)).not.toThrow();
+    });
+
+    it('fails startup rather than serving an OAuth issuer over cleartext', () => {
+      const result = spawnSync(
+        process.execPath,
+        ['--import', 'tsx', '--input-type=module', '--eval', "await import('./src/config.ts')"],
+        {
+          cwd: resolve(import.meta.dirname, '..'),
+          encoding: 'utf8',
+          env: {
+            PATH: process.env.PATH,
+            HOME: process.env.HOME,
+            AVITO_ENV_FILE: '/dev/null',
+            AVITO_MCP_TRANSPORT: 'http',
+            AVITO_MCP_HTTP_AUTH: 'oauth',
+            AVITO_MCP_OAUTH_OWNER_PASSWORD: 'x'.repeat(40),
+            AVITO_MCP_HTTP_PUBLIC_URL: 'http://mcp.example.com',
+          },
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('AVITO_MCP_HTTP_PUBLIC_URL must use https');
+    });
+
+    it('leaves the non-oauth modes alone', () => {
+      // `bearer` and `none` publish no issuer, and `none` is refused on a
+      // non-loopback bind anyway. Extending the check to them would break the
+      // documented cleartext-behind-a-proxy deployments for no gain.
+      const result = spawnSync(
+        process.execPath,
+        ['--import', 'tsx', '--input-type=module', '--eval', "await import('./src/config.ts')"],
+        {
+          cwd: resolve(import.meta.dirname, '..'),
+          encoding: 'utf8',
+          env: {
+            PATH: process.env.PATH,
+            HOME: process.env.HOME,
+            AVITO_ENV_FILE: '/dev/null',
+            AVITO_MCP_TRANSPORT: 'http',
+            AVITO_MCP_HTTP_AUTH: 'none',
+            AVITO_MCP_HTTP_ALLOW_NO_AUTH: '1',
+            AVITO_MCP_HTTP_PUBLIC_URL: 'http://mcp.example.com',
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+    });
   });
 
   it('fails for an invalid webhook flag even when no secret is configured', () => {

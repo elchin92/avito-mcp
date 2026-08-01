@@ -235,6 +235,56 @@ function parseHttpUrl(raw: string, name: string): string {
 }
 
 /**
+ * The loopback hosts RFC 8252 §7.3 singles out, spelled the way `URL.hostname`
+ * spells them — an IPv6 literal keeps its brackets there, and the bare form
+ * shows up in hand-written config, so both are accepted.
+ *
+ * Shared with the OAuth provider (M5.3) so "is this address reachable only from
+ * this machine" has ONE definition. The `http:` exemption for the issuer URL and
+ * the `http:` exemption for a client's `redirect_uri` are the same exemption,
+ * and a copy that drifts is a copy that lets `http://evil.example.com/cb`
+ * through one door after being closed at the other.
+ */
+export function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]' ||
+    hostname === '::1'
+  );
+}
+
+/**
+ * M5.3 — the authorization spec's HTTPS MUST for authorization-server endpoints.
+ *
+ * In `oauth` mode `AVITO_MCP_HTTP_PUBLIC_URL` is not just a display string: it
+ * becomes the issuer identifier, the `resource` every token is bound to, and the
+ * base of every endpoint a client is told to POST its authorization code and
+ * `code_verifier` to. Serving that over cleartext hands all three to anyone on
+ * the path, so `http:` is accepted only where it cannot leave the machine.
+ *
+ * The escape hatch exists for development against a local proxy that terminates
+ * TLS elsewhere, and it is deliberately not enough on its own: `mcpAuthRouter`
+ * applies its own HTTPS check and needs `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL`
+ * as well, so nobody reaches a cleartext public issuer by setting one variable
+ * they half-remembered.
+ */
+export function assertSecureOAuthPublicUrl(publicUrl: string, allowInsecure: boolean): void {
+  const parsed = new URL(publicUrl);
+  if (parsed.protocol === 'https:') return;
+  if (isLoopbackHostname(parsed.hostname)) return;
+  if (allowInsecure) return;
+  throw new EnvValidationError(
+    `AVITO_MCP_HTTP_PUBLIC_URL must use https when AVITO_MCP_HTTP_AUTH=oauth (received ${publicUrl}). ` +
+      'It is the OAuth issuer identifier and the base of the token endpoint, so cleartext exposes ' +
+      'every authorization code and access token in transit. Terminate TLS at the reverse proxy and ' +
+      'point this at the https URL; http is accepted only for localhost / 127.0.0.1 / [::1]. For a ' +
+      'development-only override set AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL=1 (the SDK additionally ' +
+      'requires MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=true).',
+  );
+}
+
+/**
  * Backward compatibility: `AVITO_SAFE_MODE=read-only` (v0.2.x) maps to
  * `AVITO_MCP_MODE=read_only` (v0.3.x). If both are set, the newer wins
  * and we emit a stderr deprecation note (logger isn't initialised yet at
@@ -366,7 +416,17 @@ function buildHttpConfig(): HttpConfig {
   const authTokens = parseToolList(process.env.AVITO_MCP_HTTP_AUTH_TOKEN);
   const oauthOwnerPassword = process.env.AVITO_MCP_OAUTH_OWNER_PASSWORD || undefined;
   if (transport === 'http' || transport === 'both') {
-    if (auth === 'oauth') requireStrongSecret(oauthOwnerPassword, 'AVITO_MCP_OAUTH_OWNER_PASSWORD');
+    if (auth === 'oauth') {
+      requireStrongSecret(oauthOwnerPassword, 'AVITO_MCP_OAUTH_OWNER_PASSWORD');
+      assertSecureOAuthPublicUrl(
+        publicUrl,
+        parseBool(
+          process.env.AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL,
+          false,
+          'AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL',
+        ),
+      );
+    }
     if (auth === 'bearer') {
       if (authTokens.length === 0) {
         throw new EnvValidationError(

@@ -280,6 +280,48 @@ describe('AvitoOAuthProvider — DCR', () => {
     );
   });
 
+  // M5.3 — registration is unauthenticated, so the redirect target is chosen by
+  // a stranger. Until this check existed, the only thing between an approved
+  // consent and an authorization code sent in cleartext to an attacker's host
+  // was the owner reading the URL off the consent screen.
+  it('accepts only https and loopback-http redirect_uris', () => {
+    const provider = newProvider();
+    const clientStore = synchronousClientsStore(provider);
+    const register = clientStore.registerClient.bind(clientStore);
+    const base = {
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      scope: 'avito:mcp',
+    };
+    const withUri = (...uris: string[]) =>
+      ({ ...base, redirect_uris: uris }) as Omit<
+        OAuthClientInformationFull,
+        'client_id' | 'client_id_issued_at'
+      >;
+
+    expect(register(withUri('https://app.example.com/cb')).client_id).toBeTruthy();
+    expect(register(withUri('http://127.0.0.1:8765/cb')).client_id).toBeTruthy();
+    expect(register(withUri('http://localhost:8765/cb')).client_id).toBeTruthy();
+    expect(register(withUri('http://[::1]:8765/cb')).client_id).toBeTruthy();
+
+    expect(() => register(withUri('http://evil.example.com/cb'))).toThrow(/loopback/i);
+    // A host that merely starts with the loopback literal is not loopback.
+    expect(() => register(withUri('http://127.0.0.1.evil.example.com/cb'))).toThrow(/loopback/i);
+    // A private-use scheme is a deliberate non-acceptance: honouring it safely
+    // needs the reverse-domain ownership rule, which open registration cannot
+    // establish for a caller it never authenticated.
+    expect(() => register(withUri('com.example.app:/cb'))).toThrow(/https/i);
+    expect(() => register(withUri('javascript:alert(1)'))).toThrow(/https/i);
+    expect(() => register(withUri('https://app.example.com/cb#frag'))).toThrow(/fragment/i);
+    expect(() => register(withUri('/relative/cb'))).toThrow(/absolute/i);
+    // One bad entry poisons the whole registration; an acceptable subset is not
+    // silently kept.
+    expect(() =>
+      register(withUri('https://app.example.com/cb', 'http://evil.example.com/cb')),
+    ).toThrow(/loopback/i);
+  });
+
   it('evicts the oldest inactive DCR client instead of wedging at capacity', async () => {
     const { OAuthStore, OAUTH_MAX_CLIENTS } = await import('../src/http/oauth/store.js');
     const store = new OAuthStore();

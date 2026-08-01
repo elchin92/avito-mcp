@@ -48,7 +48,7 @@ import type {
   OAuthServerProvider,
   OAuthRegisteredClientsStore,
 } from '@modelcontextprotocol/server-legacy/auth';
-import type { HttpConfig } from '../../config.js';
+import { isLoopbackHostname, type HttpConfig } from '../../config.js';
 import { logger } from '../../logger.js';
 import { OAuthStore } from './store.js';
 
@@ -83,6 +83,44 @@ function esc(v: string): string {
 const REQUIRED_SCOPE = 'avito:mcp';
 const MAX_DCR_BYTES = 32 * 1024;
 
+/**
+ * M5.3 — the `redirect_uri` MUST that open registration made load-bearing.
+ *
+ * Registration is unauthenticated, so the redirect target of any client is
+ * chosen by a stranger, and until now the only checks on it were "there are
+ * between 1 and 10 of them" and "each is under 2 KiB". That accepted
+ * `http://evil.example.com/cb`: a cleartext callback the owner is then invited
+ * to approve on a consent screen, after which the authorization code travels
+ * over the network in the clear to a host the deployment never heard of.
+ *
+ * So: `https:` anywhere, or `http:` restricted to loopback (RFC 8252 §7.3, the
+ * native-app case where no network hop exists to intercept). A fragment is
+ * rejected outright — OAuth 2.1 forbids one in a redirect URI, and a client that
+ * registers one is telling us something is wrong with its URI construction.
+ *
+ * Private-use URI schemes (`com.example.app:/cb`) are NOT accepted, which is a
+ * deliberate narrowing: honouring them safely means enforcing the reverse-domain
+ * ownership rule of RFC 8252 §7.1, and an unauthenticated registration endpoint
+ * cannot establish that. Native clients use the loopback redirect instead, which
+ * this deployment has supported since v0.9.1.
+ */
+function assertRegistrableRedirectUri(uri: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    throw new InvalidClientMetadataError(`redirect_uri must be an absolute URI: ${uri}`);
+  }
+  if (parsed.hash) {
+    throw new InvalidClientMetadataError(`redirect_uri must not contain a fragment: ${uri}`);
+  }
+  if (parsed.protocol === 'https:') return parsed;
+  if (parsed.protocol === 'http:' && isLoopbackHostname(parsed.hostname)) return parsed;
+  throw new InvalidClientMetadataError(
+    `redirect_uri must use https, or http on a loopback address (localhost / 127.0.0.1 / [::1]): ${uri}`,
+  );
+}
+
 function assertStringLimit(label: string, value: string | undefined, max: number): void {
   if (value !== undefined && Buffer.byteLength(value, 'utf8') > max) {
     throw new InvalidClientMetadataError(`${label} exceeds ${max} bytes`);
@@ -111,7 +149,10 @@ function sanitizeClientMetadata(
   if (client.redirect_uris.length === 0 || client.redirect_uris.length > 10) {
     throw new InvalidClientMetadataError('redirect_uris must contain between 1 and 10 entries');
   }
-  for (const uri of client.redirect_uris) assertStringLimit('redirect_uri', uri, 2048);
+  for (const uri of client.redirect_uris) {
+    assertStringLimit('redirect_uri', uri, 2048);
+    assertRegistrableRedirectUri(uri);
+  }
   assertStringLimit('client_name', client.client_name, 128);
   assertStringLimit('client_uri', client.client_uri, 2048);
   assertStringLimit('logo_uri', client.logo_uri, 2048);
