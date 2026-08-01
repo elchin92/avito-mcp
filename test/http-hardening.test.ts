@@ -829,8 +829,10 @@ describe('WebhookStore JSONL durability', () => {
       const store = new WebhookStore(10, logFile);
       store.record({ id: 'e1', payload: { type: 'message', value: {} } });
 
-      // appendFile is fire-and-forget — give it a beat.
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // appendLog() is fire-and-forget. Sleeping only guesses at how long it takes, and
+      // an append that lands after the teardown rm() recreates the tree it just removed.
+      // flush() awaits the same queue the HTTP shutdown path does.
+      await store.flush();
       const written = await fs.readFile(logFile, 'utf8');
       expect(written).toContain('"e1"');
     } finally {
