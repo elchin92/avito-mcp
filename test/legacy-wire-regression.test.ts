@@ -24,6 +24,12 @@
  * `test/support/legacy-wire-bench.ts` for why it is a committed snapshot and
  * what that costs.
  *
+ * That it IS a 1.3.3 snapshot is the first thing asserted, and not by taking the
+ * snapshot's word for it: this branch reports 1.3.3 on `/healthz` too, so the
+ * three provenance assertions below check what the reference answered, what its
+ * recorded commit contains, and whether this branch can still be told apart from
+ * it at all.
+ *
  * ONE ASSERTION PER STEP, ON PURPOSE. A single deep-equal over the whole
  * capture would report "the wire changed" and stop; a red list of named steps
  * says which exchanges moved and leaves the rest standing as evidence that the
@@ -39,6 +45,7 @@
  * failure mode this whole file exists to prevent.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -54,7 +61,10 @@ import {
   bootServer,
   canonical,
   captureWire,
+  foreignReferenceViolations,
   readPath,
+  referenceProbes,
+  sameWireValue,
   type Baseline,
   type BootedServer,
   type WireCapture,
@@ -99,6 +109,12 @@ afterAll(async () => {
   if (sandbox) await removeSandbox(sandbox);
 });
 
+/** `git` inside this checkout. Never throws; the caller reads `status`. */
+function git(args: readonly string[]): { status: number | null; out: string } {
+  const result = spawnSync('git', ['-C', REPO_ROOT, ...args], { encoding: 'utf8' });
+  return { status: result.status, out: (result.stdout ?? '').trim() };
+}
+
 describe('legacy wire vs the published 1.3.3 build', () => {
   it('the baseline was captured from a real 1.3.3, not from this checkout', () => {
     expect(bootFailure).toBeUndefined();
@@ -106,7 +122,113 @@ describe('legacy wire vs the published 1.3.3 build', () => {
     expect(baseline.$provenance.reference.health.version).toBe(REFERENCE_VERSION);
     // A path inside this checkout would mean the snapshot is a picture of the
     // branch and the comparison below proves nothing.
+    //
+    // Necessary and NOT sufficient, which is why the next three assertions
+    // exist: `/healthz` reports `package.json`, and this branch's package.json
+    // also says 1.3.3 — the migration started there and has not released — so a
+    // branch process in a second worktree satisfies both of the checks above.
     expect(baseline.$provenance.reference.entrypoint.startsWith(REPO_ROOT)).toBe(false);
+  });
+
+  it('the reference ANSWERED what only 1.3.3 answers', () => {
+    // The provenance check that does not depend on what the reference said
+    // about itself. Every probe is derived from a difference this branch has
+    // already declared: an M3 key that 1.3.3 does not put on `state/config`, and
+    // the M2 call that 1.3.3 refuses and this branch accepts. A snapshot taken
+    // from any build of this branch carries the branch's side of at least one of
+    // them, whatever its version string, its path, or its git head says.
+    expect(foreignReferenceViolations(baseline.steps)).toEqual([]);
+  });
+
+  it('keeps probes that a build of this branch actually fails', () => {
+    // A guard on the guard above. It is worth exactly as many probes as it has,
+    // so: there must be some; each must declare two different values; and the
+    // branch process booted for this run must really answer the branch side of
+    // every one of them. The day this branch stops differing from 1.3.3
+    // everywhere, the provenance check degenerates into a tautology — and this
+    // assertion is what says so, instead of letting it pass quietly forever.
+    expect(bootFailure).toBeUndefined();
+    const probes = referenceProbes();
+    expect(probes.length).toBeGreaterThan(0);
+    const toothless: string[] = [];
+    for (const probe of probes) {
+      const where = `${probe.step}.${probe.path.join('.')}`;
+      if (sameWireValue(probe.reference, probe.branch)) {
+        toothless.push(`${where}: declares the same value for 1.3.3 and for this branch`);
+      }
+      const live = readPath(actual[probe.step], probe.path);
+      if (!sameWireValue(live, probe.branch)) {
+        toothless.push(
+          `${where}: this branch answers ${JSON.stringify(live)}, not the declared ` +
+            `${JSON.stringify(probe.branch)} — the probe no longer separates the two`,
+        );
+      }
+    }
+    expect(toothless).toEqual([]);
+  });
+
+  it('names a reference commit that cannot be a build of this branch', () => {
+    // The third layer, and the only one that can speak about the checkout the
+    // reference was built from. `gitHead` is recorded by the capture; here it is
+    // re-derived from THIS repository's own history, so a provenance block
+    // edited by hand has to name a commit that really is pre-migration code.
+    const { gitHead } = baseline.$provenance.reference;
+    expect(gitHead, `${BASELINE_RELATIVE_PATH} records no reference commit`).toMatch(
+      /^[0-9a-f]{40}$/,
+    );
+    const head = gitHead!;
+
+    const shallow = git(['rev-parse', '--is-shallow-repository']);
+    // No usable git at all (a source copy without `.git`): there is no history
+    // to cross-check against, and the two assertions above — which need neither
+    // git nor the reference checkout — are what stands. Everywhere this suite
+    // normally runs, git is here.
+    if (shallow.status !== 0) return;
+
+    if (git(['cat-file', '-e', `${head}^{commit}`]).status !== 0) {
+      // The one legitimate reason the commit is missing: a shallow clone (CI
+      // checks out with the default depth). Asserted rather than assumed — an
+      // unknown commit in a FULL clone means the provenance names a commit that
+      // does not exist, which is the forgery this assertion is about.
+      expect(
+        shallow.out,
+        `${head} is unknown to this repository and this is not a shallow clone`,
+      ).toBe('true');
+      return;
+    }
+
+    const manifest = git(['cat-file', '-p', `${head}:package.json`]);
+    expect(manifest.status, `cannot read package.json at ${head}`).toBe(0);
+    const reference = JSON.parse(manifest.out) as {
+      version?: string;
+      dependencies?: Record<string, string>;
+    };
+    const dependencies = reference.dependencies ?? {};
+
+    expect(reference.version, `${head} is not a ${REFERENCE_VERSION} tree`).toBe(REFERENCE_VERSION);
+    // Pre-M2: the 1.x line runs on the v1 SDK package. Every build from this
+    // branch — M2 onwards, including one whose package.json still says 1.3.3 —
+    // runs on the v2 packages, and this is what separates them. It is the check
+    // that catches the case the era keys below cannot: an M2 build, which has
+    // none of M3's additions.
+    expect(Object.keys(dependencies), `${head} does not depend on the v1 SDK`).toContain(
+      '@modelcontextprotocol/sdk',
+    );
+    expect(
+      Object.keys(dependencies).filter((name) => name.startsWith('@modelcontextprotocol/server')),
+      `${head} already depends on the v2 server packages, so it is a migration build`,
+    ).toEqual([]);
+    // Pre-M3: the era switch is the first thing the dual-era work adds.
+    expect(
+      git(['grep', '-l', 'AVITO_MCP_PROTOCOL_ERA', head, '--', 'src']).out,
+      `${head} already carries the era switch, so it is a migration build`,
+    ).toBe('');
+    // And it is on the line of history this branch descends from, not a
+    // sibling's tip that happens to look old.
+    expect(
+      git(['merge-base', '--is-ancestor', head, 'HEAD']).status,
+      `${head} is not an ancestor of this branch`,
+    ).toBe(0);
   });
 
   it('the branch answered every step in the plan', () => {

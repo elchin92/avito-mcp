@@ -22,20 +22,38 @@
  * CI has no 1.3.3 checkout, so the bench cannot boot the reference there. The
  * reference answers are therefore CAPTURED once, by
  * `scripts/capture-legacy-baseline.ts`, into
- * `test/baselines/legacy-1.3.3-wire.json`, and committed. The capture records
- * where it came from (`$provenance`), and the suite refuses a baseline whose
- * provenance does not say 1.3.3 — a snapshot regenerated against the branch
- * itself would make the bench self-referential again, which is the precise
- * failure this file was written to end.
+ * `test/baselines/legacy-1.3.3-wire.json`, and committed. A snapshot
+ * regenerated against the branch itself would make the bench self-referential
+ * again, which is the precise failure this file was written to end.
  *
- * WEAK SPOT, STATED PLAINLY: a committed snapshot is only as honest as the last
- * person who regenerated it. Nothing in CI can tell "the baseline was refreshed
- * because 1.3.3 was re-measured" from "the baseline was refreshed until the
- * suite went green". The mitigations are procedural, not mechanical: the
- * capture script only ever talks to a foreign entrypoint (it will not point at
- * `src/`), the snapshot carries the reference's `/healthz` version, and a
- * regeneration is a reviewable diff in its own file. Treat a commit that
- * touches `test/baselines/` as a wire-compatibility decision, not a test fix.
+ * ── Proving the reference was not this branch ───────────────────────────────
+ * The obvious check does not work. `/healthz` reports the version from
+ * `package.json`, and this branch's package.json ALSO says 1.3.3 — the
+ * migration started from that version and has not released one — so "the
+ * reference said 1.3.3" is a statement both sides can make. Neither does the
+ * path: "outside this checkout" is true of every other worktree of this
+ * repository, including one holding this very branch.
+ *
+ * What cannot be faked is the ANSWERS. Every difference between 1.3.3 and this
+ * branch is already declared in this file, and {@link referenceProbes} reads
+ * those declarations from the other end: the absence of a {@link KnownAddition}
+ * and the 1.3.3 side of a {@link DeclaredDivergence} are things only a genuine
+ * 1.3.3 process produces. The additions land in M3 and the divergence in M2, so
+ * the pair separates the reference from BOTH stages of the migration.
+ * `foreignReferenceViolations` runs over the committed snapshot in the suite and
+ * over the fresh capture in the script, which is why a capture pointed at a
+ * branch build aborts instead of being caught later in review.
+ *
+ * WEAK SPOT, STATED PLAINLY: a committed snapshot is still only as honest as the
+ * last person who regenerated it. The probes prove the capture came from a 1.3.3
+ * process; they cannot prove the person had a reason to re-run it. What is
+ * mechanical: the capture refuses an entrypoint inside this checkout, refuses a
+ * reference checkout that depends on the v2 packages or carries the era switch,
+ * and refuses a capture that answers like this branch; the suite re-derives the
+ * recorded `gitHead` from this repository's own history and requires a
+ * pre-migration tree. What stays procedural: a regeneration is a reviewable diff
+ * in its own file. Treat a commit that touches `test/baselines/` as a
+ * wire-compatibility decision, not a test fix.
  *
  * ── What "the same" means here ──────────────────────────────────────────────
  * Structural, not byte-for-byte: keys are sorted before comparison, so the
@@ -785,6 +803,111 @@ export const LEGACY_WIRE_STEPS: readonly WireStep[] = [
     contentType: 'text/plain',
   },
 ];
+
+// ─────────────────────────── proving the reference ───────────────────────────
+
+/**
+ * A place on the wire where 1.3.3 and a process built from THIS branch cannot
+ * answer the same thing.
+ *
+ * Why this exists: `/healthz` is not a provenance check. It reports the version
+ * from `package.json`, and this branch's `package.json` also says 1.3.3 —
+ * `1.3.3` is the version the migration STARTED from, and the migration has not
+ * released. So a snapshot captured from a branch process passes a version
+ * check, passes "the entrypoint is outside this checkout" the moment the
+ * entrypoint is a second worktree, and then compares the branch against itself
+ * while looking exactly like a bench.
+ *
+ * A discriminator is a claim of the opposite kind: not "the reference said it
+ * was 1.3.3" but "the reference ANSWERED something only 1.3.3 answers". Every
+ * one of them is already declared elsewhere in this file, because the two lists
+ * are the same list read from the other end:
+ *
+ *   • a {@link KnownAddition} is a key this branch puts on an answer and 1.3.3
+ *     does not — so its ABSENCE in a capture is evidence of a real 1.3.3, and
+ *     its presence is proof of a branch;
+ *   • a {@link DeclaredDivergence} fact names both sides at one path — so the
+ *     reference side appearing in a capture is evidence, and the branch side is
+ *     proof of a branch.
+ *
+ * The additions land in M3 and the divergence lands in M2, which means the pair
+ * covers both stages of the migration: an M2 build fails the divergence probe
+ * even though it has none of the M3 keys.
+ *
+ * They are DERIVED, not restated. A second hand-written list is a list that
+ * goes stale on its own schedule; this one cannot drift from the declarations
+ * it is made of.
+ */
+export interface ReferenceProbe {
+  readonly step: string;
+  readonly path: readonly string[];
+  /** What a genuine 1.3.3 capture holds here. `undefined` = the key is absent. */
+  readonly reference: unknown;
+  /** What a process built from this branch answers instead. */
+  readonly branch: unknown;
+  readonly why: string;
+}
+
+export function referenceProbes(steps: readonly WireStep[] = LEGACY_WIRE_STEPS): ReferenceProbe[] {
+  const probes: ReferenceProbe[] = [];
+  for (const step of steps) {
+    for (const addition of step.knownAdditions ?? []) {
+      probes.push({
+        step: step.id,
+        path: addition.path,
+        reference: undefined,
+        branch: addition.value,
+        why: addition.why,
+      });
+    }
+    for (const fact of step.divergence?.facts ?? []) {
+      probes.push({
+        step: step.id,
+        path: fact.path,
+        reference: fact.reference,
+        branch: fact.branch,
+        why: step.divergence!.why,
+      });
+    }
+  }
+  return probes;
+}
+
+/** Deep equality by canonical serialisation; `undefined` equals `undefined`. */
+export const sameWireValue = (a: unknown, b: unknown): boolean =>
+  JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
+const sameValue = sameWireValue;
+
+/**
+ * Everything in `capture` that says it did NOT come from a 1.3.3 process.
+ *
+ * Empty is the only acceptable answer. A probe that finds the branch's own
+ * value is the loud case — the capture is a self-portrait. A probe that finds
+ * neither side is reported too: it means the answer moved somewhere this file
+ * no longer describes, and a probe that matches nothing proves nothing.
+ */
+export function foreignReferenceViolations(capture: WireCapture): string[] {
+  const violations: string[] = [];
+  for (const probe of referenceProbes()) {
+    const where = `${probe.step}.${probe.path.join('.')}`;
+    const record = capture[probe.step];
+    if (record === undefined) {
+      violations.push(`${where}: the capture has no such step`);
+      continue;
+    }
+    const found = readPath(record, probe.path);
+    if (sameValue(found, probe.reference)) continue;
+    violations.push(
+      sameValue(found, probe.branch)
+        ? `${where}: holds THIS BRANCH's answer (${JSON.stringify(probe.branch)}), so the ` +
+            `capture came from a build of this branch and not from 1.3.3. Reason on record: ${probe.why}`
+        : `${where}: holds ${JSON.stringify(found)}, which is neither 1.3.3's answer ` +
+            `(${JSON.stringify(probe.reference)}) nor this branch's (${JSON.stringify(probe.branch)})`,
+    );
+  }
+  return violations;
+}
 
 // ────────────────────────────── booting a server ─────────────────────────────
 
