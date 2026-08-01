@@ -28,6 +28,7 @@
     "smoke": "tsx scripts/smoke.ts",
     "list-tools": "tsx scripts/list-tools.ts",
     "generate:manifest": "tsx scripts/generate-manifest.ts",
+    "capture:legacy-baseline": "tsx scripts/capture-legacy-baseline.ts",
     "inspect": "npx @modelcontextprotocol/inspector npx tsx src/server.ts",
     "pretest": "npm run generate:manifest",
     "test": "vitest run",

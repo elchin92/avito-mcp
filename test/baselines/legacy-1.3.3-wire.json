@@ -1,0 +1,1025 @@
+{
+  "$provenance": {
+    "capturedAt": "2026-08-01T17:50:16.665Z",
+    "capturedByNode": "v22.23.1",
+    "reference": {
+      "entrypoint": "/srv/avito_mcp/dist/server.js",
+      "gitHead": "79ed1cb7ee0421eb5e5967511e6aca127845bcad",
+      "health": {
+        "name": "avito-mcp",
+        "ok": true,
+        "version": "1.3.3"
+      }
+    },
+    "regenerateWith": "npm run capture:legacy-baseline",
+    "warning": "CAPTURED FROM A REAL 1.3.3 BUILD, NOT FROM THIS BRANCH. Regenerating this file changes what \"compatible with 1.3.3\" means. Do it only after re-measuring an actual 1.3.3 process, and review the diff as a wire-compatibility decision."
+  },
+  "steps": {
+    "01-initialize": {
+      "allow": null,
+      "body": {
+        "id": "01-initialize",
+        "jsonrpc": "2.0",
+        "result": {
+          "capabilities": {
+            "completions": {},
+            "logging": {},
+            "prompts": {
+              "listChanged": true
+            },
+            "resources": {
+              "listChanged": true,
+              "subscribe": true
+            },
+            "tools": {
+              "listChanged": true
+            }
+          },
+          "instructions": "Avito MCP — a server for the live (production) Avito API. Before any write/money/public operation, always confirm the action with a human; in confirmation_mode=money_public (default) the server returns a confirmation_id and requires a meta_confirm_action call. Full reference on the safety modes is in the avito://docs/safety resource. The list of tools with their risk classification is in avito://manifest. Pending actions are in avito://state/pending-actions (you can subscribe via resources/subscribe). Received Avito webhook events (if the receiver is enabled) are in avito://webhook/events (subscribable).",
+          "protocolVersion": "2025-11-25",
+          "serverInfo": {
+            "description": "148 tools for the Avito API: listings, messenger, orders, delivery, promotion, autoload, analytics, webhook events. With a safety policy (read_only / guarded / full_access), a confirmation flow for money/public operations, and hard-confirmation via AVITO_MCP_CONFIRMATION_SECRET.",
+            "name": "avito-mcp",
+            "title": "Avito MCP",
+            "version": "1.3.3",
+            "websiteUrl": "https://github.com/elchin92/avito-mcp"
+          }
+        }
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "02-notifications-initialized": {
+      "allow": null,
+      "body": null,
+      "contentType": "none",
+      "sessionHeader": null,
+      "status": 202
+    },
+    "03-ping": {
+      "allow": null,
+      "body": {
+        "id": "03-ping",
+        "jsonrpc": "2.0",
+        "result": {}
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "04-tools-list": {
+      "allow": null,
+      "body": {
+        "envelope": {
+          "id": "04-tools-list",
+          "jsonrpc": "2.0",
+          "result": {
+            "toolCount": 144
+          }
+        },
+        "names": [
+          "meta_get_rate_limits",
+          "meta_health",
+          "meta_auth_status",
+          "meta_capabilities",
+          "meta_confirm_action",
+          "meta_cancel_action",
+          "meta_list_pending_actions",
+          "user_get_user_info_self",
+          "user_get_user_balance",
+          "user_post_operations_history",
+          "items_get_items_info",
+          "items_get_item_info",
+          "items_post_calls_stats",
+          "items_post_vas_prices",
+          "items_post_item_stats_shallow",
+          "items_post_item_analytics",
+          "items_post_account_spendings",
+          "items_update_price",
+          "items_put_item_vas",
+          "items_put_item_vas_package_v2",
+          "items_apply_vas",
+          "messenger_get_chats_v2",
+          "messenger_get_chat_by_id_v2",
+          "messenger_get_messages_v3",
+          "messenger_get_voice_files",
+          "messenger_get_subscriptions",
+          "messenger_post_send_message",
+          "messenger_post_send_image_message",
+          "messenger_delete_message",
+          "messenger_chat_read",
+          "messenger_post_blacklist_v2",
+          "messenger_post_webhook_v3",
+          "messenger_post_webhook_unsubscribe",
+          "autoload_get_profile",
+          "autoload_create_or_update_profile",
+          "autoload_upload",
+          "autoload_user_docs_tree",
+          "autoload_user_docs_node_fields",
+          "autoload_get_ad_ids_by_avito_ids",
+          "autoload_get_avito_ids_by_ad_ids",
+          "autoload_get_profile_v2",
+          "autoload_create_or_update_profile_v2",
+          "autoload_get_reports_v2",
+          "autoload_get_autoload_items_info_v2",
+          "autoload_get_last_completed_report",
+          "autoload_get_report_by_id_v2",
+          "autoload_get_report_items_by_id",
+          "autoload_get_report_items_fees_by_id",
+          "autoload_get_last_completed_report_v3",
+          "autoload_get_report_by_id_v3",
+          "orders_get_orders",
+          "orders_get_courier_delivery_range",
+          "orders_download_label",
+          "orders_markings",
+          "orders_accept_return_order",
+          "orders_apply_transition",
+          "orders_check_confirmation_code",
+          "orders_cnc_set_details",
+          "orders_set_courier_delivery_range",
+          "orders_set_tracking_number",
+          "orders_generate_labels",
+          "orders_generate_labels_extended",
+          "delivery_create_announcement_3pl",
+          "delivery_cancel_announcement_3pl",
+          "delivery_create_parcel",
+          "delivery_sandbox_create_announcement",
+          "delivery_sandbox_track_announcement",
+          "delivery_custom_area_schedule",
+          "delivery_sandbox_cancel_parcel",
+          "delivery_check_confirmation_code",
+          "delivery_set_order_properties",
+          "delivery_set_order_real_address",
+          "delivery_tracking",
+          "delivery_prohibit_order_acceptance",
+          "delivery_get_sorting_center",
+          "delivery_add_sorting_center",
+          "delivery_add_areas_sandbox",
+          "delivery_add_tags_to_sorting_center",
+          "delivery_add_terminals_sandbox",
+          "delivery_update_terms",
+          "delivery_add_tariff_sandbox_v2",
+          "delivery_get_task",
+          "delivery_v1_cancel_announcement",
+          "delivery_v1_cancel_parcel",
+          "delivery_v1_change_parcel",
+          "delivery_v1_create_announcement",
+          "delivery_v1_get_announcement_event",
+          "delivery_v1_get_change_parcel_info",
+          "delivery_v1_get_parcel_info",
+          "delivery_v1_get_registered_parcel_id",
+          "delivery_create_sandbox_parcel_v2",
+          "delivery_change_parcel_result",
+          "delivery_change_parcels",
+          "promotion_get_bbip_forecasts_by_items_v1",
+          "promotion_get_bbip_suggests_by_items_v1",
+          "promotion_create_bbip_order_for_items_v1",
+          "promotion_get_dict_of_services_v1",
+          "promotion_get_services_by_items_v1",
+          "promotion_list_orders_by_user_v1",
+          "promotion_get_order_status_v1",
+          "cpa_get_call",
+          "cpa_chat_by_action_id",
+          "cpa_chats_by_time_v1",
+          "cpa_post_create_complaint",
+          "cpa_create_complaint_by_action_id",
+          "cpa_phones_info_from_chats",
+          "cpa_balance_info_v2",
+          "cpa_get_call_by_id_v2",
+          "cpa_get_calls_by_time_v2",
+          "cpa_chats_by_time_v2",
+          "cpa_balance_info_v3",
+          "cpa_target_get_bids",
+          "cpa_target_get_promotions_by_item_ids",
+          "cpa_target_remove_promotion",
+          "cpa_target_save_auto_bid",
+          "cpa_target_save_manual_bid",
+          "stock_get_stocks_info",
+          "stock_update_stocks",
+          "hierarchy_check_ah_user_v1",
+          "hierarchy_get_employees_v1",
+          "hierarchy_list_company_phones_v1",
+          "hierarchy_link_items_v1",
+          "hierarchy_list_items_by_employee_id_v1",
+          "reviews_get_ratings_info_v1",
+          "reviews_get_reviews_v1",
+          "reviews_create_review_answer_v1",
+          "reviews_remove_review_answer_v1",
+          "tariffs_get_tariff_info",
+          "cpa_auction_get_user_bids",
+          "cpa_auction_save_item_bids",
+          "trxpromo_get_commissions",
+          "trxpromo_apply",
+          "trxpromo_cancel",
+          "calltracking_get_call_by_id",
+          "calltracking_get_calls",
+          "calltracking_get_record_by_call_id",
+          "msg_discounts_open_api_available",
+          "msg_discounts_open_api_multi_create",
+          "msg_discounts_open_api_multi_confirm",
+          "msg_discounts_open_api_stats",
+          "msg_discounts_open_api_tariff_info",
+          "messenger_get_webhook_events",
+          "messenger_get_webhook_status",
+          "messenger_register_webhook"
+        ],
+        "perTool": {
+          "autoload_create_or_update_profile": "70d50298cf6551df1a8574aa8a24a048",
+          "autoload_create_or_update_profile_v2": "5970b50b1840e8e0f82c2ed692d4a3ce",
+          "autoload_get_ad_ids_by_avito_ids": "53c479178114c99a86074d0db6a13a39",
+          "autoload_get_autoload_items_info_v2": "107cdd338a27189f64086493f8d8707f",
+          "autoload_get_avito_ids_by_ad_ids": "68888a985e11ce8e516edcb6716c67f0",
+          "autoload_get_last_completed_report": "964c3dd3f62f547ca626a283fdd0f4cb",
+          "autoload_get_last_completed_report_v3": "e0e234319b92c3b5cb06005794d9b8a2",
+          "autoload_get_profile": "320d4fbc8b6b0dbda32da7894e127548",
+          "autoload_get_profile_v2": "6669381955e92f9350d104e35f5eb1f5",
+          "autoload_get_report_by_id_v2": "53591778889233d113e9a9ac972dbda2",
+          "autoload_get_report_by_id_v3": "961045fc4f4b170642611435f4783441",
+          "autoload_get_report_items_by_id": "72b2152a8880cd9ccf824740066dcc8b",
+          "autoload_get_report_items_fees_by_id": "4e21ab2984a8b68ec66a922de43a358a",
+          "autoload_get_reports_v2": "fbd5c68ff85b79b37d1ac79873478b3a",
+          "autoload_upload": "b2848eed2ac02ca7c67639c7d6328507",
+          "autoload_user_docs_node_fields": "a23c7cee2a0d818febc2b93a8d93a9a8",
+          "autoload_user_docs_tree": "10a6a1a29e149cebebd12825d609f544",
+          "calltracking_get_call_by_id": "55391b994581b306ade747c7bc37f821",
+          "calltracking_get_calls": "1dcc4f295dc4444f7bfb619fa42c6cbc",
+          "calltracking_get_record_by_call_id": "e83c0857cc4e0cb57e102cbc04ca3016",
+          "cpa_auction_get_user_bids": "1a9966e240234ee045f71bcfb92cb568",
+          "cpa_auction_save_item_bids": "77314611f9ea36532ed5606b1e8eda75",
+          "cpa_balance_info_v2": "d1e9daa006936c4fe841482ea2917d70",
+          "cpa_balance_info_v3": "fb0469c10545b9e6cb1a172d241c8380",
+          "cpa_chat_by_action_id": "99e84403097f099b70122b167259b875",
+          "cpa_chats_by_time_v1": "0429cca8d75739990c43a0a56a988ff4",
+          "cpa_chats_by_time_v2": "d1e4e0e53a27c7c2104df2c4d38501b6",
+          "cpa_create_complaint_by_action_id": "48969b90314a8ee12c3488533f5dca09",
+          "cpa_get_call": "a26ebde141d94a2a70d3d46505afa275",
+          "cpa_get_call_by_id_v2": "0abcb4b5ad27c2476fbc8940c47a291e",
+          "cpa_get_calls_by_time_v2": "10842afe477478a367789f4ed661aec7",
+          "cpa_phones_info_from_chats": "c609d484a762f00f6e905dc861a3f9d1",
+          "cpa_post_create_complaint": "b7e8d2399af3d1a87be0ef956dd664a6",
+          "cpa_target_get_bids": "d9aa749279e714a8e55f15c4913b8223",
+          "cpa_target_get_promotions_by_item_ids": "c6f6a174df8cb9f68c1941156af1b761",
+          "cpa_target_remove_promotion": "bde5689244f752d06e3d17bb59d1c283",
+          "cpa_target_save_auto_bid": "83f6f1250a9f99d00083e7ec058138f3",
+          "cpa_target_save_manual_bid": "32cf5d18ae8c3a368d89d8e9ca9b79ce",
+          "delivery_add_areas_sandbox": "aeed72ceabe070e8875e73f813f4010e",
+          "delivery_add_sorting_center": "38cd799c82d5dc4da2831fb853b0f792",
+          "delivery_add_tags_to_sorting_center": "92c3073ec89be754b77a636d3bef7373",
+          "delivery_add_tariff_sandbox_v2": "568bc12ed2bff32a71c26b0a00a4106d",
+          "delivery_add_terminals_sandbox": "b13028f6af63833399fdbd8cbeb880ad",
+          "delivery_cancel_announcement_3pl": "d8b6cb200cea44daa56f7fbd6baebd36",
+          "delivery_change_parcel_result": "74baed483006aae61101e878b60b1c60",
+          "delivery_change_parcels": "29d20d626e8ac4f16fff119efe177e68",
+          "delivery_check_confirmation_code": "99d54b6fcd3f2a5f3579024302ffc61f",
+          "delivery_create_announcement_3pl": "be029ab016c1032dde550844b85a912a",
+          "delivery_create_parcel": "d05744d410bb8bfbd70ced76e1000f10",
+          "delivery_create_sandbox_parcel_v2": "bc6fc63dc7f2bd9ba8635d5bbf363ed8",
+          "delivery_custom_area_schedule": "67fe8137a97909141ca0e25b4df297e8",
+          "delivery_get_sorting_center": "d35eb1c67bae96a5add7ecf7818a784e",
+          "delivery_get_task": "97a5d50ed53fe40e2801b754753fc780",
+          "delivery_prohibit_order_acceptance": "b3d6eaeb5266c7febcbdee81ee1e41f0",
+          "delivery_sandbox_cancel_parcel": "bc24f1f6768d96b30982ef9e2878eacd",
+          "delivery_sandbox_create_announcement": "fab0f97b2c15f7b7111f509bba293606",
+          "delivery_sandbox_track_announcement": "ebb73c4215ae5190b1fe43d13658a58a",
+          "delivery_set_order_properties": "a7c409c873ee4aed1515b852c6410545",
+          "delivery_set_order_real_address": "e7a9cf7dd6564f87f92c9f8f32075b0d",
+          "delivery_tracking": "de4a244552b09d5f1747fb3ea1159213",
+          "delivery_update_terms": "c8541d8371ce106739f7c759bc5a4c47",
+          "delivery_v1_cancel_announcement": "b8558aa2a6a324c8575a22cd267dbeb9",
+          "delivery_v1_cancel_parcel": "2ce0340c4acab4811cd57c006cdd086b",
+          "delivery_v1_change_parcel": "f301468aba0d49590a05b078b6c7a726",
+          "delivery_v1_create_announcement": "b49e0921d7e9c3ed2c02e9393c3bd747",
+          "delivery_v1_get_announcement_event": "5f1d79ac99ebe2d5b1ea8cf2c814ab60",
+          "delivery_v1_get_change_parcel_info": "7752c658f65218ed2fd5ea7e42bd53c9",
+          "delivery_v1_get_parcel_info": "c4a7f6c5e5cc4e4b98e406e12edf7c92",
+          "delivery_v1_get_registered_parcel_id": "9ca7eeb9bb6914ebe265aab6940307ae",
+          "hierarchy_check_ah_user_v1": "5ecef135a1755e2ad27e6f4a4367888d",
+          "hierarchy_get_employees_v1": "5bfec6db3fe41f2967579bf376feba8a",
+          "hierarchy_link_items_v1": "7d25cff7cfcb0a03db6ffe5d0e413966",
+          "hierarchy_list_company_phones_v1": "5e8db67a7edb6fc678bd564bb2f8d40b",
+          "hierarchy_list_items_by_employee_id_v1": "3094298c307f5100863ae8bae01ea9b7",
+          "items_apply_vas": "00eee164b49faa4401edd3a3bf2b2263",
+          "items_get_item_info": "7b07dbc0c184a212bd3516e0be7d80ac",
+          "items_get_items_info": "6377d5df2f61dbc3d53f4d023ed0c80d",
+          "items_post_account_spendings": "c888627dd0725a698b53355730f68665",
+          "items_post_calls_stats": "abb0194824ad93bb6e4705bc78de139f",
+          "items_post_item_analytics": "addd81cdd9270cafab3616f894318afc",
+          "items_post_item_stats_shallow": "b4b3852cefac254f2bcd31e242ccbf2c",
+          "items_post_vas_prices": "23134bb1cf172b1a315c57a170827955",
+          "items_put_item_vas": "be3c2e54c34f78ed36d9f34daabcce69",
+          "items_put_item_vas_package_v2": "f36b8b200b1ad3c058ecce893e988ac4",
+          "items_update_price": "43a52f7aa7790014a372802d5a4b3aa0",
+          "messenger_chat_read": "ce132549c7f668b7e2a59fe526006566",
+          "messenger_delete_message": "fc0df74283c31b3b57fbe6865d00f94c",
+          "messenger_get_chat_by_id_v2": "8da94f4cfab78e435b63325b7c7d1a75",
+          "messenger_get_chats_v2": "1a73fc8f78fb84407e1e2d7ec9723142",
+          "messenger_get_messages_v3": "72d8524714396e5bfd3079622335a2e9",
+          "messenger_get_subscriptions": "889bb64eb09a69de0d8ae900839b2735",
+          "messenger_get_voice_files": "2a43d25b5be064371971088c3317c453",
+          "messenger_get_webhook_events": "0f3999f09f6b3c71ba3feb871bcfa059",
+          "messenger_get_webhook_status": "4f0ae549c85f1b7f8ddb135ae114f08c",
+          "messenger_post_blacklist_v2": "5373162c5ecc85ad6fbaecf9a3e9bf8a",
+          "messenger_post_send_image_message": "533740a967e1b92646709749fb4c0522",
+          "messenger_post_send_message": "395764a71b2ce0a5afa1d38d04ea5118",
+          "messenger_post_webhook_unsubscribe": "2c5f403e4bf6145a139bf2fb38914396",
+          "messenger_post_webhook_v3": "4c733aab530d9e1ba50b16e7b69f9aa1",
+          "messenger_register_webhook": "64e73cfd31bd3f5ec2461ff3d79bfe44",
+          "meta_auth_status": "c99c926dfd444f1f6ca9735ba9d5b182",
+          "meta_cancel_action": "1c5ef48dfd27563d9e6d82565db77414",
+          "meta_capabilities": "5604b25ca3517461371b1b8cf16c2ccf",
+          "meta_confirm_action": "2df5526c01987fe8af3a64b9d03c14d9",
+          "meta_get_rate_limits": "d88823ef21da20aebf667483dc43150f",
+          "meta_health": "31d4c23e79ba098c70ca87f2a56aed84",
+          "meta_list_pending_actions": "f1ab64cfe5ecebcff2554762a9c22668",
+          "msg_discounts_open_api_available": "a0e68506646b8df3bf14f2989a1fa170",
+          "msg_discounts_open_api_multi_confirm": "bb9777111674319969c2e3393ee6721f",
+          "msg_discounts_open_api_multi_create": "d93d26ff4291e99d4beb6aedc1179c7e",
+          "msg_discounts_open_api_stats": "b3dc669aba27fb97f46b3fbf707b0ee9",
+          "msg_discounts_open_api_tariff_info": "f47527781be79324e2f4895ecd77df47",
+          "orders_accept_return_order": "4d688f683a1d5cb615ff4a192ec774cc",
+          "orders_apply_transition": "194bed99be2832d03cd7d39c2606d543",
+          "orders_check_confirmation_code": "e8a85b1ccfbf233ba50664bf611bcec1",
+          "orders_cnc_set_details": "6f1b6c44c094e2fa6f79ebaf1928b436",
+          "orders_download_label": "49a8b9f9ab20fc35c8f9f637c3131e1a",
+          "orders_generate_labels": "2fef69fc06dfcc9e32a932787c5cd321",
+          "orders_generate_labels_extended": "e15adf7b0f418fa9f0fb6dc125438e08",
+          "orders_get_courier_delivery_range": "b50434a37616081072b8056def8203f4",
+          "orders_get_orders": "34ec59e7c64d578f0a167cde52e301a6",
+          "orders_markings": "d15fceb939d0139f4d90c48a0d5c6a37",
+          "orders_set_courier_delivery_range": "247b0dde7724534db6960e77d7361e38",
+          "orders_set_tracking_number": "e809ba5b440ac35ebc918f6af74ef42d",
+          "promotion_create_bbip_order_for_items_v1": "7e7a23c7118ef5cad33c219fd509a108",
+          "promotion_get_bbip_forecasts_by_items_v1": "a73c40038a39452200c71cfa7c2f5d2a",
+          "promotion_get_bbip_suggests_by_items_v1": "bc35496f94717e293f3748416f23f2c2",
+          "promotion_get_dict_of_services_v1": "3a68551ba61d5f3b462f4a0ff610c2d2",
+          "promotion_get_order_status_v1": "887d53869660922fe1956d7b327910db",
+          "promotion_get_services_by_items_v1": "4a58b7aaaad188ac18dcfddd5529f05a",
+          "promotion_list_orders_by_user_v1": "eac94f7cfe29f402d0ebfc0b0632ab9a",
+          "reviews_create_review_answer_v1": "9530d34af3cf4fcea9e78e6a8b3b72f2",
+          "reviews_get_ratings_info_v1": "11d65cd81490e0ce6a2e034fee4a0174",
+          "reviews_get_reviews_v1": "f9addfcb1bb0b96fdf85a823eca40a31",
+          "reviews_remove_review_answer_v1": "054c34db21554b7356290592b696218f",
+          "stock_get_stocks_info": "6ed5e5194a1ac39473573cb171fb0e39",
+          "stock_update_stocks": "2dd3402e4fe493f99b3e09c598d119df",
+          "tariffs_get_tariff_info": "12eb2a8e3897a9c9083c57d65691ae0e",
+          "trxpromo_apply": "18b947a26ad3efc498d36880bd9f752d",
+          "trxpromo_cancel": "92b708f38a8ce0502f8ca708a39caed2",
+          "trxpromo_get_commissions": "03d9224054e4d72e0ccb75143fab8b22",
+          "user_get_user_balance": "05575dfb653e17f21c34a607f8e1aa6f",
+          "user_get_user_info_self": "926cdfe91096582287d2ba669ec3681a",
+          "user_post_operations_history": "34a54dd77db430e4f66f1d9a6758cf27"
+        }
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "05-prompts-list": {
+      "allow": null,
+      "body": {
+        "id": "05-prompts-list",
+        "jsonrpc": "2.0",
+        "result": {
+          "prompts": [
+            {
+              "arguments": [
+                {
+                  "description": "Spendings period in days (defaults to 7). / Период расходов в днях (по умолчанию 7).",
+                  "name": "days",
+                  "required": false
+                }
+              ],
+              "description": "Ready-made agent prompt: check the balance, active listings and spendings for a period. All calls are read-only — safe to run on a production account without confirmations. Готовый промпт для агента: проверить баланс, активные объявления и расходы за период. Все вызовы read-only — безопасно запускать на боевом аккаунте без подтверждений.",
+              "name": "avito_daily_overview",
+              "title": "Avito: Daily Overview / ежедневная сводка"
+            },
+            {
+              "arguments": [
+                {
+                  "description": "How many chats to look at (defaults to 20). / Сколько чатов смотреть (по умолчанию 20).",
+                  "name": "limit",
+                  "required": false
+                }
+              ],
+              "description": "Find unread chats and show the latest messages. Read-only — it does not send, only reads. The decision to mark as read or reply is left to the human. Найти непрочитанные чаты и показать последние сообщения. Read-only — не отправляет, только читает. Решение о пометке прочитанным или ответе оставляется человеку.",
+              "name": "avito_check_unread_chats",
+              "title": "Avito: Unread Chats / непрочитанные чаты"
+            },
+            {
+              "description": "Compose an answer to the question \"what can I do with this server right now\". Uses MCP resources (state/config + manifest), does not hit the Avito API. Сформировать ответ на вопрос «что я могу сейчас сделать с этим сервером». Использует MCP-resources (state/config + manifest), не дёргает Avito API.",
+              "name": "avito_safety_report",
+              "title": "Avito: Safety Mode Report / отчёт о safety-режиме"
+            },
+            {
+              "arguments": [
+                {
+                  "description": "Tool name, e.g. \"items_update_price\" or \"messenger_get_chats_v2\". / Имя tool, например \"items_update_price\" или \"messenger_get_chats_v2\".",
+                  "name": "tool_name",
+                  "required": true
+                }
+              ],
+              "description": "Give a detailed description of a single tool by name. Uses the manifest + swagger from the corresponding domain. Дать развёрнутое описание одного tool по имени. Использует manifest + swagger из соответствующего домена.",
+              "name": "avito_explain_tool",
+              "title": "Avito: Explain a Tool / объяснить tool"
+            },
+            {
+              "arguments": [
+                {
+                  "description": "Avito listing ID to promote. / ID объявления Avito для продвижения.",
+                  "name": "item_id",
+                  "required": true
+                }
+              ],
+              "description": "Safely prepare to promote a listing: check the balance, review suggests, look up prices. Does NOT buy VAS — leaves the final decision to the human. Безопасно подготовить продвижение объявления: проверить баланс, посмотреть suggests, узнать цены. НЕ покупает VAS — оставляет финальное решение человеку.",
+              "name": "avito_promote_item",
+              "title": "Avito: Prepare to Buy VAS / подготовка к покупке VAS"
+            }
+          ]
+        }
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "06-resources-list": {
+      "allow": null,
+      "body": {
+        "id": "06-resources-list",
+        "jsonrpc": "2.0",
+        "result": {
+          "resources": [
+            {
+              "description": "Markdown documentation for AVITO_MCP_MODE, AVITO_MCP_CONFIRMATION_MODE, AVITO_MCP_CONFIRMATION_SECRET and the upload guard. The same file as docs/safety.md.",
+              "mimeType": "text/markdown",
+              "name": "safety-docs",
+              "title": "Safety modes & confirmation guide",
+              "uri": "avito://docs/safety"
+            },
+            {
+              "description": "JSON catalogue of every registered MCP tool with its risk/domain/annotations. The same file as dist/manifest.json — generated via npm run generate:manifest.",
+              "mimeType": "application/json",
+              "name": "tools-manifest",
+              "title": "Tools manifest (live tool registry)",
+              "uri": "avito://manifest"
+            },
+            {
+              "description": "Snapshot of the effective config (mode, allow/deny, confirmation, upload), without secrets. Use it to quickly understand which mode the server is running in.",
+              "mimeType": "application/json",
+              "name": "config-snapshot",
+              "title": "Active server configuration",
+              "uri": "avito://state/config"
+            },
+            {
+              "description": "Current X-RateLimit-Limit / Remaining / Reset per logical Avito API domain. Empty if no request has been made yet.",
+              "mimeType": "application/json",
+              "name": "rate-limits",
+              "title": "Latest rate-limits snapshot",
+              "uri": "avito://state/rate-limits"
+            },
+            {
+              "description": "Pending actions currently awaiting confirmation. Subscribable: a client can subscribe via resources/subscribe and receive notifications/resources/updated on every create/confirm/cancel/expire.",
+              "mimeType": "application/json",
+              "name": "pending-actions",
+              "title": "Pending actions (live)",
+              "uri": "avito://state/pending-actions"
+            },
+            {
+              "description": "Recently received Avito messenger webhook events (new chat messages). Subscribable: resources/subscribe → notifications/resources/updated on each delivery. Requires the webhook receiver to be enabled (AVITO_MCP_WEBHOOK_SECRET); otherwise reports enabled:false. For filtered/paged access use the messenger_get_webhook_events tool.",
+              "mimeType": "application/json",
+              "name": "webhook-events",
+              "title": "Avito webhook events (live)",
+              "uri": "avito://webhook/events"
+            },
+            {
+              "description": "Raw Avito swagger account-hierarchy.json",
+              "mimeType": "application/json",
+              "name": "account-hierarchy",
+              "title": "account-hierarchy",
+              "uri": "avito://swaggers/account-hierarchy"
+            },
+            {
+              "description": "Raw Avito swagger authorization.json",
+              "mimeType": "application/json",
+              "name": "authorization",
+              "title": "authorization",
+              "uri": "avito://swaggers/authorization"
+            },
+            {
+              "description": "Raw Avito swagger autoload.json",
+              "mimeType": "application/json",
+              "name": "autoload",
+              "title": "autoload",
+              "uri": "avito://swaggers/autoload"
+            },
+            {
+              "description": "Raw Avito swagger calltracking.json",
+              "mimeType": "application/json",
+              "name": "calltracking",
+              "title": "calltracking",
+              "uri": "avito://swaggers/calltracking"
+            },
+            {
+              "description": "Raw Avito swagger cpa-auction.json",
+              "mimeType": "application/json",
+              "name": "cpa-auction",
+              "title": "cpa-auction",
+              "uri": "avito://swaggers/cpa-auction"
+            },
+            {
+              "description": "Raw Avito swagger cpa-target-action.json",
+              "mimeType": "application/json",
+              "name": "cpa-target-action",
+              "title": "cpa-target-action",
+              "uri": "avito://swaggers/cpa-target-action"
+            },
+            {
+              "description": "Raw Avito swagger cpa.json",
+              "mimeType": "application/json",
+              "name": "cpa",
+              "title": "cpa",
+              "uri": "avito://swaggers/cpa"
+            },
+            {
+              "description": "Raw Avito swagger delivery.json",
+              "mimeType": "application/json",
+              "name": "delivery",
+              "title": "delivery",
+              "uri": "avito://swaggers/delivery"
+            },
+            {
+              "description": "Raw Avito swagger items.json",
+              "mimeType": "application/json",
+              "name": "items",
+              "title": "items",
+              "uri": "avito://swaggers/items"
+            },
+            {
+              "description": "Raw Avito swagger messenger-discounts.json",
+              "mimeType": "application/json",
+              "name": "messenger-discounts",
+              "title": "messenger-discounts",
+              "uri": "avito://swaggers/messenger-discounts"
+            },
+            {
+              "description": "Raw Avito swagger messenger.json",
+              "mimeType": "application/json",
+              "name": "messenger",
+              "title": "messenger",
+              "uri": "avito://swaggers/messenger"
+            },
+            {
+              "description": "Raw Avito swagger orders.json",
+              "mimeType": "application/json",
+              "name": "orders",
+              "title": "orders",
+              "uri": "avito://swaggers/orders"
+            },
+            {
+              "description": "Raw Avito swagger promotion.json",
+              "mimeType": "application/json",
+              "name": "promotion",
+              "title": "promotion",
+              "uri": "avito://swaggers/promotion"
+            },
+            {
+              "description": "Raw Avito swagger reviews.json",
+              "mimeType": "application/json",
+              "name": "reviews",
+              "title": "reviews",
+              "uri": "avito://swaggers/reviews"
+            },
+            {
+              "description": "Raw Avito swagger stock-management.json",
+              "mimeType": "application/json",
+              "name": "stock-management",
+              "title": "stock-management",
+              "uri": "avito://swaggers/stock-management"
+            },
+            {
+              "description": "Raw Avito swagger tariffs.json",
+              "mimeType": "application/json",
+              "name": "tariffs",
+              "title": "tariffs",
+              "uri": "avito://swaggers/tariffs"
+            },
+            {
+              "description": "Raw Avito swagger trxpromo.json",
+              "mimeType": "application/json",
+              "name": "trxpromo",
+              "title": "trxpromo",
+              "uri": "avito://swaggers/trxpromo"
+            },
+            {
+              "description": "Raw Avito swagger user.json",
+              "mimeType": "application/json",
+              "name": "user",
+              "title": "user",
+              "uri": "avito://swaggers/user"
+            }
+          ]
+        }
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "07-resources-templates-list": {
+      "allow": null,
+      "body": {
+        "id": "07-resources-templates-list",
+        "jsonrpc": "2.0",
+        "result": {
+          "resourceTemplates": [
+            {
+              "description": "Raw swagger files from swaggers/. One resource per file. Use it to give an agent the full context of an endpoint without MCP tools.",
+              "mimeType": "application/json",
+              "name": "swagger-file",
+              "title": "Avito swagger (raw OpenAPI)",
+              "uriTemplate": "avito://swaggers/{slug}"
+            }
+          ]
+        }
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "08-resources-read-existing": {
+      "allow": null,
+      "body": {
+        "contents": [
+          {
+            "mimeType": "text/markdown",
+            "text": {
+              "firstLine": "# Safety configuration / Безопасные конфигурации",
+              "length": 11654,
+              "sha256": "f2614c170ef55ac7cde5ff910316fcf3"
+            },
+            "uri": "avito://docs/safety"
+          }
+        ],
+        "envelope": {
+          "id": "08-resources-read-existing",
+          "jsonrpc": "2.0",
+          "result": {
+            "contentCount": 1
+          }
+        }
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "09-resources-read-manifest": {
+      "allow": null,
+      "body": {
+        "contents": [
+          {
+            "mimeType": "application/json",
+            "text": {
+              "firstLine": "{",
+              "length": 380741,
+              "sha256": "32421f165712158094901c88fbad068b"
+            },
+            "uri": "avito://manifest"
+          }
+        ],
+        "envelope": {
+          "id": "09-resources-read-manifest",
+          "jsonrpc": "2.0",
+          "result": {
+            "contentCount": 1
+          }
+        }
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "10-resources-read-config": {
+      "allow": null,
+      "body": {
+        "contents": [
+          {
+            "mimeType": "application/json",
+            "text": {
+              "config": {
+                "allowTools": [],
+                "allowedUploadDirs": null,
+                "approvalMode": "self",
+                "baseUrl": "https://api.bench.invalid",
+                "clientId": "[redacted]",
+                "clientSecret": "[redacted]",
+                "confirmationMode": "money_public",
+                "confirmationSecret": null,
+                "confirmationTtlSec": 900,
+                "cpaSource": "avito-mcp",
+                "denyTools": [],
+                "dryRunDefault": false,
+                "exposeAuthTools": false,
+                "http": {
+                  "allowNoAuth": true,
+                  "allowedHosts": [],
+                  "allowedOrigins": [],
+                  "auth": "none",
+                  "authTokens": null,
+                  "host": "127.0.0.1",
+                  "maxSessions": 100,
+                  "oauthOwnerPassword": null,
+                  "oauthStoreFile": null,
+                  "oauthTokenTtlSec": 3600,
+                  "port": "<port>",
+                  "publicUrl": "http://legacy-wire-bench.invalid",
+                  "sessionIdleSec": 1800,
+                  "transport": "http"
+                },
+                "idempotencyTtlSec": 3600,
+                "logLevel": "fatal",
+                "maxBinaryMb": 20,
+                "maxUploadMb": 15,
+                "mode": "full_access",
+                "profileId": 12345678,
+                "runtimeStateDir": "<sandbox>/runtime",
+                "tokenFile": "[redacted]",
+                "tokenLockTimeoutMs": 30000,
+                "webhook": {
+                  "bufferSize": 100,
+                  "enabled": false,
+                  "logFile": null,
+                  "path": "/avito/webhook",
+                  "publicUrl": "http://legacy-wire-bench.invalid",
+                  "secret": null
+                }
+              },
+              "name": "avito-mcp",
+              "version": "1.3.3"
+            },
+            "uri": "avito://state/config"
+          }
+        ],
+        "envelope": {
+          "id": "10-resources-read-config",
+          "jsonrpc": "2.0"
+        }
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "11-resources-read-unregistered": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32602,
+          "message": "MCP error -32602: Resource avito://nope not found"
+        },
+        "id": "11-resources-read-unregistered",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "12-resources-read-traversal": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32602,
+          "message": "MCP error -32602: Resource avito://swaggers/etc/passwd not found"
+        },
+        "id": "12-resources-read-traversal",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "13-resources-subscribe": {
+      "allow": null,
+      "body": {
+        "id": "13-resources-subscribe",
+        "jsonrpc": "2.0",
+        "result": {}
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "14-resources-unsubscribe": {
+      "allow": null,
+      "body": {
+        "id": "14-resources-unsubscribe",
+        "jsonrpc": "2.0",
+        "result": {}
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "15-tools-call-ok": {
+      "allow": null,
+      "body": {
+        "envelope": {
+          "id": "15-tools-call-ok",
+          "jsonrpc": "2.0",
+          "result": {
+            "isError": false
+          }
+        },
+        "payload": {
+          "account": {
+            "namespace": "ea9ee537c091e2c8",
+            "profileId": "12345678"
+          },
+          "allowToolsCount": 0,
+          "approvalMode": "self",
+          "confirmationMode": "money_public",
+          "denyToolsCount": 0,
+          "dryRunDefault": false,
+          "features": {
+            "confirmation": true,
+            "dryRun": true,
+            "fileUploads": false,
+            "hardConfirmation": false,
+            "idempotency": true,
+            "persistentState": true,
+            "reusableHttpBroker": true,
+            "sensitiveAuthTools": false,
+            "sharedRateLimiter": true
+          },
+          "idempotencyTtlSec": 3600,
+          "mode": "full_access",
+          "moneyUnits": {
+            "bbip": "kopecks",
+            "default": "documented-per-field",
+            "wallet": "rubles"
+          },
+          "name": "avito-mcp",
+          "schemaHash": "9c52d4c3f39300d267fba9bdcfb9a7aef9cb9664d325484f2a3967327f5f505f",
+          "version": "1.3.3"
+        },
+        "toolCount": 148,
+        "toolsSha256": "032de8cdc4d49e989d682d925640f3ce"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "16-tools-call-unknown": {
+      "allow": null,
+      "body": {
+        "id": "16-tools-call-unknown",
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "MCP error -32602: Tool no_such_tool not found",
+              "type": "text"
+            }
+          ],
+          "isError": true
+        }
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "17-tools-call-invalid-arguments": {
+      "allow": null,
+      "body": {
+        "id": "17-tools-call-invalid-arguments",
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "MCP error -32602: Input validation error: Invalid arguments for tool meta_confirm_action: [\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"confirmation_id\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]",
+              "type": "text"
+            }
+          ],
+          "isError": true
+        }
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "18-prompts-get-existing": {
+      "allow": null,
+      "body": {
+        "id": "18-prompts-get-existing",
+        "jsonrpc": "2.0",
+        "result": {
+          "description": "Avito daily overview for the last 7 days / Ежедневная сводка Avito за последние 7 дней",
+          "messages": [
+            {
+              "content": {
+                "text": "Prepare a daily overview of my Avito account for the last 7 days.\n\nUse these tools (all read-only, no confirmation required):\n  1. user_get_user_balance — current wallet balance (real + bonus).\n  2. items_get_items_info { status: \"active\", per_page: 50 } — active listings.\n  3. items_post_account_spendings {\n       dateFrom: \"2026-07-25\",\n       dateTo:   \"2026-08-01\",\n       spendingTypes: [\"all\"],\n       grouping: \"day\"\n     }\n\nProduce a summary: balance, number of active listings (by status), total spendings for the period broken down by type. No long tables.\n\n— Русский / Russian —\n\nПодготовь ежедневную сводку моего Avito-аккаунта за последние 7 дней.\n\nИспользуй эти tools (все read-only, не требуют confirmation):\n  1. user_get_user_balance — текущий баланс кошелька (real + bonus).\n  2. items_get_items_info { status: \"active\", per_page: 50 } — активные объявления.\n  3. items_post_account_spendings {\n       dateFrom: \"2026-07-25\",\n       dateTo:   \"2026-08-01\",\n       spendingTypes: [\"all\"],\n       grouping: \"day\"\n     }\n\nСформируй итог: баланс, количество активных объявлений (по статусам), сумма расходов за период с разбивкой по типам. Без длинных таблиц.",
+                "type": "text"
+              },
+              "role": "user"
+            }
+          ]
+        }
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "19-prompts-get-unknown": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32602,
+          "message": "MCP error -32602: Prompt no_such_prompt not found"
+        },
+        "id": "19-prompts-get-unknown",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "20-logging-set-level": {
+      "allow": null,
+      "body": {
+        "id": "20-logging-set-level",
+        "jsonrpc": "2.0",
+        "result": {}
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "21-unknown-method": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32601,
+          "message": "Method not found"
+        },
+        "id": "21-unknown-method",
+        "jsonrpc": "2.0"
+      },
+      "contentType": "sse",
+      "sessionHeader": "<session-id>",
+      "status": 200
+    },
+    "22-http-session-missing": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32000,
+          "message": "Bad Request: Mcp-Session-Id header is required"
+        },
+        "id": null,
+        "jsonrpc": "2.0"
+      },
+      "contentType": "json",
+      "sessionHeader": null,
+      "status": 400
+    },
+    "23-http-session-unknown": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32001,
+          "message": "Session not found"
+        },
+        "id": null,
+        "jsonrpc": "2.0"
+      },
+      "contentType": "json",
+      "sessionHeader": null,
+      "status": 404
+    },
+    "24-http-get": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32000,
+          "message": "Bad Request: Mcp-Session-Id header is required"
+        },
+        "id": null,
+        "jsonrpc": "2.0"
+      },
+      "contentType": "json",
+      "sessionHeader": null,
+      "status": 400
+    },
+    "25-http-delete": {
+      "allow": null,
+      "body": {
+        "error": {
+          "code": -32000,
+          "message": "Bad Request: Mcp-Session-Id header is required"
+        },
+        "id": null,
+        "jsonrpc": "2.0"
+      },
+      "contentType": "json",
+      "sessionHeader": null,
+      "status": 400
+    }
+  }
+}
