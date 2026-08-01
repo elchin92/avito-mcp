@@ -322,6 +322,60 @@ describe('AvitoOAuthProvider — DCR', () => {
     ).toThrow(/loopback/i);
   });
 
+  // M5.4 — the field is a client MUST, so registering without it stays fine.
+  // What the AS owes is to honour it when present.
+  it('honours application_type without requiring it', () => {
+    const provider = newProvider();
+    const clientStore = synchronousClientsStore(provider);
+    const register = clientStore.registerClient.bind(clientStore);
+    const base = {
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      scope: 'avito:mcp',
+    };
+    const reg = (extra: Record<string, unknown>) =>
+      register({ ...base, ...extra } as Omit<
+        OAuthClientInformationFull,
+        'client_id' | 'client_id_issued_at'
+      >);
+
+    // Omitted: accepted, and the historical confidential default is untouched.
+    const unspecified = reg({ redirect_uris: ['https://app.example.com/cb'] });
+    expect(unspecified.token_endpoint_auth_method).toBe('client_secret_post');
+    expect(unspecified.client_secret).toBeTruthy();
+
+    // native: a public client by construction — it ships to end-user devices, so
+    // a secret minted for it is a secret that leaks.
+    const native = reg({
+      redirect_uris: ['http://127.0.0.1:8765/cb'],
+      application_type: 'native',
+    });
+    expect(native.token_endpoint_auth_method).toBe('none');
+    expect(native.client_secret).toBeUndefined();
+    expect(() =>
+      reg({
+        redirect_uris: ['http://127.0.0.1:8765/cb'],
+        application_type: 'native',
+        token_endpoint_auth_method: 'client_secret_post',
+      }),
+    ).toThrow(/public client/i);
+
+    // web: reachable over the network, so a loopback callback resolves on
+    // whatever machine the browser is on — not on the client that registered.
+    const web = reg({
+      redirect_uris: ['https://app.example.com/cb'],
+      application_type: 'web',
+    });
+    expect(web.client_secret).toBeTruthy();
+    expect(() =>
+      reg({ redirect_uris: ['http://127.0.0.1:8765/cb'], application_type: 'web' }),
+    ).toThrow(/web/i);
+
+    expect(() =>
+      reg({ redirect_uris: ['https://app.example.com/cb'], application_type: 'service' }),
+    ).toThrow(/application_type/i);
+  });
+
   it('evicts the oldest inactive DCR client instead of wedging at capacity', async () => {
     const { OAuthStore, OAUTH_MAX_CLIENTS } = await import('../src/http/oauth/store.js');
     const store = new OAuthStore();
@@ -464,13 +518,87 @@ describe('AvitoOAuthProvider — authorization boundary', () => {
     expect(html).toContain('https://client.example/callback');
     expect(html).toContain('https://mcp.example.com/mcp');
     expect(html).toContain(client.client_id);
-    expect(html).toContain('Dynamically registered client');
+    // M5.4: the MUST is the redirect HOSTNAME, on its own row — `client_name` is
+    // attacker-supplied and the full URI can push the host out of view.
+    expect(html).toContain('<dt>Redirect host</dt><dd><strong>client.example</strong></dd>');
+    expect(html).toContain('Test Client');
+    // The registration line is derived from the record, not a hardcoded string.
+    expect(html).toContain('Self-registered public client, application_type not declared');
     expect(html).toContain('name="consent_token"');
     expect(html).not.toContain('name="redirect_uri"');
     expect(html).not.toContain('name="code_challenge"');
     expect(cap.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
     expect(cap.headers.get('x-frame-options')).toBe('DENY');
     expect(cap.headers.get('referrer-policy')).toBe('no-referrer');
+  });
+
+  // M5.4 — the SHOULD that goes with the MUST above. A loopback callback hands
+  // the code to whatever is listening on that port on the approver's own
+  // machine, which nothing on this page can identify.
+  it('warns the owner when the callback resolves on their own machine', async () => {
+    const provider = newProvider();
+    const client = registerClient(provider, 'http://127.0.0.1:8765/cb');
+    const cap = fakeRes();
+    await provider.authorize(
+      client,
+      {
+        redirectUri: client.redirect_uris[0]!,
+        codeChallenge: s256(randomBytes(32).toString('base64url')),
+        scopes: ['avito:mcp'],
+        resource: RESOURCE,
+      },
+      cap.res,
+    );
+    const html = String(cap.bodies[0]);
+    expect(html).toContain('<dt>Redirect host</dt><dd><strong>127.0.0.1</strong></dd>');
+    expect(html).toContain('a program running on the machine you are approving from');
+
+    const remote = newProvider();
+    const remoteClient = registerClient(remote, 'https://app.example.com/cb');
+    const remoteCap = fakeRes();
+    await remote.authorize(
+      remoteClient,
+      {
+        redirectUri: remoteClient.redirect_uris[0]!,
+        codeChallenge: s256(randomBytes(32).toString('base64url')),
+        scopes: ['avito:mcp'],
+        resource: RESOURCE,
+      },
+      remoteCap.res,
+    );
+    expect(String(remoteCap.bodies[0])).not.toContain('machine you are approving from');
+  });
+
+  // M5.4 — consent is per client_id and is never carried over. Approving one
+  // client must not make the next one cheaper to approve, because "the owner
+  // already said yes once" is not a statement about any particular client.
+  it('asks for the owner password again for a second client', async () => {
+    const provider = newProvider();
+    const first = registerClient(provider, 'https://first.example/callback');
+    const second = registerClient(provider, 'https://second.example/callback');
+    const verifier = randomBytes(32).toString('base64url');
+
+    const approved = fakeRes();
+    await provider.approveConsent(
+      {
+        body: await approveBody(provider, first, verifier, OWNER_PASSWORD),
+      } as import('express').Request,
+      approved.res,
+    );
+    expect(approved.redirects).toHaveLength(1);
+
+    // Second client, same session, no password: nothing is minted.
+    const denied = fakeRes();
+    await provider.approveConsent(
+      {
+        body: await approveBody(provider, second, verifier, 'not-the-owner-password'),
+      } as import('express').Request,
+      denied.res,
+    );
+    expect(denied.redirects).toHaveLength(0);
+    expect(denied.statusCodes).toContain(401);
+    // And the first client's consent artefact cannot be reused for the second.
+    expect(String(denied.bodies.at(-1))).toContain(second.client_id);
   });
 
   it('allows a consent transaction to mint at most one authorization code', async () => {
@@ -930,6 +1058,65 @@ describe('OAuthStore — durable serialized shutdown', () => {
       await expect(
         second.exchangeRefreshToken(client, tokens.refresh_token!, undefined, RESOURCE),
       ).rejects.toThrow();
+    } finally {
+      await first.close().catch(() => undefined);
+      await second?.close().catch(() => undefined);
+      await removeSandbox(root);
+    }
+  });
+
+  // M5.4 — persisted credentials are keyed by the issuer that minted them.
+  // Changing publicUrl changes the issuer identifier, which by the authorization
+  // spec means clients are now facing a DIFFERENT authorization server; carrying
+  // its client registrations and tokens across is exactly what must not happen.
+  it('drops clients and tokens when the issuer identifier changes', async () => {
+    const root = await createSandbox('oauth-issuer');
+    const storeFile = join(root, 'oauth.json');
+    const first = newProvider({ oauthStoreFile: storeFile });
+    let moved: Provider | undefined;
+    let back: Provider | undefined;
+    try {
+      const client = registerClient(first);
+      const tokens = await issueGrant(first, client);
+      await first.close();
+
+      // Same file, new public URL: nothing from the old server survives.
+      moved = newProvider({ oauthStoreFile: storeFile, publicUrl: 'https://moved.example.com' });
+      expect(synchronousClientsStore(moved).getClient(client.client_id)).toBeUndefined();
+      await expect(moved.verifyAccessToken(tokens.access_token)).rejects.toThrow();
+      await moved.close();
+
+      // …and moving back does not resurrect them either: the relocation rewrote
+      // the snapshot under the new issuer.
+      back = newProvider({ oauthStoreFile: storeFile });
+      expect(synchronousClientsStore(back).getClient(client.client_id)).toBeUndefined();
+    } finally {
+      await first.close().catch(() => undefined);
+      await moved?.close().catch(() => undefined);
+      await back?.close().catch(() => undefined);
+      await removeSandbox(root);
+    }
+  });
+
+  it('keeps credentials from a snapshot written before the issuer was recorded', async () => {
+    // Nothing recorded the issuer then, so there is nothing to disagree with.
+    // Invalidating on upgrade would log every existing client out for no gain.
+    const root = await createSandbox('oauth-issuer-legacy');
+    const storeFile = join(root, 'oauth.json');
+    const first = newProvider({ oauthStoreFile: storeFile });
+    let second: Provider | undefined;
+    try {
+      const client = registerClient(first);
+      await first.close();
+      const snapshot = JSON.parse(readFileSync(storeFile, 'utf8')) as Record<string, unknown>;
+      expect(snapshot.issuer).toBe('https://mcp.example.com/');
+      delete snapshot.issuer;
+      writeFileSync(storeFile, JSON.stringify(snapshot), 'utf8');
+
+      second = newProvider({ oauthStoreFile: storeFile });
+      expect(synchronousClientsStore(second).getClient(client.client_id)?.client_id).toBe(
+        client.client_id,
+      );
     } finally {
       await first.close().catch(() => undefined);
       await second?.close().catch(() => undefined);

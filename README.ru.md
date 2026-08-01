@@ -428,7 +428,7 @@ AVITO_MCP_OAUTH_OWNER_PASSWORD=…    # REQUIRED, случайный, миним
 | `AVITO_MCP_TRANSPORT`             | `stdio`     | `stdio` \| `http` \| `both` (CLI-флаг `--http`)                                                                     |
 | `AVITO_MCP_HTTP_HOST`             | `127.0.0.1` | Bind-адрес — держите loopback за прокси                                                                             |
 | `AVITO_MCP_HTTP_PORT`             | `3000`      | Порт прослушивания                                                                                                  |
-| `AVITO_MCP_HTTP_PUBLIC_URL`       | —           | Публичный TLS-базис для построения OAuth issuer / resource metadata. **Без завершающего слэша.**                    |
+| `AVITO_MCP_HTTP_PUBLIC_URL`       | —           | Публичный TLS-базис для построения OAuth issuer / resource metadata. **Без завершающего слэша.** В режиме `oauth` обязателен `https` (кроме loopback). Смена значения меняет OAuth **issuer identifier** — это другой authorization server: зарегистрированные клиенты и выданные токены сбрасываются, все клиенты регистрируются заново |
 | `AVITO_MCP_HTTP_AUTH`             | `oauth`     | `oauth` \| `bearer` \| `none`                                                                                       |
 | `AVITO_MCP_OAUTH_OWNER_PASSWORD`  | —           | **Обязательно в `oauth`, минимум 32 байта.** Закрывает `/authorize` — единственный секрет, выпускающий токен.       |
 | `AVITO_MCP_OAUTH_TOKEN_TTL_SEC`   | `3600`      | Время жизни выпущенного bearer-токена                                                                               |

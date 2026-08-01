@@ -104,7 +104,7 @@ const MAX_DCR_BYTES = 32 * 1024;
  * cannot establish that. Native clients use the loopback redirect instead, which
  * this deployment has supported since v0.9.1.
  */
-function assertRegistrableRedirectUri(uri: string): URL {
+function assertRegistrableRedirectUri(uri: string, applicationType?: ApplicationType): URL {
   let parsed: URL;
   try {
     parsed = new URL(uri);
@@ -114,11 +114,46 @@ function assertRegistrableRedirectUri(uri: string): URL {
   if (parsed.hash) {
     throw new InvalidClientMetadataError(`redirect_uri must not contain a fragment: ${uri}`);
   }
-  if (parsed.protocol === 'https:') return parsed;
-  if (parsed.protocol === 'http:' && isLoopbackHostname(parsed.hostname)) return parsed;
+  const loopback = isLoopbackHostname(parsed.hostname);
+  if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && loopback)) {
+    // A `web` client, by definition, runs on a server the user reaches over the
+    // network; a loopback callback there means the redirect resolves on whatever
+    // machine the browser happens to be, which is not the client that registered.
+    if (applicationType === 'web' && (loopback || parsed.protocol !== 'https:')) {
+      throw new InvalidClientMetadataError(
+        `application_type "web" requires an https redirect_uri on a non-loopback host: ${uri}`,
+      );
+    }
+    return parsed;
+  }
   throw new InvalidClientMetadataError(
     `redirect_uri must use https, or http on a loopback address (localhost / 127.0.0.1 / [::1]): ${uri}`,
   );
+}
+
+/**
+ * M5.4 — `application_type`, read rather than ignored.
+ *
+ * The MUST in the spec is addressed to clients, so registration WITHOUT the
+ * field stays acceptable and is the common case. What the AS owes is to honour
+ * it when it is there, because it changes two things that matter: a `web` client
+ * cannot have a loopback callback (see above), and a `native` client is a public
+ * client by construction — it ships to end-user devices and cannot hold a
+ * secret, so handing it a `client_secret` would manufacture a credential that is
+ * guaranteed to leak while making it look like a confidential client to
+ * everything downstream.
+ */
+type ApplicationType = 'native' | 'web';
+
+function readApplicationType(
+  client: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>,
+): ApplicationType | undefined {
+  const value = (client as { application_type?: unknown }).application_type;
+  if (value === undefined) return undefined;
+  if (value !== 'native' && value !== 'web') {
+    throw new InvalidClientMetadataError('application_type must be "native" or "web"');
+  }
+  return value;
 }
 
 function assertStringLimit(label: string, value: string | undefined, max: number): void {
@@ -131,10 +166,20 @@ function assertStringLimit(label: string, value: string | undefined, max: number
 function sanitizeClientMetadata(
   client: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>,
 ): Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'> {
-  const tokenAuthMethod = client.token_endpoint_auth_method ?? 'client_secret_post';
+  const applicationType = readApplicationType(client);
+  // A native client defaults to `none` instead of `client_secret_post`: it runs
+  // on an end-user device, so a secret minted for it is a secret that leaks.
+  const tokenAuthMethod =
+    client.token_endpoint_auth_method ??
+    (applicationType === 'native' ? 'none' : 'client_secret_post');
   if (tokenAuthMethod !== 'client_secret_post' && tokenAuthMethod !== 'none') {
     throw new InvalidClientMetadataError(
       'token_endpoint_auth_method must be client_secret_post or none',
+    );
+  }
+  if (applicationType === 'native' && tokenAuthMethod !== 'none') {
+    throw new InvalidClientMetadataError(
+      'application_type "native" is a public client: token_endpoint_auth_method must be none',
     );
   }
   let encoded: string;
@@ -151,7 +196,7 @@ function sanitizeClientMetadata(
   }
   for (const uri of client.redirect_uris) {
     assertStringLimit('redirect_uri', uri, 2048);
-    assertRegistrableRedirectUri(uri);
+    assertRegistrableRedirectUri(uri, applicationType);
   }
   assertStringLimit('client_name', client.client_name, 128);
   assertStringLimit('client_uri', client.client_uri, 2048);
@@ -195,6 +240,32 @@ function sanitizeClientMetadata(
 }
 
 /**
+ * M5.4 — the one line on the consent screen the spec makes mandatory.
+ *
+ * Registration is open, so `client_name` is attacker-supplied text and proves
+ * nothing; the hostname of the redirect URI is the only field on this page that
+ * says where the authorization code will actually go. It therefore gets its own
+ * row, in its own right, and is not folded into the full URI where a long path
+ * can push it out of view.
+ */
+function describeRegistration(client: {
+  application_type?: unknown;
+  client_secret?: string;
+  client_id_issued_at?: number;
+}): string {
+  const kind =
+    client.application_type === 'native' || client.application_type === 'web'
+      ? `application_type ${client.application_type}`
+      : 'application_type not declared';
+  const confidentiality = client.client_secret ? 'confidential' : 'public';
+  const issued =
+    typeof client.client_id_issued_at === 'number' && client.client_id_issued_at > 0
+      ? new Date(client.client_id_issued_at * 1000).toISOString().slice(0, 10)
+      : 'unknown date';
+  return `Self-registered ${confidentiality} client, ${kind}, registered ${issued}`;
+}
+
+/**
  * Renders the self-submitting consent/login page. A single password field plus
  * hidden inputs carry the authorization request to POST /authorize/approve.
  */
@@ -205,6 +276,7 @@ function renderConsentPage(
     scopes: string[];
     resource: string;
     clientName?: string;
+    registration: string;
     consentToken: string;
   },
   errorMessage?: string,
@@ -212,6 +284,15 @@ function renderConsentPage(
   const who = params.clientName ? esc(params.clientName) : esc(params.clientId);
   const redirect = new URL(params.redirectUri);
   const errorBlock = errorMessage ? `<p class="error" role="alert">${esc(errorMessage)}</p>` : '';
+  // SHOULD: a loopback callback means the code is handed to whatever process is
+  // listening on that port on the machine running the browser. That is the
+  // normal shape for a native client and an unverifiable one for everything
+  // else, so the owner is told rather than left to infer it from "127.0.0.1".
+  const loopbackNote = isLoopbackHostname(redirect.hostname)
+    ? `<p class="warn" role="note">This client asks for the code to be delivered to <strong>${esc(
+        redirect.hostname,
+      )}</strong> — a program running on the machine you are approving from. Nothing here can verify which program that is. Approve only if you started this login yourself.</p>`
+    : '';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -235,6 +316,8 @@ function renderConsentPage(
   dd { margin: 0; overflow-wrap: anywhere; }
   code { background: #8881; padding: .1rem .3rem; border-radius: .25rem; }
   .error { color: #c62828; font-weight: 600; }
+  .warn { background: #f9a82522; border-left: .25rem solid #f9a825; padding: .6rem .75rem;
+          border-radius: .25rem; font-size: .9rem; }
   .muted { color: #8a8a8a; font-size: .8rem; margin-top: 1.5rem; }
 </style>
 </head>
@@ -242,13 +325,15 @@ function renderConsentPage(
 <h1>Authorize access to Avito MCP</h1>
 <p>The client <span class="client">${who}</span> is requesting access to this Avito MCP server.</p>
 <dl>
-  <dt>Registration</dt><dd>Dynamically registered client</dd>
+  <dt>Redirect host</dt><dd><strong>${esc(redirect.hostname)}</strong></dd>
+  <dt>Client name</dt><dd>${params.clientName ? esc(params.clientName) : '<em>not supplied</em>'}</dd>
+  <dt>Registration</dt><dd>${esc(params.registration)}</dd>
   <dt>Client ID</dt><dd><code>${esc(params.clientId)}</code></dd>
-  <dt>Redirect host</dt><dd><strong>${esc(redirect.origin)}</strong></dd>
   <dt>Redirect URI</dt><dd><code>${esc(params.redirectUri)}</code></dd>
   <dt>Resource</dt><dd><code>${esc(params.resource)}</code></dd>
   <dt>Scopes</dt><dd><code>${esc(params.scopes.join(' '))}</code></dd>
 </dl>
+${loopbackNote}
 ${errorBlock}
 <form method="POST" action="/authorize/approve" autocomplete="off">
   <label for="owner_password">Owner password</label>
@@ -338,7 +423,10 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     this.issuer = new URL(httpConfig.publicUrl).href;
     this.ttlSec = httpConfig.oauthTokenTtlSec;
     this.ownerPassword = httpConfig.oauthOwnerPassword;
-    this.store = new OAuthStore(httpConfig.oauthStoreFile);
+    // M5.4: credentials are keyed by the issuer that minted them, so a changed
+    // publicUrl cannot resurrect clients and tokens belonging to what is, from
+    // any client's point of view, a different authorization server.
+    this.store = new OAuthStore(httpConfig.oauthStoreFile, this.issuer);
     this.clients = new ClientsStore(this.store);
   }
 
@@ -400,6 +488,7 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     const html = renderConsentPage({
       clientId: client.client_id,
       clientName: client.client_name,
+      registration: describeRegistration(client),
       redirectUri: params.redirectUri,
       scopes,
       resource,
@@ -475,6 +564,7 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
         {
           clientId: consent.clientId,
           clientName: client.client_name,
+          registration: describeRegistration(client),
           redirectUri: consent.redirectUri,
           scopes: consent.scopes,
           resource: consent.resource,

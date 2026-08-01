@@ -30,6 +30,16 @@ We'll reply on the same advisory thread. Once a fix is released, the advisory be
 - Bugs in the MCP client (Claude Desktop, Cursor, etc.) — report to that project.
 - A user accidentally pasting their own token somewhere public — that's a credential rotation problem, rotate it.
 
+## Operational notes for the remote HTTP surface
+
+### `AVITO_MCP_HTTP_PUBLIC_URL` is the OAuth issuer identifier
+
+In `AVITO_MCP_HTTP_AUTH=oauth` this value is not a display string. It becomes the **issuer identifier** in `/.well-known/oauth-authorization-server`, the `resource` every access token is bound to, and the base of the endpoints clients POST their authorization code to. Three consequences:
+
+- **It must be `https`.** Cleartext is accepted only for `localhost` / `127.0.0.1` / `[::1]`; startup fails otherwise. The development override `AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL=1` exists, and the SDK's own issuer check still requires `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=true` on top of it. Do not use either in production.
+- **Changing it is changing authorization servers.** A client that recorded the old issuer is required to treat the new one as a different server. Registered clients and issued tokens in `AVITO_MCP_OAUTH_STORE_FILE` are therefore discarded on the first start under a new public URL (logged as `issuer identifier changed`), and every client re-registers and re-authorizes. Plan the change like a credential rotation, not like a rename.
+- **Clients compare it byte for byte.** The `iss` parameter on the authorization response and the `issuer` in the metadata document are the same string, trailing slash included; a conformant client may not normalise either side before comparing. If you put avito-mcp behind a proxy, do not let the proxy rewrite the host or the scheme.
+
 ## Disclosure
 
 Standard coordinated disclosure: please give us a reasonable window to ship a fix before discussing the issue publicly. After a patched version is on npm, write about it however you like.
