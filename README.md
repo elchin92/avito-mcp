@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **New in v1.3.3** — a lease directory left behind by a process killed before it wrote its owner marker no longer blocks its domain forever, and rate-limit snapshots are persisted through a queue instead of an unawaited lock. See the [CHANGELOG](./CHANGELOG.md) for details.
+> **New in v1.3.4** — a preparatory release: the wire is unchanged (still MCP `2025-11-25`), packaging is locked down, and dependencies are lifted. See the [CHANGELOG](./CHANGELOG.md) for details.
 
 ---
 

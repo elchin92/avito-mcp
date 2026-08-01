@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **Новое в v1.3.3** — каталог аренды, оставшийся от процесса, убитого до записи owner-маркера, больше не блокирует свой домен навсегда, а снапшоты rate-limit пишутся через очередь, а не через захват лока без ожидания результата. Подробности — в [CHANGELOG](./CHANGELOG.md).
+> **Новое в v1.3.4** — подготовительный релиз: провод не изменился (по-прежнему MCP `2025-11-25`), закрыта упаковка пакета и подняты зависимости. Подробности — в [CHANGELOG](./CHANGELOG.md).
 
 ---
 
