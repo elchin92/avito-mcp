@@ -29,7 +29,7 @@
  *     a brute-force guard into a formality — the consequence that makes the
  *     shape of `CallerExtra` a security property and not a cosmetic one.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
@@ -304,12 +304,38 @@ describe('OAuth bearer auth over HTTP (SDK v2 resource-server path)', () => {
     expect(response.headers.get('www-authenticate') ?? '').toContain('resource_metadata=');
   });
 
+  /**
+   * Expiry is reached by MOVING the clock, not by waiting for it.
+   *
+   * The previous shape of this test set `oauthTokenTtlSec: 1` and slept 1.3s,
+   * which made it a race against its own setup. Minting a token is four HTTP
+   * round trips (register → authorize → approve → token) and the "still valid"
+   * probe builds a whole 148-tool `McpServer`; on this machine that consumes
+   * 260–390ms of the one-second TTL, and under `--coverage` — v8 instrumentation
+   * plus 51 files of thread contention — the tail of that distribution crosses
+   * 1000ms. When it does, the token has expired before the assertion that says
+   * it has not, and the test fails with `expected 401 to be 200`: not a defect
+   * in the server, and reported against the wrong line. Measured, by standing in
+   * an 800ms stall for a ~3x slower machine — the failure lands on the HAPPY
+   * PATH probe, which is the assertion that has a deadline it does not control.
+   *
+   * `Date.now` is the only clock the token store consults — `getUnexpired()` is
+   * `rec.expiresAt <= Date.now()` — so skewing it past the TTL expires the
+   * record exactly, immediately, and independently of how long anything took.
+   * This is the seam the repository already uses for every other TTL
+   * (`test/idempotency.test.ts`, `test/pending-actions.test.ts`,
+   * `test/webhook-store.test.ts`), and it removes both halves of the race: the
+   * TTL is now long enough that no slowness can expire the token early, and the
+   * expiry no longer depends on a sleep being long enough.
+   */
   it('answers an expired but genuinely issued token with 401, not 500', async () => {
-    const rig = await startRig({ oauthTokenTtlSec: 1 });
+    const ttlSec = 300;
+    const rig = await startRig({ oauthTokenTtlSec: ttlSec });
     handle = rig.handle;
     const { token } = await mintAccessToken(rig.base);
 
-    // The token is valid right now …
+    // The token is valid right now — and with five minutes of TTL, no amount of
+    // machine slowness can turn this assertion into a different question.
     const before = await fetch(`${rig.base}/mcp`, {
       method: 'POST',
       headers: mcpHeaders(token),
@@ -317,18 +343,30 @@ describe('OAuth bearer auth over HTTP (SDK v2 resource-server path)', () => {
     });
     expect(before.status).toBe(200);
 
-    // … and expired a second later. Same verifier, different branch: the record
-    // has aged out of the store, which is the path an operator actually hits.
-    await new Promise((resolve) => setTimeout(resolve, 1_300));
-    const after = await fetch(`${rig.base}/mcp`, {
-      method: 'POST',
-      headers: mcpHeaders(token),
-      body: initializeBody(),
-    });
+    // … and expired once the clock is past its expiry. Same token, same
+    // verifier, different branch: the record has aged out of the store, which is
+    // the path an operator actually hits. The skew is an offset rather than a
+    // frozen instant, so time still advances for everything else in the process
+    // (HTTP timeouts, the session reaper) while the token is unambiguously old.
+    const realNow = Date.now.bind(Date);
+    const skewMs = (ttlSec + 60) * 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + skewMs);
+    try {
+      const after = await fetch(`${rig.base}/mcp`, {
+        method: 'POST',
+        headers: mcpHeaders(token),
+        body: initializeBody(),
+      });
 
-    expect(after.status).not.toBe(500);
-    expect(after.status).toBe(401);
-    expect(after.headers.get('www-authenticate') ?? '').toContain('error="invalid_token"');
+      expect(after.status).not.toBe(500);
+      expect(after.status).toBe(401);
+      expect(after.headers.get('www-authenticate') ?? '').toContain('error="invalid_token"');
+    } finally {
+      // Restored here rather than in `afterEach`: the rig is torn down there,
+      // and tearing a live listener down under a skewed clock is a second thing
+      // that could go wrong for a reason unrelated to what is being tested.
+      clock.mockRestore();
+    }
   });
 
   it('accepts a valid token and attributes the pending action to oauth:<client_id>', async () => {
