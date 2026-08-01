@@ -14,6 +14,14 @@
  *      modern leg answers; with `modern`, only the modern leg exists and 2025
  *      traffic is refused with `-32022` naming the revisions we do serve.
  *
+ * "Legacy traffic" in (2) means traffic the classifier CALLS legacy, and the
+ * classifier reads the body. Exactly one request has no era at all — one whose
+ * body does not parse — and `dual` answers that the modern way (`-32700`) where
+ * a pure `legacy` deployment answers 1.3.3's `{"error":"bad_request"}`. The
+ * decision is argued in `src/http/app.ts` and asserted from both sides in
+ * `test/wire-error-shapes.test.ts`; it is named here so the byte-for-byte claim
+ * above is not read as covering a case it cannot reach.
+ *
  * The routing decision is the SDK's own `classifyInboundRequest`, so these tests
  * are also the guard that our hand-wired split has not drifted from what
  * `createMcpHandler` itself would decide — `test/modern-conformance.test.ts`
