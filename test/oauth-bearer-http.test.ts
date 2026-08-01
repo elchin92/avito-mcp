@@ -29,7 +29,7 @@
  *     a brute-force guard into a formality — the consequence that makes the
  *     shape of `CallerExtra` a security property and not a cosmetic one.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 
@@ -277,22 +277,50 @@ describe('OAuth bearer auth over HTTP (SDK v2 resource-server path)', () => {
   });
 
   /**
-   * The TTL is 2s where this was written with 1s. The mint flow ahead of the first
-   * assertion is three real HTTP round-trips whose login attempts go through the
-   * rate limiter, and the limiter persists under `runtimeStateDir` with
-   * withFileLock() + fsync. The shared config fixture puts that directory on the
-   * repository filesystem instead of tmpfs, so those flushes are real disk writes,
-   * and on a cold loaded run they can eat a 1s budget before `before` is even sent
-   * — seen once here as `expected 401 to be 200`. Only the clock margin moved; what
-   * the test asserts (an expired but genuinely issued token answers 401, not 500)
-   * is unchanged.
+   * Expiry is reached by MOVING the clock, not by waiting for it.
+   *
+   * The previous shape of this test set `oauthTokenTtlSec: 1` and slept 1.3s,
+   * which made it a race against its own setup. Minting a token is four HTTP
+   * round trips (register → authorize → approve → token) and the "still valid"
+   * probe builds a whole 148-tool `McpServer`; on this machine that consumes
+   * 260–390ms of the one-second TTL, and under `--coverage` — v8 instrumentation
+   * plus 51 files of thread contention — the tail of that distribution crosses
+   * 1000ms. When it does, the token has expired before the assertion that says
+   * it has not, and the test fails with `expected 401 to be 200`: not a defect
+   * in the server, and reported against the wrong line. Measured, by standing in
+   * an 800ms stall for a ~3x slower machine — the failure lands on the HAPPY
+   * PATH probe, which is the assertion that has a deadline it does not control.
+   *
+   * `Date.now` is the only clock the token store consults — `getUnexpired()` is
+   * `rec.expiresAt <= Date.now()` — so skewing it past the TTL expires the
+   * record exactly, immediately, and independently of how long anything took.
+   * This is the seam the repository already uses for every other TTL
+   * (`test/idempotency.test.ts`, `test/pending-actions.test.ts`,
+   * `test/webhook-store.test.ts`), and it removes both halves of the race: the
+   * TTL is now long enough that no slowness can expire the token early, and the
+   * expiry no longer depends on a sleep being long enough.
+   *
+   * Merge note (M0.3 × M3): main fixed the same flake by widening the margin —
+   * TTL 1s → 2s, sleep 1.3s → 2.3s — and in doing so identified a cause this
+   * comment did not yet know about. The mint flow's login attempts pass through
+   * the rate limiter, which persists under `runtimeStateDir` with withFileLock()
+   * + fsync; the shared config fixture moved that directory from tmpfs onto the
+   * repository filesystem, so those flushes became real disk writes and could
+   * eat a one-second budget before `before` was even sent. That diagnosis is
+   * kept because it is true and it explains why the margin had to keep growing.
+   * The clock skew is kept over the wider margin because it answers the
+   * diagnosis rather than accommodating it: with a 300s TTL no disk latency can
+   * expire the token early, and no margin has to be guessed again the next time
+   * the storage underneath a test moves. It also returns the 2.3s of wall time.
    */
   it('answers an expired but genuinely issued token with 401, not 500', async () => {
-    const rig = await startRig({ oauthTokenTtlSec: 2 });
+    const ttlSec = 300;
+    const rig = await startRig({ oauthTokenTtlSec: ttlSec });
     handle = rig.handle;
     const { token } = await mintAccessToken(rig.base);
 
-    // The token is valid right now …
+    // The token is valid right now — and with five minutes of TTL, no amount of
+    // machine slowness can turn this assertion into a different question.
     const before = await fetch(`${rig.base}/mcp`, {
       method: 'POST',
       headers: mcpHeaders(token),
@@ -300,18 +328,30 @@ describe('OAuth bearer auth over HTTP (SDK v2 resource-server path)', () => {
     });
     expect(before.status).toBe(200);
 
-    // … and expired a couple of seconds later. Same verifier, different branch: the
-    // record has aged out of the store, which is the path an operator actually hits.
-    await new Promise((resolve) => setTimeout(resolve, 2_300));
-    const after = await fetch(`${rig.base}/mcp`, {
-      method: 'POST',
-      headers: mcpHeaders(token),
-      body: initializeBody(),
-    });
+    // … and expired once the clock is past its expiry. Same token, same
+    // verifier, different branch: the record has aged out of the store, which is
+    // the path an operator actually hits. The skew is an offset rather than a
+    // frozen instant, so time still advances for everything else in the process
+    // (HTTP timeouts, the session reaper) while the token is unambiguously old.
+    const realNow = Date.now.bind(Date);
+    const skewMs = (ttlSec + 60) * 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + skewMs);
+    try {
+      const after = await fetch(`${rig.base}/mcp`, {
+        method: 'POST',
+        headers: mcpHeaders(token),
+        body: initializeBody(),
+      });
 
-    expect(after.status).not.toBe(500);
-    expect(after.status).toBe(401);
-    expect(after.headers.get('www-authenticate') ?? '').toContain('error="invalid_token"');
+      expect(after.status).not.toBe(500);
+      expect(after.status).toBe(401);
+      expect(after.headers.get('www-authenticate') ?? '').toContain('error="invalid_token"');
+    } finally {
+      // Restored here rather than in `afterEach`: the rig is torn down there,
+      // and tearing a live listener down under a skewed clock is a second thing
+      // that could go wrong for a reason unrelated to what is being tested.
+      clock.mockRestore();
+    }
   });
 
   it('accepts a valid token and attributes the pending action to oauth:<client_id>', async () => {
@@ -466,5 +506,83 @@ describe('OAuth bearer auth over HTTP (SDK v2 resource-server path)', () => {
     expect((await confirm(sessionB, 200))?.error?.kind).toBe('RATE_LIMITED');
     // …and the original session stays blocked too.
     expect((await confirm(sessionA, 201))?.error?.kind).toBe('RATE_LIMITED');
+  });
+});
+
+/**
+ * M5.5 — RFC 9728 protected-resource metadata, per auth mode.
+ *
+ * A 2026-07-28 client that meets a 401 discovers its authorization server from
+ * `resource_metadata` in the challenge and from the document it points at. Only
+ * `oauth` serves either. The decision recorded in README/SECURITY is to leave it
+ * that way — `bearer` is a shared-secret door for deployments that control both
+ * ends, and dressing it in discovery metadata would advertise an authorization
+ * server that does not exist — so this suite pins the actual behaviour of all
+ * three modes rather than the aspiration, and the documented non-conformance
+ * stays a checked fact.
+ */
+describe('M5.5 — protected-resource metadata across the three auth modes', () => {
+  const PRM_PATH = '/.well-known/oauth-protected-resource/mcp';
+
+  it('oauth: serves the document and points every 401 at it', async () => {
+    const rig = await startRig();
+    handle = rig.handle;
+
+    const prm = await fetch(`${rig.base}${PRM_PATH}`);
+    expect(prm.status).toBe(200);
+    expect(await prm.json()).toMatchObject({
+      resource: RESOURCE,
+      authorization_servers: [`${PUBLIC_URL}/`],
+      scopes_supported: ['avito:mcp'],
+    });
+
+    const denied = await fetch(`${rig.base}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: initializeBody(),
+    });
+    expect(denied.status).toBe(401);
+    const challenge = denied.headers.get('www-authenticate') ?? '';
+    expect(challenge).toContain(`resource_metadata="${PUBLIC_URL}${PRM_PATH}"`);
+    expect(challenge).toContain('scope="avito:mcp"');
+    expect(challenge).not.toContain('offline_access');
+  });
+
+  it('bearer: no metadata document, and the challenge says so', async () => {
+    const rig = await startRig({
+      auth: 'bearer',
+      authTokens: ['shared-secret-token-0123456789abcdef'],
+    });
+    handle = rig.handle;
+
+    expect((await fetch(`${rig.base}${PRM_PATH}`)).status).toBe(404);
+    expect((await fetch(`${rig.base}/.well-known/oauth-authorization-server`)).status).toBe(404);
+
+    const denied = await fetch(`${rig.base}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: initializeBody(),
+    });
+    expect(denied.status).toBe(401);
+    // A bare realm and nothing to discover. This is the documented
+    // non-conformance, asserted rather than assumed.
+    expect(denied.headers.get('www-authenticate')).toBe('Bearer realm="avito-mcp"');
+  });
+
+  it('none: no metadata document and no challenge at all', async () => {
+    const rig = await startRig({ auth: 'none' });
+    handle = rig.handle;
+
+    expect((await fetch(`${rig.base}${PRM_PATH}`)).status).toBe(404);
+    const open = await fetch(`${rig.base}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      body: initializeBody(),
+    });
+    expect(open.status).toBe(200);
+    expect(open.headers.get('www-authenticate')).toBeNull();
   });
 });

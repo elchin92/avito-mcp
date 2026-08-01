@@ -7,9 +7,20 @@ import type { McpServer } from '@modelcontextprotocol/server';
  * so any write to stdout would break the protocol. All logs go to stderr only.
  *
  * v0.6.0: after the server starts, bindMcpLogger(server) is called so that the same events
- * are also delivered to the client as `notifications/message` (MCP logging). The client can
- * filter them via `logging/setLevel`. The pino output to stderr stays as it was — for
- * local debugging and for cases where the client does not support logging.
+ * are also delivered to the client as `notifications/message` (MCP logging). The pino output
+ * to stderr stays as it was — for local debugging and for cases where the client does not
+ * support logging.
+ *
+ * How a client asks for those events depends on the era it is speaking, and the
+ * two mechanisms are not interchangeable:
+ *
+ *   • 2025-11-25 — `logging/setLevel` sets a CONNECTION-level threshold; the
+ *     mirror below drives `server.sendLoggingMessage()`, which consults it.
+ *   • 2026-07-28 — `logging/setLevel` is gone (SEP-2577). The level is declared
+ *     per request in `_meta["io.modelcontextprotocol/logLevel"]`, and a request
+ *     that declares none must receive nothing. That is served by
+ *     {@link RequestLogSink} / {@link runWithRequestLogSink} rather than by the
+ *     connection-level binding, which cannot express either rule.
  */
 /**
  * v0.7.0: pino redact paths. Defence-in-depth — the current code intentionally does not log
@@ -111,16 +122,71 @@ const mcpLogBindings = new Map<McpServer, McpLogBinding>();
 const mcpLogContext = new AsyncLocalStorage<McpServer>();
 let mcpMirrorInstalled = false;
 
+/**
+ * M3 item 10 — the request-scoped delivery seam for `notifications/message`.
+ *
+ * Revision 2026-07-28 turns the log mirror into a per-request feature with two
+ * MUST NOTs the shape of this module previously violated by construction:
+ *
+ *   • nothing may be sent for a request whose `_meta` carries no
+ *     `io.modelcontextprotocol/logLevel`;
+ *   • nothing may be delivered on a stream other than the one carrying that
+ *     request's own response.
+ *
+ * `server.sendLoggingMessage()` — what {@link bindMcpLogger} drives — can honour
+ * neither: it is a connection-level `Protocol.notification()` with no request to
+ * scope to, and it does not read the envelope. The per-request context the SDK
+ * hands a handler does honour both: `ctx.mcpReq.log()` returns early on a modern
+ * request with no envelope log level, and routes through `ctx.mcpReq.notify`,
+ * which the per-request transport binds to that request's response stream.
+ *
+ * So the mirror does not decide anything about the modern era itself. It only
+ * has to prefer the sink of the request it is running inside, and that sink is
+ * `ctx.mcpReq` verbatim. When one is installed it takes the log line EXCLUSIVELY
+ * — falling through to the connection-level bindings afterwards would put the
+ * same line on a second stream, which is the second MUST NOT.
+ */
+export interface RequestLogSink {
+  log(level: McpLogLevel, data: unknown, logger?: string): Promise<void>;
+}
+
+/** The RFC 5424 severities MCP defines; the subset pino levels map onto. */
+export type McpLogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical';
+
+const requestLogContext = new AsyncLocalStorage<RequestLogSink>();
+
+/**
+ * Runs `operation` with `sink` as the destination for every MCP log mirror
+ * event produced inside it, including asynchronously — the store follows the
+ * await chain, which is what makes this correct for a handler that awaits an
+ * Avito call and logs from inside it.
+ */
+export function runWithRequestLogSink<T>(sink: RequestLogSink, operation: () => T): T {
+  // The pino→MCP wrapper used to be installed only by `bindMcpLogger`, which a
+  // modern-era instance deliberately never calls (see `createServerFactory`).
+  // Without this line the request-scoped path would be dead code in exactly the
+  // deployment it exists for: every modern log line would go to stderr only,
+  // and a client that asked for a log level would receive nothing — silently,
+  // because "nothing arrived" is also what correct behaviour looks like for a
+  // request that asked for no level. Installation is idempotent.
+  installMcpMirror();
+  return requestLogContext.run(sink, operation);
+}
+
+/** Test/introspection: whether a request-scoped sink is installed right here. */
+export function hasRequestLogSink(): boolean {
+  return requestLogContext.getStore() !== undefined;
+}
+
 /** MCP logging severities (RFC-5424). Pino → MCP mapping. */
-const PINO_TO_MCP: Record<string, 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical'> =
-  {
-    trace: 'debug',
-    debug: 'debug',
-    info: 'info',
-    warn: 'warning',
-    error: 'error',
-    fatal: 'critical',
-  };
+const PINO_TO_MCP: Record<string, McpLogLevel> = {
+  trace: 'debug',
+  debug: 'debug',
+  info: 'info',
+  warn: 'warning',
+  error: 'error',
+  fatal: 'critical',
+};
 
 interface PinoLogEvent {
   level: number;
@@ -170,6 +236,18 @@ function installMcpMirror(): void {
         logger: 'avito-mcp',
         data: payload,
       } as const;
+
+      // Request-scoped delivery wins and is EXCLUSIVE. See RequestLogSink: a
+      // fall-through would put the same line on a second stream, and the sink
+      // itself owns the "was a log level asked for" decision.
+      const requestSink = requestLogContext.getStore();
+      if (requestSink !== undefined) {
+        void requestSink.log(message.level, message.data, message.logger).catch(() => {
+          // The stream may already be closed (client hung up mid-request).
+        });
+        return;
+      }
+
       const contextualServer = mcpLogContext.getStore();
       const contextualBinding = contextualServer ? mcpLogBindings.get(contextualServer) : undefined;
       const targets = contextualServer

@@ -32,6 +32,42 @@ export type SafetyMode = 'read_only' | 'guarded' | 'full_access';
 export type ConfirmationMode = 'off' | 'money_public' | 'all_destructive';
 export type ApprovalMode = 'self' | 'external';
 
+/**
+ * M3.1 — which protocol era(s) this process is willing to serve.
+ *
+ * This is a DEPLOYMENT POSTURE, not the era of a live connection. The era of a
+ * connection is owned by the SDK (`ProtocolEra`, `server/discover`,
+ * `isLegacyRequest`); this flag only says which serving paths are mounted at
+ * all:
+ *
+ *   - `legacy` (default) — only the 2025-era path exists. Byte-for-byte the
+ *     1.3.x / M2 behaviour: stdio is a hand-wired `StdioServerTransport`
+ *     (hand-constructed instances are legacy-era forever, DV-13), and `/mcp`
+ *     runs only the existing sessionful Streamable HTTP manager. Nothing in the
+ *     process can answer a 2026-07-28 request.
+ *   - `dual` — both paths are mounted and traffic is routed per request:
+ *     `serveStdio(factory, { legacy: 'serve' })` on stdio, `isLegacyRequest` in
+ *     front of `createMcpHandler(factory, { legacy: 'reject' })` on HTTP.
+ *   - `modern` — only the 2026-07-28 path is mounted; 2025-era traffic is
+ *     refused with the SDK's unsupported-protocol-version answer.
+ *
+ * Default is `legacy` and stays `legacy` until the dual path has been proven in
+ * production — the whole point of M3 is that the new code ships switched off.
+ */
+export type ProtocolEraMode = 'legacy' | 'dual' | 'modern';
+
+/**
+ * The era a deployment that sets nothing serves.
+ *
+ * A named constant rather than a literal inside `resolveProtocolEra`, because
+ * it is also a published claim: `server.json` declares this value as the
+ * `default` of `AVITO_MCP_PROTOCOL_ERA` and derives `servedByDefault` from it,
+ * and `test/release-hardening.test.ts` holds the two against each other. A
+ * registry entry saying a default install answers 2026-07-28 when it does not
+ * is a claim anyone can check and find false.
+ */
+export const DEFAULT_PROTOCOL_ERA: ProtocolEraMode = 'legacy';
+
 // ───────────────────────── v0.9.0: HTTP transport + webhook ─────────────────────────
 
 /** Which MCP transport(s) to run. `both` = stdio + HTTP in one process. */
@@ -63,10 +99,33 @@ export interface HttpConfig {
    */
   allowedHosts: string[];
   allowedOrigins: string[];
-  /** Max concurrent Streamable HTTP MCP sessions; initialize beyond this → 503. */
+  /**
+   * LEGACY LEG ONLY. Max concurrent Streamable HTTP MCP sessions; initialize
+   * beyond this → 503. Revision 2026-07-28 removed protocol sessions, so this
+   * bounds nothing on the modern leg — see `maxInflight` / `maxStreams`.
+   */
   maxSessions: number;
-  /** Sessions idle longer than this are reaped (a crashed client never DELETEs). */
+  /**
+   * LEGACY LEG ONLY. Sessions idle longer than this are reaped (a crashed
+   * client never DELETEs).
+   */
   sessionIdleSec: number;
+  /**
+   * M3.8 — the modern leg's replacement for `maxSessions`.
+   *
+   * The maximum number of 2026-era exchanges `/mcp` will have in flight at once,
+   * counting open `subscriptions/listen` streams (a stream holds its slot for as
+   * long as it stays open). Beyond it the endpoint answers 503 instead of
+   * building yet another 148-tool `McpServer`. Default 64.
+   */
+  maxInflight: number;
+  /**
+   * M3.8 — of the in-flight budget, how many exchanges may be long-lived
+   * `subscriptions/listen` streams. Keeps a caller that opens streams and never
+   * closes them from consuming the whole `maxInflight` budget and locking out
+   * ordinary tool calls. Default 32.
+   */
+  maxStreams: number;
   /** OAuth owner password gating the /authorize consent step (oauth mode). */
   oauthOwnerPassword?: string;
   /** Access-token TTL in seconds (oauth mode). */
@@ -188,6 +247,56 @@ function parseHttpUrl(raw: string, name: string): string {
 }
 
 /**
+ * The loopback hosts RFC 8252 §7.3 singles out, spelled the way `URL.hostname`
+ * spells them — an IPv6 literal keeps its brackets there, and the bare form
+ * shows up in hand-written config, so both are accepted.
+ *
+ * Shared with the OAuth provider (M5.3) so "is this address reachable only from
+ * this machine" has ONE definition. The `http:` exemption for the issuer URL and
+ * the `http:` exemption for a client's `redirect_uri` are the same exemption,
+ * and a copy that drifts is a copy that lets `http://evil.example.com/cb`
+ * through one door after being closed at the other.
+ */
+export function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]' ||
+    hostname === '::1'
+  );
+}
+
+/**
+ * M5.3 — the authorization spec's HTTPS MUST for authorization-server endpoints.
+ *
+ * In `oauth` mode `AVITO_MCP_HTTP_PUBLIC_URL` is not just a display string: it
+ * becomes the issuer identifier, the `resource` every token is bound to, and the
+ * base of every endpoint a client is told to POST its authorization code and
+ * `code_verifier` to. Serving that over cleartext hands all three to anyone on
+ * the path, so `http:` is accepted only where it cannot leave the machine.
+ *
+ * The escape hatch exists for development against a local proxy that terminates
+ * TLS elsewhere, and it is deliberately not enough on its own: `mcpAuthRouter`
+ * applies its own HTTPS check and needs `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL`
+ * as well, so nobody reaches a cleartext public issuer by setting one variable
+ * they half-remembered.
+ */
+export function assertSecureOAuthPublicUrl(publicUrl: string, allowInsecure: boolean): void {
+  const parsed = new URL(publicUrl);
+  if (parsed.protocol === 'https:') return;
+  if (isLoopbackHostname(parsed.hostname)) return;
+  if (allowInsecure) return;
+  throw new EnvValidationError(
+    `AVITO_MCP_HTTP_PUBLIC_URL must use https when AVITO_MCP_HTTP_AUTH=oauth (received ${publicUrl}). ` +
+      'It is the OAuth issuer identifier and the base of the token endpoint, so cleartext exposes ' +
+      'every authorization code and access token in transit. Terminate TLS at the reverse proxy and ' +
+      'point this at the https URL; http is accepted only for localhost / 127.0.0.1 / [::1]. For a ' +
+      'development-only override set AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL=1 (the SDK additionally ' +
+      'requires MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=true).',
+  );
+}
+
+/**
  * Backward compatibility: `AVITO_SAFE_MODE=read-only` (v0.2.x) maps to
  * `AVITO_MCP_MODE=read_only` (v0.3.x). If both are set, the newer wins
  * and we emit a stderr deprecation note (logger isn't initialised yet at
@@ -262,6 +371,9 @@ const ConfigSchema = z.object({
   runtimeStateDir: z.string().min(1),
   /** Max wait for cross-process token file lock, ms. */
   tokenLockTimeoutMs: z.number().int().positive().default(30_000),
+  // M3.1 ─────────────────────────────────────────────────────
+  /** Which protocol era(s) this process serves. See {@link ProtocolEraMode}. */
+  protocolEra: z.enum(['legacy', 'dual', 'modern']).default('legacy'),
 });
 
 /** Strips a trailing slash so URLs concatenate predictably. */
@@ -275,6 +387,21 @@ function resolveTransport(): TransportMode {
     'http',
     'both',
   ] as const);
+}
+
+/**
+ * M3.1 — reads `AVITO_MCP_PROTOCOL_ERA`. Unknown values are a hard startup
+ * failure (`parseChoice` throws) rather than a silent fall back to the default:
+ * an operator who typed `AVITO_MCP_PROTOCOL_ERA=duel` must find out at boot, not
+ * by discovering months later that the canary never actually served 2026-07-28.
+ */
+function resolveProtocolEra(): ProtocolEraMode {
+  return parseChoice(
+    process.env.AVITO_MCP_PROTOCOL_ERA,
+    DEFAULT_PROTOCOL_ERA,
+    'AVITO_MCP_PROTOCOL_ERA',
+    ['legacy', 'dual', 'modern'] as const,
+  );
 }
 
 function resolveHttpAuth(): HttpAuthMode {
@@ -302,7 +429,17 @@ function buildHttpConfig(): HttpConfig {
   const authTokens = parseToolList(process.env.AVITO_MCP_HTTP_AUTH_TOKEN);
   const oauthOwnerPassword = process.env.AVITO_MCP_OAUTH_OWNER_PASSWORD || undefined;
   if (transport === 'http' || transport === 'both') {
-    if (auth === 'oauth') requireStrongSecret(oauthOwnerPassword, 'AVITO_MCP_OAUTH_OWNER_PASSWORD');
+    if (auth === 'oauth') {
+      requireStrongSecret(oauthOwnerPassword, 'AVITO_MCP_OAUTH_OWNER_PASSWORD');
+      assertSecureOAuthPublicUrl(
+        publicUrl,
+        parseBool(
+          process.env.AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL,
+          false,
+          'AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL',
+        ),
+      );
+    }
     if (auth === 'bearer') {
       if (authTokens.length === 0) {
         throw new EnvValidationError(
@@ -337,6 +474,22 @@ function buildHttpConfig(): HttpConfig {
       1800,
       'AVITO_MCP_HTTP_SESSION_IDLE_SEC',
       86_400,
+    ),
+    // M3.8. Deliberately NOT derived from maxSessions: the two count different
+    // things (a session is idle most of its life, an in-flight exchange is
+    // work in progress), and tying them would make the modern budget move
+    // whenever an operator tuned the legacy one.
+    maxInflight: parsePositiveInt(
+      process.env.AVITO_MCP_HTTP_MAX_INFLIGHT,
+      64,
+      'AVITO_MCP_HTTP_MAX_INFLIGHT',
+      10_000,
+    ),
+    maxStreams: parsePositiveInt(
+      process.env.AVITO_MCP_HTTP_MAX_STREAMS,
+      32,
+      'AVITO_MCP_HTTP_MAX_STREAMS',
+      10_000,
     ),
     oauthOwnerPassword,
     oauthTokenTtlSec: parsePositiveInt(
@@ -386,14 +539,33 @@ function buildWebhookConfig(httpPublicUrl: string): WebhookConfig {
 }
 
 type ParsedConfig = z.infer<typeof ConfigSchema>;
-export type Config = Omit<ParsedConfig, 'approvalMode' | 'runtimeStateDir'> & {
+export type Config = Omit<ParsedConfig, 'approvalMode' | 'runtimeStateDir' | 'protocolEra'> & {
   /** Optional in programmatic Config fixtures; environment-loaded config always sets it. */
   approvalMode?: ApprovalMode;
   /** Optional in programmatic Config fixtures; environment-loaded config always sets it. */
   runtimeStateDir?: string;
+  /**
+   * Optional in programmatic Config fixtures; environment-loaded config always
+   * sets it. Absent means `legacy` — read it through {@link protocolEraOf} so
+   * the safe default can never be forgotten at a call site.
+   */
+  protocolEra?: ProtocolEraMode;
   http: HttpConfig;
   webhook: WebhookConfig;
 };
+
+/**
+ * The protocol-era posture of a config, defaulting to `legacy`.
+ *
+ * Every consumer must go through this helper rather than reading
+ * `config.protocolEra` directly: the field is optional (programmatic fixtures
+ * omit it) and a bare `config.protocolEra === 'dual'` in one place plus a
+ * truthiness check in another is exactly how a "switched off" feature gets
+ * half-enabled.
+ */
+export function protocolEraOf(config: Pick<Config, 'protocolEra'>): ProtocolEraMode {
+  return config.protocolEra ?? 'legacy';
+}
 
 function loadUnchecked(): Config {
   const tokenFile = process.env.AVITO_TOKEN_FILE?.trim() || defaultTokenFile();
@@ -461,6 +633,8 @@ function loadUnchecked(): Config {
       'AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS',
       300_000,
     ),
+    // M3.1 ───────────────────────────────────────────────────
+    protocolEra: resolveProtocolEra(),
   };
 
   const parsed = ConfigSchema.safeParse(raw);

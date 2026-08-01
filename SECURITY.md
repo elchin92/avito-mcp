@@ -8,6 +8,7 @@ Use **GitHub Private Vulnerability Reporting**:
 **https://github.com/elchin92/avito-mcp/security/advisories/new**
 
 Please include:
+
 - Affected version (`npm view avito-mcp version` for latest)
 - What the issue is and what an attacker could do
 - A minimal reproduction — **do not** paste real `Client_id` / `Client_secret` / tokens. Use placeholders like `EXAMPLE_TOKEN`.
@@ -29,6 +30,30 @@ We'll reply on the same advisory thread. Once a fix is released, the advisory be
 - Avito API behaviour itself — rate limits, scope restrictions, deprecations. Report those to Avito support.
 - Bugs in the MCP client (Claude Desktop, Cursor, etc.) — report to that project.
 - A user accidentally pasting their own token somewhere public — that's a credential rotation problem, rotate it.
+
+## Operational notes for the remote HTTP surface
+
+### `bearer` and `none` do not claim MCP authorization conformance
+
+Only `AVITO_MCP_HTTP_AUTH=oauth` implements the MCP authorization specification. `bearer` is a shared-secret guard and `none` is no guard at all; neither publishes RFC 9728 protected-resource metadata, neither runs an authorization server, and the challenge on a rejected request is a bare `Bearer realm="avito-mcp"` with no `resource_metadata` parameter. An MCP client written against revision 2026-07-28 therefore cannot discover an authorization server from these modes and cannot complete a flow it is required to initiate itself.
+
+This is a deliberate scope decision, not an oversight: `bearer` exists for a caller you configure by hand with a secret you generated, and publishing discovery metadata for an authorization server that does not exist would be worse than publishing none. **Use `oauth` for MCP clients.** A report that `bearer` lacks OAuth discovery is not a vulnerability; a report that `bearer` accepts a token it was not given, or that `oauth` can be bypassed, very much is.
+
+### `AVITO_MCP_HTTP_PUBLIC_URL` is the OAuth issuer identifier
+
+In `AVITO_MCP_HTTP_AUTH=oauth` this value is not a display string. It becomes the **issuer identifier** in `/.well-known/oauth-authorization-server`, the `resource` every access token is bound to, and the base of the endpoints clients POST their authorization code to. Three consequences:
+
+- **It must be `https`.** Cleartext is accepted only for `localhost` / `127.0.0.1` / `[::1]`; startup fails otherwise. The development override `AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL=1` exists, and the SDK's own issuer check still requires `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=true` on top of it. Do not use either in production.
+- **Changing it is changing authorization servers.** A client that recorded the old issuer is required to treat the new one as a different server. Registered clients and issued tokens in `AVITO_MCP_OAUTH_STORE_FILE` are therefore discarded on the first start under a new public URL (logged as `issuer identifier changed`), and every client re-registers and re-authorizes. Plan the change like a credential rotation, not like a rename.
+- **Clients compare it byte for byte.** The `iss` parameter on the authorization response and the `issuer` in the metadata document are the same string, trailing slash included; a conformant client may not normalise either side before comparing. If you put avito-mcp behind a proxy, do not let the proxy rewrite the host or the scheme.
+
+### `AVITO_MCP_OAUTH_STORE_FILE` holds tokens in cleartext — accepted risk
+
+If you enable the durable OAuth store, issued access tokens, refresh tokens and self-registered `client_secret` values are written to that file **as they are**: the token strings are object keys, the secret is a plain field. They are not hashed and not encrypted.
+
+The file is created `0600` in a `0700` directory and is written atomically under an exclusive process lease, so the people who can read it are `root`, the service account avito-mcp runs as, and anyone holding a backup or container layer that contains it. The first two can already read `AVITO_MCP_OAUTH_OWNER_PASSWORD` from the process environment and mint fresh tokens whenever they like, so hashing removes nobody from that list. Access tokens expire in an hour by default, refresh tokens in 30 days, all are revocable, and all are discarded when the issuer identifier changes.
+
+The reasoning and the conditions that would reverse this decision are in [`docs/adr/0006-token-storage.md`](docs/adr/0006-token-storage.md) — the short version is that it stops being an accepted risk the moment any long-lived machine-to-machine credential lives in this store, or the file leaves the host's private state directory. **Reports are in scope** if the file is created with wider permissions than described, if its contents reach a log or an MCP resource, or if another local user can read it.
 
 ## Disclosure
 

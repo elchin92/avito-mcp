@@ -56,6 +56,24 @@ export interface TokenRecord {
 
 interface Snapshot {
   version: 1;
+  /**
+   * M5.4 — the issuer identifier the persisted credentials belong to.
+   *
+   * `client_id`, `client_secret`, access and refresh tokens are all issued BY an
+   * authorization server, and `publicUrl` is what names that server: change it
+   * and the issuer identifier changes, which by the authorization spec means the
+   * clients are now talking to a different authorization server. Replaying the
+   * old file would hand out credentials minted by a server that, from any
+   * client's point of view, no longer exists — and every token in it is bound to
+   * a `resource` the new deployment refuses anyway, so they would each fail at
+   * the first request instead of failing at load.
+   *
+   * Absent (a snapshot written before this field existed) is NOT treated as a
+   * mismatch: nothing recorded the issuer then, so there is nothing to disagree
+   * with, and invalidating on an upgrade would log every existing client out for
+   * no security gain. The next write stamps it.
+   */
+  issuer?: string;
   clients: Record<string, OAuthClientInformationFull>;
   accessTokens: Record<string, TokenRecord>;
   refreshTokens: Record<string, TokenRecord>;
@@ -166,7 +184,10 @@ export class OAuthStore {
   private leaseId?: string;
   private leaseIdentity?: LeaseIdentity;
 
-  constructor(private readonly storeFile?: string) {
+  constructor(
+    private readonly storeFile?: string,
+    private readonly issuer?: string,
+  ) {
     if (this.storeFile) {
       mkdirSync(dirname(this.storeFile), { recursive: true, mode: 0o700 });
       this.acquireLease();
@@ -517,6 +538,21 @@ export class OAuthStore {
       }
       const snap = parsed as Partial<Snapshot>;
       const now = Date.now();
+      if (
+        this.issuer !== undefined &&
+        typeof snap.issuer === 'string' &&
+        snap.issuer !== this.issuer
+      ) {
+        // Not an error: a deliberate move to a new public URL is a legitimate
+        // operation. It just cannot carry the old server's credentials with it,
+        // and the operator has to know that every client will re-register.
+        logger.warn(
+          { storeFile: this.storeFile, previousIssuer: snap.issuer, issuer: this.issuer },
+          'oauth store: issuer identifier changed — discarding clients and tokens issued by the previous authorization server',
+        );
+        this.scheduleFlush();
+        return;
+      }
       const clients = Object.entries(snap.clients ?? {})
         .filter(([id, client]) => validClient(id, client, now))
         .sort(([, a], [, b]) => clientIssuedAtMs(a) - clientIssuedAtMs(b))
@@ -591,6 +627,7 @@ export class OAuthStore {
     if (!this.storeFile) return;
     const snapshot: Snapshot = {
       version: 1,
+      ...(this.issuer === undefined ? {} : { issuer: this.issuer }),
       clients: Object.fromEntries(this.clients),
       accessTokens: Object.fromEntries(this.accessTokens),
       refreshTokens: Object.fromEntries(this.refreshTokens),

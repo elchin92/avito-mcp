@@ -13,6 +13,37 @@ export interface RateSnapshot {
 }
 
 /**
+ * The outcome of {@link RateLimiter.waitIfNeeded}: the caller's claim on one
+ * slot of the shared budget, and the way to give it back.
+ *
+ * M3 item 11 — "closing the response stream is a cancellation: the outgoing
+ * Avito call is aborted, the idempotency lease and the rate-limiter slot are
+ * released". The slot needs an explicit handle because the reservation is a
+ * DURABLE side effect: `waitIfNeeded` decrements `remaining` in the shared
+ * state file BEFORE the HTTP call, so that concurrent processes cannot both
+ * spend the last unit. A caller that then never makes the call has burned a
+ * unit of a budget that only refills when Avito's own reset window comes round
+ * — invisible to the operator, and indistinguishable from real traffic.
+ *
+ * `release()` is idempotent and never raises the count above the observed
+ * `limit`: it gives back exactly what this reservation took, once.
+ */
+export interface RateLimitSlot {
+  release(): Promise<void>;
+}
+
+/** The reservation for a domain that keeps no shared budget: nothing to give back. */
+const UNRESERVED: RateLimitSlot = { release: (): Promise<void> => Promise.resolve() };
+
+/** Rejection thrown when a caller is cancelled while queued behind the budget. */
+export class RateLimitWaitAbortedError extends Error {
+  constructor(domain: string) {
+    super(`Rate-limit wait for '${domain}' was cancelled before a slot became available`);
+    this.name = 'RateLimitWaitAbortedError';
+  }
+}
+
+/**
  * Stores the latest X-RateLimit-* snapshot for each "domain" (a logical group of tools).
  * Used (a) for observability via meta_get_rate_limits, and (b) for soft throttling.
  */
@@ -116,46 +147,103 @@ export class RateLimiter {
     }
   }
 
-  /** If remaining <= 1, sleep softly for 1 second to let the reset window unfold. */
-  async waitIfNeeded(domain: string): Promise<void> {
+  /**
+   * If remaining <= 1, sleep softly for 1 second to let the reset window unfold.
+   *
+   * Returns the caller's claim on the budget (see {@link RateLimitSlot}). The
+   * optional `signal` makes the WAIT itself cancellable: without it a caller
+   * queued behind an exhausted budget sits here for up to 30 s per iteration
+   * even though the client that asked for the work has already hung up.
+   */
+  async waitIfNeeded(domain: string, signal?: AbortSignal): Promise<RateLimitSlot> {
     const path = this.path(domain);
     if (!path) {
       const snap = this.snapshots.get(domain);
-      if (snap?.remaining !== undefined && snap.remaining <= 1) await sleep(1000);
-      return;
+      // Process-local mode keeps no shared counter, so the soft sleep reserves
+      // nothing and there is nothing to hand back.
+      if (snap?.remaining !== undefined && snap.remaining <= 1) await sleep(1000, signal);
+      return UNRESERVED;
     }
     while (true) {
-      const delay = await withFileLock(
+      if (signal?.aborted) throw new RateLimitWaitAbortedError(domain);
+      const outcome = await withFileLock(
         path,
-        async () => {
+        async (): Promise<{ delayMs: number; reserved: boolean }> => {
           const snap = await readJsonFile<RateSnapshot>(path);
-          if (!snap || snap.remaining === undefined) return 0;
+          if (!snap || snap.remaining === undefined) return { delayMs: 0, reserved: false };
           const now = Math.floor(Date.now() / 1000);
           if (snap.resetAt === undefined && now > snap.observedAt) {
             const stale = { ...snap, remaining: undefined, observedAt: now };
             await writeJsonAtomic(path, stale);
             this.snapshots.set(domain, stale);
-            return 0;
+            // The counter was DROPPED, not spent: nothing was taken from a
+            // budget that no longer exists, so there is nothing to give back.
+            return { delayMs: 0, reserved: false };
           }
           if (snap.resetAt !== undefined && snap.resetAt <= now) {
-            const refreshed = { ...snap, remaining: Math.max(0, (snap.limit ?? 1) - 1), observedAt: now };
+            const refreshed = {
+              ...snap,
+              remaining: Math.max(0, (snap.limit ?? 1) - 1),
+              observedAt: now,
+            };
             await writeJsonAtomic(path, refreshed);
             this.snapshots.set(domain, refreshed);
-            return 0;
+            return { delayMs: 0, reserved: true };
           }
           if (snap.remaining > 1) {
             const reserved = { ...snap, remaining: snap.remaining - 1 };
             await writeJsonAtomic(path, reserved);
             this.snapshots.set(domain, reserved);
-            return 0;
+            return { delayMs: 0, reserved: true };
           }
-          return snap.resetAt && snap.resetAt > now ? (snap.resetAt - now) * 1000 : 1000;
+          return {
+            delayMs: snap.resetAt && snap.resetAt > now ? (snap.resetAt - now) * 1000 : 1000,
+            reserved: false,
+          };
         },
         { timeoutMs: this.persistent?.lockTimeoutMs ?? 30_000 },
       );
-      if (delay === 0) return;
-      await sleep(Math.min(delay, 30_000));
+      if (outcome.delayMs === 0) {
+        return outcome.reserved ? this.slotFor(domain, path) : UNRESERVED;
+      }
+      await sleep(Math.min(outcome.delayMs, 30_000), signal);
     }
+  }
+
+  /**
+   * The give-back half of one reservation. Re-reads under the same lock rather
+   * than remembering the number it decremented: between the reservation and the
+   * release another process may have spent or refreshed the budget, and giving
+   * back a remembered absolute value would clobber that.
+   */
+  private slotFor(domain: string, path: string): RateLimitSlot {
+    let released = false;
+    return {
+      release: async (): Promise<void> => {
+        if (released) return;
+        released = true;
+        try {
+          await withFileLock(
+            path,
+            async () => {
+              const snap = await readJsonFile<RateSnapshot>(path);
+              // A counter that has since been dropped or reset is a NEWER truth
+              // than this reservation; re-inflating it would invent budget.
+              if (!snap || snap.remaining === undefined) return;
+              const ceiling = snap.limit ?? Number.MAX_SAFE_INTEGER;
+              const restored = { ...snap, remaining: Math.min(ceiling, snap.remaining + 1) };
+              await writeJsonAtomic(path, restored);
+              this.snapshots.set(domain, restored);
+            },
+            { timeoutMs: Math.min(this.persistent?.lockTimeoutMs ?? 30_000, 5_000) },
+          );
+        } catch (error) {
+          // Failing to give a slot back is a throttling inaccuracy, never a
+          // reason to fail the cancellation path that called us.
+          logger.warn({ error, domain }, 'failed to release rate-limit slot after cancellation');
+        }
+      },
+    };
   }
 
   getStatus(domain?: string): RateSnapshot[] {
@@ -203,6 +291,26 @@ function numberOrUndefined(v: string | null): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Sleeps for `ms`, or until `signal` aborts — whichever comes first.
+ *
+ * Resolves rather than rejects on abort: every call site re-checks the signal
+ * (or the deadline) straight afterwards, and a rejecting sleep would turn a
+ * cancellation into an unhandled rejection in the callers that only use it as a
+ * backoff.
+ */
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal === undefined) return new Promise((resolve) => setTimeout(resolve, ms));
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }

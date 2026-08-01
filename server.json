@@ -36,8 +36,35 @@
           "format": "string",
           "isSecret": false,
           "name": "Profile_id"
+        },
+        {
+          "description": "Which MCP protocol revisions this process serves: legacy = 2025-11-25 only, dual = 2025-11-25 and 2026-07-28, modern = 2026-07-28 only.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "default": "legacy",
+          "choices": ["legacy", "dual", "modern"],
+          "name": "AVITO_MCP_PROTOCOL_ERA"
         }
       ]
     }
-  ]
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "protocolRevisions": {
+        "served": ["2026-07-28", "2025-11-25"],
+        "servedByDefault": ["2025-11-25"],
+        "selectedBy": {
+          "environmentVariable": "AVITO_MCP_PROTOCOL_ERA",
+          "default": "legacy",
+          "values": {
+            "legacy": ["2025-11-25"],
+            "dual": ["2026-07-28", "2025-11-25"],
+            "modern": ["2026-07-28"]
+          }
+        },
+        "documentation": "https://github.com/elchin92/avito-mcp#protocol-revisions"
+      }
+    }
+  }
 }

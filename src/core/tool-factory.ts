@@ -1,13 +1,14 @@
 import type {
   McpServer,
   CallToolResult,
+  ProtocolEra,
   ToolAnnotations,
   ServerContext,
 } from '@modelcontextprotocol/server';
 import { z, type ZodRawShape } from 'zod';
 
 import type { Config } from '../config.js';
-import { logger } from '../logger.js';
+import { logger, type RequestLogSink } from '../logger.js';
 import type {
   AvitoClient,
   BodyContentType,
@@ -101,7 +102,43 @@ export interface ToolContext {
    * the receiver as disabled rather than failing.
    */
   webhookStore?: WebhookStore;
+  /**
+   * M3 — the protocol era the owning server instance serves. Absent means
+   * `legacy`: every context built before M3, and every test fixture, is a 2025
+   * context, and defaulting the other way would move their behaviour.
+   *
+   * Read it through {@link toolContextEra}. It changes two things and only two:
+   * which subscription surface `registerResources` installs, and where the MCP
+   * log mirror delivers (connection-level vs request-scoped).
+   */
+  era?: ProtocolEra;
 }
+
+/** The era of a {@link ToolContext}, with the "not stated means legacy" default applied. */
+export function toolContextEra(ctx: Pick<ToolContext, 'era'>): ProtocolEra {
+  return ctx.era ?? 'legacy';
+}
+
+/**
+ * The slice of the SDK's per-request context this module uses beyond
+ * {@link CallerExtra}.
+ *
+ * Declared as an intersection with everything optional rather than by importing
+ * `ServerContext` wholesale, for the same reason `CallerExtra` exists: the 148
+ * handlers are also driven directly by tests with hand-built contexts, and a
+ * required `mcpReq` would force every one of them to fabricate a full SDK
+ * context. `CallerIdentityContract` is what keeps the shape honest against the
+ * SDK — `ServerContext extends CallerExtra` is asserted at compile time there,
+ * and `ServerContext['mcpReq']` really does carry both members below.
+ */
+export type ToolCallExtra = CallerExtra & {
+  mcpReq?: {
+    /** Aborted when the peer closes this request's response stream (item 11). */
+    signal?: AbortSignal;
+    /** Request-scoped `notifications/message` (item 10). */
+    log?: RequestLogSink['log'];
+  };
+};
 
 export type ProfileIdKey = 'user_id' | 'userId';
 
@@ -297,11 +334,14 @@ export function defineTool<I extends ZodRawShape>(
   // on confirmation via meta_confirm_action.
   // IMPORTANT: it takes clean args (without dryRun/idempotencyKey) — the meta-parameters
   // are handled in the handler above.
-  const execute = async (cleanArgs: Record<string, unknown>): Promise<CallToolResult> => {
+  const execute = async (
+    cleanArgs: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<CallToolResult> => {
     try {
       const response = spec.customExecute
         ? await spec.customExecute(cleanArgs, ctx)
-        : await executeHttpRequest(cleanArgs, spec, ctx);
+        : await executeHttpRequest(cleanArgs, spec, ctx, signal);
       const result: CallToolResult = {
         content: [
           {
@@ -317,10 +357,27 @@ export function defineTool<I extends ZodRawShape>(
       if (structured !== undefined) result.structuredContent = structured;
       return result;
     } catch (err) {
+      // A cancellation must PROPAGATE, not become a result (M3 item 11).
+      //
+      // Every other failure is deliberately turned into an `isError` payload so
+      // the agent can read and react to it — but that same conversion, applied
+      // to a cancelled call, is what would defeat the requirement: the
+      // idempotency ledger releases its lease when `execute` REJECTS, and
+      // remembers the value when it resolves. Returning an error payload here
+      // would memoise "the client hung up" under the caller's idempotency key
+      // and wedge every retry that reuses it for the whole TTL. Nobody is left
+      // to read the payload anyway — the stream it would travel on is the one
+      // that just closed.
+      if (signal?.aborted === true) throw err;
       return errorToMcpContent(err);
     }
   };
 
+  // Deliberately signal-FREE. This closure is handed to the pending store and
+  // replayed later by `meta_confirm_action`, which is a different JSON-RPC
+  // request with a different lifetime; binding it to the signal of the request
+  // that merely CREATED the pending action would cancel a human-approved money
+  // operation the moment the requesting client disconnected.
   const executePending = async (
     pendingArgs: Record<string, unknown>,
     pendingIdempotencyKey?: string,
@@ -343,8 +400,9 @@ export function defineTool<I extends ZodRawShape>(
 
   const handler = async (
     rawArgs: Record<string, unknown>,
-    extra: CallerExtra,
+    extra: ToolCallExtra,
   ): Promise<CallToolResult> => {
+    const signal = extra?.mcpReq?.signal;
     const args = rawArgs ?? {};
     const cleanArgs = destructive ? stripMeta(args) : args;
 
@@ -514,7 +572,7 @@ export function defineTool<I extends ZodRawShape>(
           idempotencyKey,
           spec.name,
           argsHash,
-          () => execute(cleanArgs),
+          () => execute(cleanArgs, signal),
         );
         return replay ? annotateReplay(entry.result) : entry.result;
       } catch (err) {
@@ -528,7 +586,7 @@ export function defineTool<I extends ZodRawShape>(
         throw err;
       }
     }
-    return execute(cleanArgs);
+    return execute(cleanArgs, signal);
   };
 
   // The SDK types the callback via an internal BaseToolCallback with its own inferred CallToolResult,
@@ -745,9 +803,11 @@ async function executeHttpRequest(
   cleanArgs: Record<string, unknown>,
   spec: ToolSpec,
   ctx: ToolContext,
+  signal?: AbortSignal,
 ): Promise<RequestResponse> {
   const { pathParams, query, body } = splitArgs(cleanArgs, spec, ctx);
   return ctx.client.request({
+    ...(signal !== undefined ? { signal } : {}),
     method: spec.method,
     path: spec.path,
     pathParams,

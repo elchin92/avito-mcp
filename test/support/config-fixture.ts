@@ -68,6 +68,13 @@ export function makeHttpConfig(overrides: Partial<HttpConfig> = {}): HttpConfig 
     allowedOrigins: [],
     maxSessions: 100,
     sessionIdleSec: 1800,
+    // M3.8. The modern leg's budgets, at the values buildHttpConfig() defaults
+    // them to (AVITO_MCP_HTTP_MAX_INFLIGHT / _MAX_STREAMS, 64 and 32). Required
+    // on HttpConfig, so every caller of this fixture needs them; before the
+    // fixture existed each of the fourteen literals carried its own copy, which
+    // is precisely the duplication this file was created to end.
+    maxInflight: 64,
+    maxStreams: 32,
     oauthTokenTtlSec: 3600,
     ...overrides,
   };

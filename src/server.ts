@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import type { ToolContext } from './core/tool-factory.js';
-import { PACKAGE_NAME, VERSION } from './version.js';
+import { MODERN_PROTOCOL_VERSION, PACKAGE_NAME, VERSION } from './version.js';
 
 function printHelp(): void {
   process.stdout.write(
@@ -47,6 +47,9 @@ function printHelp(): void {
       `  AVITO_MCP_IDEMPOTENCY_TTL_SEC   v0.7.0: TTL of idempotency ledger entries (default: 3600)\n` +
       `  AVITO_MCP_RUNTIME_STATE_DIR      Shared durable state directory (default: beside AVITO_TOKEN_FILE)\n` +
       `  AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS v0.7.0: max wait for cross-process token lock (default: 30000)\n` +
+      `  AVITO_MCP_PROTOCOL_ERA  legacy (default) | dual | modern — which MCP protocol era(s)\n` +
+      `                          this process serves. legacy = revision 2025-11-25 only, byte-for-byte\n` +
+      `                          the 1.3.x behaviour; dual also serves 2026-07-28; modern serves only it.\n` +
       `  AVITO_SAFE_MODE         DEPRECATED: use AVITO_MCP_MODE=read_only instead\n` +
       `  LOG_LEVEL               pino log level (default: info)\n` +
       `\n` +
@@ -60,8 +63,12 @@ function printHelp(): void {
       `  AVITO_MCP_OAUTH_TOKEN_TTL_SEC   access-token TTL (default: 3600)\n` +
       `  AVITO_MCP_OAUTH_STORE_FILE      optional durable single-writer OAuth state file\n` +
       `  AVITO_MCP_HTTP_AUTH_TOKEN       bearer-mode shared secret(s), comma-separated\n` +
-      `  AVITO_MCP_HTTP_MAX_SESSIONS     concurrent MCP session cap (default: 100)\n` +
-      `  AVITO_MCP_HTTP_SESSION_IDLE_SEC idle session TTL (default: 1800)\n` +
+      `  AVITO_MCP_HTTP_MAX_SESSIONS     legacy era only: concurrent MCP session cap (default: 100)\n` +
+      `  AVITO_MCP_HTTP_SESSION_IDLE_SEC legacy era only: idle session TTL (default: 1800)\n` +
+      `  AVITO_MCP_HTTP_MAX_INFLIGHT     2026 era: concurrent /mcp exchanges, incl. open\n` +
+      `                                  subscription streams; above it → 503 (default: 64)\n` +
+      `  AVITO_MCP_HTTP_MAX_STREAMS      2026 era: how many of those may be long-lived\n` +
+      `                                  subscriptions/listen streams (default: 32)\n` +
       `  AVITO_MCP_HTTP_ALLOWED_HOSTS    CSV — DNS-rebinding protection (Host allowlist)\n` +
       `  AVITO_MCP_HTTP_ALLOWED_ORIGINS  CSV — DNS-rebinding protection (Origin allowlist)\n` +
       `\n` +
@@ -114,15 +121,15 @@ async function printHealthAndExit(): Promise<void> {
 async function startServer(): Promise<void> {
   // Deferred so --version / --help don't trigger dotenv loading or config validation.
   const [
-    { config },
-    { logger, bindMcpLogger },
+    { config, protocolEraOf },
+    { logger },
     { AvitoClient },
     { domains },
     { PendingActionStore },
     { IdempotencyStore },
     { WebhookStore },
     { runtimeNamespace, runtimeStateDirectory },
-    { buildMcpServer },
+    { createServerFactory },
   ] = await Promise.all([
     import('./config.js'),
     import('./logger.js'),
@@ -165,13 +172,49 @@ async function startServer(): Promise<void> {
   const runHttpMcp = transportMode === 'http' || transportMode === 'both';
 
   // ── stdio transport (default) ──────────────────────────────────────────────
+  const protocolEra = protocolEraOf(config);
+  let stdioHandle: { close(): Promise<void> } | undefined;
   if (runStdio) {
-    const { StdioServerTransport } = await import('@modelcontextprotocol/server/stdio');
-    const server = buildMcpServer(baseCtx);
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    // After connect: mirror selected pino events to the stdio client as logging notifications.
-    bindMcpLogger(server);
+    const { StdioServerTransport, serveStdio } = await import('@modelcontextprotocol/server/stdio');
+    // ONE factory serves both eras (M3.2). It also owns the per-instance log-sink
+    // binding and its teardown — see createServerFactory.
+    const factory = createServerFactory(baseCtx, { background: true });
+
+    if (protocolEra === 'legacy') {
+      // Deliberately NOT serveStdio. A hand-constructed StdioServerTransport +
+      // connect() is legacy-era FOREVER — "hand-constructed instances and
+      // unclassified traffic are legacy-era" (DV-13 default posture) — which is
+      // precisely the guarantee `AVITO_MCP_PROTOCOL_ERA=legacy` makes: this
+      // process cannot answer 2026-07-28 even if a client asks. serveStdio, by
+      // contrast, owns the era decision and would serve a modern opening
+      // whether or not the operator asked for it, so routing the default
+      // through it would quietly make the flag advisory.
+      const server = await factory({ era: 'legacy' });
+      await server.connect(new StdioServerTransport());
+    } else {
+      // Dual/modern: serveStdio owns the opening exchange and pins ONE instance
+      // from the factory for the connection's lifetime. `legacy: 'serve'` keeps
+      // 2025-era clients working exactly as before; `legacy: 'reject'` answers
+      // them with the unsupported-protocol-version error naming our revisions.
+      //
+      // The transport is OURS rather than the default `StdioServerTransport`,
+      // for the two things the pin costs us — the silence about which era a
+      // connection landed on (M3.10) and the loss of per-message
+      // protocol-version validation — plus the `subscriptions/listen` filter
+      // narrowing the entry's own router does not do. See src/stdio-era.ts, and
+      // docs/adr/0001-protocol-era-limitations.md for what remains the SDK's.
+      const { createStdioEraTransport } = await import('./stdio-era.js');
+      const { subscribableResourceUris } = await import('./resources.js');
+      stdioHandle = serveStdio(factory, {
+        legacy: protocolEra === 'modern' ? 'reject' : 'serve',
+        transport: createStdioEraTransport({
+          era: protocolEra,
+          supportedModernVersions: [MODERN_PROTOCOL_VERSION],
+          subscribableUris: subscribableResourceUris(config),
+        }),
+        onerror: (err) => logger.warn({ err }, 'stdio serving error'),
+      });
+    }
 
     // A stdio run normally ends with its stdin pipe, but callers that spawn one per
     // tool call kill it instead. Without a handler SIGTERM is fatal immediately, and a
@@ -184,8 +227,12 @@ async function startServer(): Promise<void> {
         if (flushing) return;
         flushing = true;
         logger.debug({ signal }, 'avito-mcp stdio shutting down');
-        void client.rateLimiter
-          .flushPersisted()
+        // Closing the serveStdio handle releases the pinned instance and its
+        // log-sink binding. Undefined on the legacy path, whose lifecycle is
+        // unchanged from 1.3.x.
+        void Promise.resolve(stdioHandle?.close())
+          .catch((err) => logger.warn({ err }, 'error closing stdio connection'))
+          .then(() => client.rateLimiter.flushPersisted())
           .catch((err) => logger.warn({ err }, 'error flushing rate-limit state'))
           .finally(() => process.exit(0));
         setTimeout(() => process.exit(0), 2_000).unref();

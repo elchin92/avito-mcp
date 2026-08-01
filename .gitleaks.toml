@@ -1,0 +1,34 @@
+# gitleaks configuration for avito-mcp.
+#
+# The upstream ruleset stays in force in full. This file records the single
+# place where a rule provably fires on something that is not a credential, and
+# it narrows that exemption as far as gitleaks allows.
+[extend]
+useDefault = true
+
+# `test/baselines/legacy-1.3.3-wire.json` pins what the real 1.3.3 server
+# answered on the wire. Its `tools/list` step stores one entry per tool:
+#
+#     "meta_auth_status": "c99c926dfd444f1f6ca9735ba9d5b182"
+#
+# The value is `sha256(canonical(toolDefinition))` truncated to 32 hex
+# characters — see `digest()` in test/support/legacy-wire-bench.ts. Every one of
+# those 147 digests is recomputed from this branch's own tool definitions by
+# test/legacy-wire-regression.test.ts, so none of them can be a secret: a secret
+# is not derivable from the schema. The three that gitleaks reports are the
+# tools whose names contain "auth" or "api", which puts a generic-api-key
+# keyword next to a high-entropy value.
+#
+# The exemption below is three conditions ANDed together: the generic-api-key
+# rule only, that one file only, and a match shaped exactly like a digest-map
+# entry whose value is exactly 32 lowercase hex characters. A real credential
+# placed anywhere else in that same file is still reported.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Per-tool schema digests in the 1.3.3 wire baseline are hashes, not credentials"
+  condition = "AND"
+  paths = ['''^test/baselines/legacy-1\.3\.3-wire\.json$''']
+  regexTarget = "match"
+  regexes = ['''^[a-z0-9_]+": "[0-9a-f]{32}"$''']
