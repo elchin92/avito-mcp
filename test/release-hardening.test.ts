@@ -577,6 +577,17 @@ describe('public contract — supported protocol revisions', () => {
   });
 
   it('stays on the registry schema that exists, and inside its length limit', () => {
+    // WHAT THIS DOES AND DOES NOT CHECK, because the difference was overstated
+    // once already: the changelog entry for this work said both additions were
+    // "validated against the registry's published 2025-12-11 schema", and no
+    // test validates anything against that schema. Fetching it at test time
+    // would make the suite depend on a network; vendoring it would need a
+    // JSON-Schema validator this package does not depend on, and the document
+    // uses `not`, which the converter available here (`z.fromJSONSchema`)
+    // cannot express. So the schema was read by hand when the fields were
+    // written, and what is re-checked on every run is this: the pin, the one
+    // limit the schema imposes on a field we fill, and — in the two assertions
+    // above — that every revision claimed matches the code that serves it.
     const server = serverJson();
     // There is no revision-aligned successor to this schema: `/registry/*`
     // carries no protocol-revision marker and no changelog, and the registry
@@ -586,6 +597,18 @@ describe('public contract — supported protocol revisions', () => {
     // `description` is capped at 100 characters by that schema, which is why
     // the revision statement lives in `_meta` and in the env-var entry instead.
     expect(server.description?.length).toBeLessThanOrEqual(100);
+    // And the publisher block sits under the namespace the schema reserves for
+    // it, spelled exactly: `_meta` keys are namespaced strings, and a typo here
+    // is metadata no registry would ever read.
+    expect(Object.keys(server._meta ?? {})).toContain(PUBLISHER_META);
+  });
+
+  it('says in the changelog what is checked against the registry schema, and what is not', () => {
+    // The claim that was too strong, held to its correction. A future edit that
+    // restores "validated against the schema" has to make it true first.
+    const changelog = read('CHANGELOG.md');
+    expect(changelog).not.toMatch(/validated against the registry's published/);
+    expect(changelog).toContain('A full JSON-Schema validation is not run');
   });
 
   it('binds package.json and server.json to one identity', () => {
@@ -599,6 +622,41 @@ describe('public contract — supported protocol revisions', () => {
     expect(gate).toContain('server.json.packages[0].identifier');
   });
 
+  it('names both revisions in the package.json description, and marks the default', () => {
+    // The surface this statement was missing from, and the one with the widest
+    // audience: `description` is what npm renders on the package page and in
+    // `npm search`, so it is where somebody decides whether this server speaks
+    // their revision before installing anything. It carried neither date.
+    //
+    // Why here and not in a new key. `mcpName` is in this file because the MCP
+    // registry reads it; no consumer reads an invented `protocolRevisions`
+    // field, and this branch already refused to add one to `glama.json` for
+    // exactly that reason (see the test below). The registry-facing,
+    // machine-readable form of this statement lives in `server.json._meta`,
+    // where the schema has a place for it.
+    //
+    // `version` is untouched: it is the release number, and it is owned by the
+    // release gate.
+    const pkg = JSON.parse(read('package.json')) as { description?: string; version?: string };
+    const description = pkg.description ?? '';
+    for (const revision of SUPPORTED_PROTOCOL_VERSIONS) {
+      expect(description, `package.json description never names ${revision}`).toContain(revision);
+    }
+    expect(description).toContain('AVITO_MCP_PROTOCOL_ERA');
+    // Which one a default install answers — the same claim `server.json` makes,
+    // and the one that would be publicly false rather than merely incomplete.
+    const byDefault =
+      DEFAULT_PROTOCOL_ERA === 'modern' ? MODERN_PROTOCOL_VERSION : LEGACY_PROTOCOL_VERSION;
+    expect(description).toContain(`${byDefault} (default)`);
+    // And it stays a statement about the protocol rather than about the
+    // release: a package version in here would have to be updated on every
+    // publish, from the one file whose version field the release gate owns.
+    expect(
+      description,
+      'the description names the package version; that belongs to the release gate',
+    ).not.toContain(String(pkg.version));
+  });
+
   it('leaves glama.json at the one property its schema defines', () => {
     // https://glama.ai/mcp/schemas/server.json declares `maintainers` and
     // nothing else, so there is no field on that surface for a revision
@@ -608,6 +666,26 @@ describe('public contract — supported protocol revisions', () => {
     const glama = JSON.parse(read('glama.json')) as Record<string, unknown>;
     expect(Object.keys(glama).sort()).toEqual(['$schema', 'maintainers']);
     expect(glama.$schema).toBe('https://glama.ai/mcp/schemas/server.json');
+  });
+
+  it('states the compatibility promise the revisions come with', () => {
+    // Naming the two revisions is half of what block E asks the changelog for.
+    // The other half is the promise attached to them, and it is the half a
+    // reader acts on: whether the upgrade changes anything for the client they
+    // already run, and how to undo it if it does. Three parts, each checked
+    // against the code rather than against a remembered sentence.
+    const unreleased = unreleasedSection();
+    const byDefault =
+      DEFAULT_PROTOCOL_ERA === 'modern' ? MODERN_PROTOCOL_VERSION : LEGACY_PROTOCOL_VERSION;
+    // 1. Which revision an installation that sets nothing keeps answering.
+    expect(unreleased).toContain(DEFAULT_PROTOCOL_ERA);
+    expect(unreleased, `the changelog never says a default install answers ${byDefault}`).toMatch(
+      new RegExp(`${byDefault}[^.]*\\bonly\\b|\\bdefault\\b[^.]*${byDefault}`),
+    );
+    // 2. That the new revision is opt-in, not something an upgrade turns on.
+    expect(unreleased).toMatch(/[Nn]othing changes for an existing client until/);
+    // 3. And that the way back is the same one variable.
+    expect(unreleased).toMatch(/rollback|roll back/i);
   });
 
   it('says the same thing in the changelog and in both READMEs', () => {
