@@ -96,13 +96,13 @@ the only one available at connection scope.
 `src/stdio-era.ts` wraps the wire transport through the supported
 `options.transport` seam and:
 
-- emits **one** stderr line when a `dual` connection pins to legacy, naming the
+* emits **one** stderr line when a `dual` connection pins to legacy, naming the
   method that pinned it and stating that the pin is for the life of the
   connection — the M3.10 observability requirement, and the line an operator
   greps while rolling `dual` out;
-- keeps stdout untouched (on stdio, stdout is the protocol);
-- restores the per-message protocol-version check the pin costs — see §2 below;
-- narrows `subscriptions/listen` filters, as the HTTP leg does.
+* keeps stdout untouched (on stdio, stdout is the protocol);
+* restores the per-message protocol-version check the pin costs — see §2 below;
+* narrows `subscriptions/listen` filters, as the HTTP leg does.
 
 `test/modern-hardening.test.ts` pins all of this against a spawned server.
 
@@ -144,9 +144,8 @@ server nothing satisfies it. Two independent reasons:
    ```js
    const REQUIRED_CLIENT_CAPABILITIES_BY_METHOD = {};
    function requiredClientCapabilitiesForRequest(method) {
-     return Object.hasOwn(REQUIRED_CLIENT_CAPABILITIES_BY_METHOD, method)
-       ? REQUIRED_CLIENT_CAPABILITIES_BY_METHOD[method]
-       : void 0;
+       return Object.hasOwn(REQUIRED_CLIENT_CAPABILITIES_BY_METHOD, method)
+           ? REQUIRED_CLIENT_CAPABILITIES_BY_METHOD[method] : void 0;
    }
    ```
 
@@ -186,9 +185,9 @@ first commit that introduces one has to revisit this ADR.
 
 ## Consequences
 
-- The migration's 100 % criterion (`MIGRATION_PLAN.md` §1.2) item **A7** is
+* The migration's 100 % criterion (`MIGRATION_PLAN.md` §1.2) item **A7** is
   satisfied by this recorded decision rather than by a code path.
-- Requirement **B** (no client loses service) is unaffected by either item:
+* Requirement **B** (no client loses service) is unaffected by either item:
   the stdio pin degrades a modern client to legacy, never to failure.
-- Both items are re-checked automatically: §1 by the stdio suite in
+* Both items are re-checked automatically: §1 by the stdio suite in
   `test/modern-hardening.test.ts`, §2 by the guard in the same file.
