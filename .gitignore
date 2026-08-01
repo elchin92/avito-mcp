@@ -45,3 +45,11 @@ deploy/Caddyfile.bak*
 # Test scratch directories (see test/support/sandbox.ts — they must live on the repo
 # filesystem, not on tmpfs, or the lease tests silently lose what they can detect)
 test/.sandbox/
+
+# Migration working set (M0.5): the 2026-07-28 spec corpus and the migration
+# notes are research inputs, not shippable sources. They stay untracked so they
+# can never reach git — and `files` in package.json plus .dockerignore keep them
+# out of the tarball and the image even while they sit in the working tree.
+docs/mcp-2026-07-28/
+MIGRATION_PLAN.md
+MIGRATION_PROGRESS.md

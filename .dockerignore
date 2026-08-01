@@ -8,6 +8,12 @@ coverage
 test
 swaggers/*.local.json
 
+# Research material for the protocol migration — never part of a runtime image.
+# The Dockerfile also copies docs/ file by file, so this is a second barrier.
+docs/mcp-2026-07-28
+MIGRATION_PLAN.md
+MIGRATION_PROGRESS.md
+
 # Secrets / local state — MUST never enter the image.
 .env*
 !.env.example
