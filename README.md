@@ -557,9 +557,9 @@ The secret is part of the path, so the URL is unguessable — that's the auth. G
 | `messenger_get_webhook_events` (tool, read)           | Drain buffered events — filter by `chat_id`, `since`, `limit`                          |
 | `messenger_get_webhook_status` (tool, read)           | Receiver stats: retained / total received / last received at / buffer size             |
 | `messenger_register_webhook` (tool, ⚠️ public)        | Subscribe only the operator-configured public URL with Avito; confirmed by default     |
-| `avito://webhook/events` (resource, **subscribable**) | The same events as an MCP resource; `resources/subscribe` for live push to your client |
+| `avito://webhook/events` (resource, **subscribable**) | The same events as an MCP resource; `resources/subscribe` (2025-11-25) or `subscriptions/listen` (2026-07-28) for live push to your client |
 
-A typical loop: subscribe to `avito://webhook/events`, and on each `notifications/resources/updated` read the new event, draft a reply, and (after confirmation) send it with `messenger_post_send_message`.
+A typical loop: subscribe to `avito://webhook/events` (`resources/subscribe` on 2025-11-25, `subscriptions/listen` on 2026-07-28), and on each `notifications/resources/updated` read the new event, draft a reply, and (after confirmation) send it with `messenger_post_send_message`.
 
 ---
 

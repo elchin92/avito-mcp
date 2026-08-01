@@ -3,8 +3,13 @@ name: CI
 on:
   push:
     branches: [main]
+  # Deliberately UNFILTERED. With `branches: [main]` a stacked pull request —
+  # one feature branch targeting another, which is how the 2026-07-28 migration
+  # is being landed — matches no trigger at all and gets zero checks, while the
+  # PR page still shows a green "no checks" state. The filter saved nothing:
+  # every PR eventually reaches main, so the work runs either way; all it did
+  # was move the run to the last possible moment.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read

@@ -178,6 +178,20 @@ describe('release and deployment hardening', () => {
     expect(installer).toContain('systemctl restart avito-mcp.service');
   });
 
+  it('runs CI on every pull request, including a stacked one', () => {
+    // M6.4/M6.6. `pull_request: branches: [main]` matches no stacked PR (a
+    // feature branch targeting another feature branch), so an entire migration
+    // chain can be reviewed and merged with zero checks having run. The absence
+    // of the filter is the assertion; without this test it would be restored by
+    // the next person tidying the workflow.
+    const ci = read('.github/workflows/ci.yml');
+    expect(ci).toMatch(/^ {2}pull_request:\s*$/m);
+    expect(ci).not.toMatch(/pull_request:\s*\n\s*branches:/);
+    // The push trigger stays pinned to main: a branch push and its PR would
+    // otherwise run the whole matrix twice.
+    expect(ci).toMatch(/push:\s*\n\s*branches: \[main\]/);
+  });
+
   it('keeps dependency and secret scans blocking and actions SHA-pinned', () => {
     const ci = read('.github/workflows/ci.yml');
     expect(ci).not.toContain('continue-on-error');

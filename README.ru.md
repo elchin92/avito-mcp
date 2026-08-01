@@ -557,9 +557,9 @@ POST {AVITO_MCP_WEBHOOK_PUBLIC_URL}{AVITO_MCP_WEBHOOK_PATH}/{AVITO_MCP_WEBHOOK_S
 | `messenger_get_webhook_events` (tool, read)           | Забрать буфер событий — фильтры `chat_id`, `since`, `limit`                        |
 | `messenger_get_webhook_status` (tool, read)           | Статистика приёмника: хранится / всего принято / последнее событие / размер буфера |
 | `messenger_register_webhook` (tool, ⚠️ public)        | Подписать только настроенный оператором URL; по умолчанию требует confirmation     |
-| `avito://webhook/events` (resource, **subscribable**) | Те же события как MCP-resource; `resources/subscribe` для live-пуша в клиент       |
+| `avito://webhook/events` (resource, **subscribable**) | Те же события как MCP-resource; `resources/subscribe` (2025-11-25) или `subscriptions/listen` (2026-07-28) для live-пуша в клиент |
 
-Типичный цикл: подписаться на `avito://webhook/events`, на каждый `notifications/resources/updated` прочитать новое событие, составить ответ и (после подтверждения) отправить через `messenger_post_send_message`.
+Типичный цикл: подписаться на `avito://webhook/events` (`resources/subscribe` на 2025-11-25, `subscriptions/listen` на 2026-07-28), на каждый `notifications/resources/updated` прочитать новое событие, составить ответ и (после подтверждения) отправить через `messenger_post_send_message`.
 
 ---
 
