@@ -370,6 +370,86 @@ describe('a tools/call frame the codec refuses before dispatch', () => {
   }, 30_000);
 });
 
+describe('a request body that does not parse at all', () => {
+  /**
+   * The three ways `express.json()` refuses a body on `/mcp`. They are three
+   * and not one because only the middle one is "not JSON": the first is JSON
+   * that stops, and the third is valid JSON that strict mode rejects for not
+   * being an object.
+   */
+  const UNREADABLE = ['{"jsonrpc":"2.0","id":1,', 'not json at all', '"a bare string"'];
+
+  /** POSTs raw bytes to `/mcp` — no frame, because the bytes ARE the test. */
+  async function postRaw(
+    rig: Rig,
+    body: string,
+    sessionId?: string,
+  ): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${rig.base}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        host: rig.host,
+        ...(sessionId ? { 'mcp-session-id': sessionId } : {}),
+      },
+      body,
+    });
+    return { status: res.status, body: await res.json() };
+  }
+
+  // This is the ONE era difference in this file that cannot be shown on a
+  // single process. The era of a POST is read out of its BODY, so a body that
+  // did not parse has no era: the split is by POSTURE, and a posture is a
+  // process. Two rigs, stated rather than worked around.
+  it('is 1.3.3’s bad_request under the default (legacy) posture', async () => {
+    const rig = await startRig('legacy');
+    for (const body of UNREADABLE) {
+      const answer = await postRaw(rig, body);
+      expect(answer.status, body).toBe(400);
+      // Not a JSON-RPC frame at all. That is what a real 1.3.3 answers here —
+      // measured, in `test/baselines/legacy-1.3.3-wire.json` steps 38–40 — and
+      // the 2025 leg's contract is that process, not the newer revision's
+      // preference.
+      expect(answer.body, body).toEqual({ error: 'bad_request' });
+    }
+  }, 30_000);
+
+  it('is -32700 once the process serves the modern era', async () => {
+    for (const era of ['dual', 'modern'] as const) {
+      const rig = await startRig(era);
+      for (const body of UNREADABLE) {
+        const answer = await postRaw(rig, body);
+        expect(answer.status, `${era} ${body}`).toBe(400);
+        // `PARSE_ERROR = -32700`, with a typed `ParseError` interface of its own
+        // — new in revision 2026-07-28 (`docs/mcp-2026-07-28/schema-2.md`).
+        expect(answer.body, `${era} ${body}`).toMatchObject({
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: -32700 },
+        });
+      }
+    }
+  }, 60_000);
+
+  it('leaves the body failures 1.3.3 already answered as JSON-RPC alone', async () => {
+    // An empty body is not a parse failure: `express.json()` hands the MCP layer
+    // `{}` and the SDK refuses the ENVELOPE, which 1.3.3 did too. Pinned on the
+    // legacy posture because that is the leg the split above could have moved,
+    // and on an OPEN session so the answer is the envelope check rather than the
+    // session check that would otherwise fire first.
+    const rig = await startRig('legacy');
+    const sid = await openLegacySession(rig);
+    const answer = await postRaw(rig, '', sid);
+    expect(answer.status).toBe(400);
+    expect(answer.body).toMatchObject({
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32700, message: 'Parse error: Invalid JSON-RPC message' },
+    });
+  }, 30_000);
+});
+
 describe('the prefix restoration is scoped to errors the SDK raises', () => {
   it('leaves an unknown METHOD unprefixed, exactly as 1.3.3 did', async () => {
     // The prefix came from `McpError`'s constructor, so only errors THROWN by a

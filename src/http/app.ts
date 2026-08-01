@@ -17,7 +17,7 @@ import express, { type ErrorRequestHandler, type RequestHandler } from 'express'
 import { timingSafeEqual } from 'node:crypto';
 import type { Server as HttpServer } from 'node:http';
 
-import { protocolEraOf, type Config, type HttpConfig } from '../config.js';
+import { protocolEraOf, type Config, type HttpConfig, type ProtocolEraMode } from '../config.js';
 import type { ToolContext } from '../core/tool-factory.js';
 import { hasConfiguredCredentials } from '../core/credentials.js';
 import { isRuntimeStateReady, runtimeStateDirectory } from '../core/runtime-state.js';
@@ -101,15 +101,44 @@ function rebindingGuard(config: HttpConfig): RequestHandler {
 }
 
 /**
- * Turns an `express.json()` body failure on `/mcp` into a JSON-RPC answer.
+ * Turns an `express.json()` body failure on `/mcp` into a JSON-RPC answer — on
+ * the eras that are allowed to have one.
  *
- * Without this, a truncated or non-JSON POST never reaches the MCP layer at
- * all: `express.json()` throws, the app-wide error handler catches it, and the
- * caller gets `400 {"error":"bad_request"}` — an answer no MCP client can parse
- * as a protocol error, on an endpoint whose entire content type is JSON-RPC.
- * `-32700 Parse error` is the base JSON-RPC code for exactly this condition and
- * is era-neutral: it means the same thing on 2025-11-25 and on 2026-07-28, so
- * one handler covers both legs.
+ * ── What the answer is, and why it is not the same on both legs ─────────────
+ *
+ * Without this handler a truncated or non-JSON POST never reaches the MCP layer
+ * at all: `express.json()` throws, the app-wide error handler catches it, and
+ * the caller gets `400 {"error":"bad_request"}` — an answer no MCP client can
+ * parse as a protocol error, on an endpoint whose entire content type is
+ * JSON-RPC. `-32700` is the base JSON-RPC code for exactly this condition, and
+ * revision 2026-07-28 gives it a name and a typed interface of its own
+ * (`PARSE_ERROR = -32700`, `interface ParseError`, new in this revision —
+ * `docs/mcp-2026-07-28/schema-2.md`, `api-1.md`). On the MODERN leg it is
+ * simply the right answer.
+ *
+ * It is not the answer 1.3.3 gave. A real 1.3.3 process answers exactly
+ * `400 {"error":"bad_request"}` here, and the compatibility contract for the
+ * 2025 leg is what that process does, not what the newer revision would prefer
+ * — the same reasoning that keeps `-32000`/`-32001` on the legacy session
+ * answers (`src/core/rpc-codes.ts`). Introducing `-32700` on the legacy leg was
+ * a deliberate step when the era split did not exist yet; now that it does, the
+ * conformance improvement belongs to the leg it conforms to. Both halves are
+ * pinned in `test/legacy-wire-regression.test.ts` (steps 38–40, against a real
+ * 1.3.3) and in `test/modern-hardening.test.ts`.
+ *
+ * ── Why `dual` answers the modern way ───────────────────────────────────────
+ *
+ * Under `dual` the era of a POST comes from its BODY: `dispatchByEra` hands the
+ * bytes to the SDK's own `classifyInboundRequest` and sends only what that calls
+ * `legacy` to the 2025 manager. A body that did not parse cannot be classified
+ * at all, so it is not legacy traffic by the only definition this process has —
+ * and the existing rule for everything the classifier does not call legacy is
+ * already "the modern leg owns it". Answering `bad_request` there would degrade
+ * a 2026 client's parse error to a non-JSON-RPC blob in order to protect a 2025
+ * client from an answer it cannot have depended on: nothing sends a malformed
+ * body on purpose, so no working client is reproducing this exchange. The
+ * default posture — what every 1.3.x operator gets without setting anything —
+ * stays byte-identical to 1.3.3, which is what the contract is about.
  *
  * `id: null` because there is, by construction, no id to echo — the bytes that
  * would have carried it did not parse.
@@ -117,24 +146,34 @@ function rebindingGuard(config: HttpConfig): RequestHandler {
  * A body that is too large keeps its `413`: that is a transport-level limit
  * with its own status, and dressing it as a parse error would be a lie.
  */
-const jsonRpcBodyError: ErrorRequestHandler = (err, _req, res, next) => {
-  const status = (err as { status?: number } | undefined)?.status;
-  const type = (err as { type?: string } | undefined)?.type;
-  if (res.headersSent) {
+function jsonRpcBodyError(era: ProtocolEraMode): ErrorRequestHandler {
+  return (err, _req, res, next) => {
+    const status = (err as { status?: number } | undefined)?.status;
+    const type = (err as { type?: string } | undefined)?.type;
+    if (res.headersSent) {
+      next(err);
+      return;
+    }
+    if (era === 'legacy') {
+      // Hand it to the app-wide handler, which is the code path 1.3.3 took and
+      // therefore the code path that produces 1.3.3's `{"error":"bad_request"}`.
+      // Falling through rather than writing that body here keeps ONE place that
+      // decides what a generic express failure looks like.
+      next(err);
+      return;
+    }
+    if (status === 400 && (type === 'entity.parse.failed' || err instanceof SyntaxError)) {
+      logger.warn({ err: (err as Error).message }, 'malformed JSON-RPC body on /mcp');
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: { code: -32700, message: 'Parse error: the request body is not valid JSON' },
+        id: null,
+      });
+      return;
+    }
     next(err);
-    return;
-  }
-  if (status === 400 && (type === 'entity.parse.failed' || err instanceof SyntaxError)) {
-    logger.warn({ err: (err as Error).message }, 'malformed JSON-RPC body on /mcp');
-    res.status(400).json({
-      jsonrpc: '2.0',
-      error: { code: -32700, message: 'Parse error: the request body is not valid JSON' },
-      id: null,
-    });
-    return;
-  }
-  next(err);
-};
+  };
+}
 
 /**
  * Starts the Express listener. Throws (fail-closed) on an insecure remote config.
@@ -234,11 +273,12 @@ export async function startHttpServer(
       );
     }
 
+    const era = protocolEraOf(config);
     let mcp: ReturnType<typeof createMcpHttpHandler>;
     try {
       // M3.3: the era posture decides which serving legs are mounted at all.
       // The default `legacy` mounts exactly what M2 mounted, and nothing else.
-      mcp = createMcpHttpHandler(baseCtx, h, protocolEraOf(config));
+      mcp = createMcpHttpHandler(baseCtx, h, era);
     } catch (err) {
       await closeOAuth?.().catch(() => undefined);
       throw err;
@@ -259,7 +299,7 @@ export async function startHttpServer(
       '/mcp',
       guard,
       express.json({ limit: '4mb' }),
-      jsonRpcBodyError,
+      jsonRpcBodyError(era),
       mcp.handleRequest,
     );
   }

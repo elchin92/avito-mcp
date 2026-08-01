@@ -627,7 +627,20 @@ describe('a malformed JSON body is answered as a JSON-RPC parse error', () => {
     expect(body.id).toBeNull();
   });
 
-  it('answers the same way on the legacy leg', async () => {
+  it('does NOT answer that way under the default (legacy) posture', async () => {
+    // This assertion used to read "answers the same way on the legacy leg",
+    // and that was the defect. `-32700` is the right answer on revision
+    // 2026-07-28 — which is why the case above exists — but it is not the
+    // answer a real 1.3.3 gives. That is `{"error":"bad_request"}`, and it is
+    // not a JSON-RPC frame at all: measured, in
+    // `test/baselines/legacy-1.3.3-wire.json`, steps 38–40. Applying the
+    // conformance fix to both legs improved a wire that 2025 clients were
+    // already shipped, which is the one thing the legacy leg may not do.
+    //
+    // The split is argued in `src/http/app.ts` and asserted from both sides in
+    // `test/wire-error-shapes.test.ts`. What is pinned HERE is the negative, so
+    // that restoring the one-handler-for-both-legs shortcut means deleting a
+    // test that says why it was wrong.
     const rig = await startRig('legacy');
     const res = await fetch(`${rig.base}/mcp`, {
       method: 'POST',
@@ -639,8 +652,7 @@ describe('a malformed JSON body is answered as a JSON-RPC parse error', () => {
       body: 'not json at all',
     });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error?: { code: number } };
-    expect(body.error?.code).toBe(-32700);
+    expect(await res.json()).toEqual({ error: 'bad_request' });
   });
 });
 
