@@ -267,6 +267,109 @@ describe('prompts/get with a required argument missing', () => {
   }, 30_000);
 });
 
+describe('a tools/call frame the codec refuses before dispatch', () => {
+  /**
+   * The four shapes a `tools/call` frame can be wrong in, chosen so the class
+   * cannot be mistaken for "something about `name`": a required member absent,
+   * the whole `params` object absent, a required member mistyped, and the
+   * OPTIONAL `arguments` mistyped. `arguments` is optional on revision
+   * 2025-11-25 — this server accepts a call that omits it — so the only way to
+   * fail on it is to send it of the wrong type.
+   */
+  const MALFORMED = [
+    {
+      what: 'params carry no name',
+      params: { arguments: {} } as unknown,
+      expect: /"path": \[\n\s+"params",\n\s+"name"/,
+    },
+    {
+      what: 'no params member at all',
+      params: undefined,
+      expect: /"path": \[\n\s+"params"\n\s+\]/,
+    },
+    {
+      what: 'name is a number',
+      params: { name: 42, arguments: {} } as unknown,
+      expect: /expected string, received number/,
+    },
+    {
+      what: 'the optional arguments member is a string',
+      params: { name: 'meta_capabilities', arguments: 'nope' } as unknown,
+      expect: /expected record, received string/,
+    },
+  ] as const;
+
+  it('is 1.3.3’s bare -32603 issue dump on the 2025 wire', async () => {
+    const rig = await startRig('dual');
+    const sid = await openLegacySession(rig);
+
+    for (const probe of MALFORMED) {
+      const answer = await legacyPost(
+        rig,
+        {
+          jsonrpc: '2.0',
+          id: 'probe',
+          method: 'tools/call',
+          ...(probe.params !== undefined ? { params: probe.params } : {}),
+        },
+        sid,
+      );
+      const error = errorOf(answer)!;
+
+      // v1 validated the whole request with `RequestSchema.parse()` inside
+      // `Protocol.setRequestHandler` and caught nothing, so the client received
+      // the protocol's fallback: `-32603`, because a `ZodError` carries no
+      // `code`, and `ZodError.message` — the pretty-printed issue ARRAY — as
+      // the text. v2 catches the same failure in a codec step it added for
+      // `tools/call` alone and answers `-32602 Invalid tools/call request: …`.
+      expect(error.code, probe.what).toBe(-32603);
+      expect(error.message, probe.what).toMatch(probe.expect);
+      // No `MCP error` prefix: that came from `McpError`'s constructor, and a
+      // `ZodError` never went through it. Getting this wrong is the easy way to
+      // "restore" the code and still ship a different string.
+      expect(error.message.startsWith('['), probe.what).toBe(true);
+      expect(error.message, probe.what).not.toContain('MCP error');
+      expect(error.message, probe.what).not.toContain('Invalid tools/call request');
+    }
+  }, 30_000);
+
+  it('is the SDK’s -32602 on the 2026 wire', async () => {
+    const rig = await startRig('dual');
+    // `Mcp-Name` is derived from `params.name`, which is the member under test,
+    // so it is pinned explicitly — otherwise the probe would be measuring the
+    // header rule (`-32020`) rather than the codec.
+    const modern = errorOf(
+      await modernPost(rig, 'tools/call', { arguments: {} }, { name: 'meta_capabilities' }),
+    )!;
+
+    // Nothing in revision 2026-07-28 asks for a bare issue dump under an
+    // INTERNAL error code. A malformed member is `-32602`, and the SDK names
+    // the method that was malformed — strictly better, and kept.
+    expect(modern.code).toBe(-32602);
+    expect(modern.message).toContain('Invalid tools/call request: ');
+    expect(modern.message).not.toContain('MCP error');
+  }, 30_000);
+
+  it('does not drag the primitives v2 never pre-validated with it', async () => {
+    // `Server._wrapHandler` installs the codec check for `tools/call` and for
+    // nothing else, so `resources/read` and `prompts/get` still take v1's route
+    // on BOTH eras — which means the legacy repair above must be scoped to the
+    // one method that regressed. A blanket rule would move these two, and this
+    // is the assertion that says so.
+    const rig = await startRig('dual');
+    const sid = await openLegacySession(rig);
+
+    for (const method of ['resources/read', 'prompts/get']) {
+      const legacy = errorOf(await legacyCall(rig, sid, method, {}))!;
+      const modern = errorOf(await modernPost(rig, method, {}))!;
+      expect(legacy.code, method).toBe(-32603);
+      expect(legacy.message.startsWith('['), method).toBe(true);
+      expect(modern.code, method).toBe(-32603);
+      expect(modern.message.startsWith('['), method).toBe(true);
+    }
+  }, 30_000);
+});
+
 describe('the prefix restoration is scoped to errors the SDK raises', () => {
   it('leaves an unknown METHOD unprefixed, exactly as 1.3.3 did', async () => {
     // The prefix came from `McpError`'s constructor, so only errors THROWN by a

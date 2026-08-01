@@ -11,7 +11,7 @@
  * changed. `test/legacy-wire-regression.test.ts` is what caught it, by diffing
  * against a real 1.3.3 process rather than against this branch.
  *
- * ── The three v1→v2 changes restored here, with the SDK code that caused each ─
+ * ── The four v1→v2 changes restored here, with the SDK code that caused each ─
  *
  * 1. `tools/call` on an unknown tool. v1 raised the lookup failure INSIDE the
  *    handler's try, so its own catch turned it into a tool result:
@@ -46,6 +46,22 @@
  *    PARSED `URL`; v2 throws `new ResourceNotFoundError(request.params.uri)`,
  *    which rewords the message AND attaches `data: { uri }` AND echoes the
  *    caller's RAW string.
+ *
+ * 4. A MALFORMED `tools/call` frame — `params` absent, `name` absent or of the
+ *    wrong type, `arguments` of the wrong type. v2 added a codec validation
+ *    step in front of the handler, for `tools/call` and for no other method:
+ *
+ *        const validatedRequest = codec.validateRequest("tools/call", request);
+ *        if (!validatedRequest.ok) throw new ProtocolError(
+ *            ProtocolErrorCode.InvalidParams,
+ *            `Invalid tools/call request: ${validatedRequest.message}`);   // v2
+ *
+ *    v1 had no such step: the request schema's own `parse()` threw a `ZodError`
+ *    that nothing caught, so the client got the protocol's fallback — `-32603`,
+ *    and `ZodError.message`, which is the pretty-printed issue ARRAY — with no
+ *    prefix, because a `ZodError` never went through `McpError`'s constructor.
+ *    Both the code and the text moved, on the most-called method there is.
+ *    See {@link asRefusedToolCallFrame}.
  *
  * ── The one thing here that is not a restoration ────────────────────────────
  *
@@ -248,15 +264,71 @@ function resourceReadShape(stored: StoredHandler, era: ProtocolEra): StoredHandl
  *
  * Matched by their exact text — built from the name in THIS request — rather
  * than by "any ProtocolError from tools/call", because the handler this wrapper
- * sits outside of raises other `-32602`s that 1.3.3 never answered as tool
- * results (`Invalid tools/call request: …` and `Invalid tools/call result: …`,
- * from the codec validation `Server._wrapHandler` adds around every call).
- * Converting those too would invent a shape rather than restore one.
+ * sits outside of raises other `-32602`s that 1.3.3 did not answer this way.
+ * Two of them, both from the codec validation `Server._wrapHandler` adds around
+ * `tools/call`: `Invalid tools/call request: …`, which 1.3.3 answered as a
+ * JSON-RPC error and not as a tool result (see {@link asRefusedToolCallFrame},
+ * which restores that separately and to a MEASURED shape), and `Invalid
+ * tools/call result: …`, which is a failure of OUR OWN output and has no 1.3.3
+ * counterpart at all — v1 never validated a result against the wire schema, so
+ * there is nothing to restore and converting it would invent a shape.
  */
 function isRelocatedLookupRefusal(error: unknown, toolName: string): error is ProtocolError {
   if (!ProtocolError.isInstance(error)) return false;
   if (error.code !== ProtocolErrorCode.InvalidParams) return false;
   return error.message === `Tool ${toolName} not found` || error.message === `Tool ${toolName} disabled`;
+}
+
+/**
+ * The prefix v2's PRE-DISPATCH codec validation puts on a refused `tools/call`
+ * frame — `Server._wrapHandler`, built as
+ * `` `Invalid tools/call request: ${validatedRequest.message}` ``.
+ *
+ * This step is new in v2 and exists for `tools/call` and for nothing else: the
+ * generic branch of `_wrapHandler` never calls `codec.validateRequest`. So the
+ * same malformation on `resources/read` or `prompts/get` still takes v1's route
+ * — the request schema's own parse failure escapes the handler as a plain
+ * `ZodError` — and only `tools/call` acquired a second, differently-shaped
+ * refusal. Both halves of that are pinned in
+ * `test/legacy-wire-regression.test.ts`.
+ */
+const CODEC_REQUEST_REFUSAL_PREFIX = 'Invalid tools/call request: ';
+
+/**
+ * A refused `tools/call` FRAME, re-thrown the way 1.3.3 threw it: not as an
+ * `McpError` at all.
+ *
+ * v1 validated the whole request with `RequestSchema.parse(request)` inside
+ * `Protocol.setRequestHandler` and did nothing to catch the result, so a
+ * malformed frame reached the client as the protocol's fallback: `code`
+ * `-32603` (the `ZodError` carries no `code`) and `message` = `ZodError.message`,
+ * which zod v4 defines as `JSON.stringify(this.issues, replacer, 2)`. The wire
+ * answer was a bare, pretty-printed issue ARRAY under an INTERNAL error code.
+ *
+ * v2 answers the same frame `-32602 Invalid tools/call request: <the same
+ * array>`. Both the code and the wording moved, on the most-called method in
+ * the protocol, and no self-comparison could see it because both eras of this
+ * branch moved together.
+ *
+ * The reproduction is exact rather than approximate because the text after the
+ * prefix IS the same issue dump — v2's codec renders the failure through the
+ * same zod error. This function therefore forwards that text verbatim instead
+ * of rebuilding it: a future SDK that reworded the dump would turn the bench
+ * red, which is the correct outcome, whereas a hand-rolled copy would silently
+ * disagree with what the server actually validated.
+ *
+ * A plain `Error`, not a `ProtocolError`, for two reasons that are the same
+ * reason: 1.3.3 threw a plain `ZodError` here, so `-32603` must arrive as the
+ * protocol's FALLBACK code, and `legacyErrorMessages` — which wraps this
+ * handler from the outside — must not stamp `MCP error -32603: ` on the front
+ * of it. It restamps `ProtocolError`s only, exactly because v1's prefix came
+ * from `McpError`'s constructor and a `ZodError` never went through it.
+ */
+function asRefusedToolCallFrame(error: unknown): Error | undefined {
+  if (!ProtocolError.isInstance(error)) return undefined;
+  if (error.code !== ProtocolErrorCode.InvalidParams) return undefined;
+  if (!error.message.startsWith(CODEC_REQUEST_REFUSAL_PREFIX)) return undefined;
+  return new Error(error.message.slice(CODEC_REQUEST_REFUSAL_PREFIX.length));
 }
 
 /**
@@ -295,15 +367,25 @@ function soleErrorText(result: unknown): string | undefined {
 function legacyToolCallShape(stored: StoredHandler): StoredHandler {
   return async (request, ctx) => {
     const toolName = request.params?.name;
-    if (typeof toolName !== 'string') return stored(request, ctx);
 
     let result: unknown;
     try {
       result = await stored(request, ctx);
     } catch (error) {
+      // First, because it is the branch a malformed frame takes and a malformed
+      // frame has no usable `name` to match anything else against. Reached
+      // whether or not `params.name` is a string — that IS the condition here.
+      const refusedFrame = asRefusedToolCallFrame(error);
+      if (refusedFrame !== undefined) throw refusedFrame;
+      if (typeof toolName !== 'string') throw error;
       if (!isRelocatedLookupRefusal(error, toolName)) throw error;
       return toolErrorResult(messageAs133(error.code, error.message));
     }
+
+    // Only reachable with a well-formed frame — the codec refuses every other
+    // one above — but the guard stays, because the prefixes below are built
+    // from the tool's name and a non-string one would build nonsense.
+    if (typeof toolName !== 'string') return result;
 
     const text = soleErrorText(result);
     if (text === undefined) return result;
