@@ -12,9 +12,10 @@
  * So every claim in the table is re-derived here from the repository:
  *
  *   • every row marked «покрыто» must name at least one test, and every named
- *     test must exist — the FILE must be on disk and the TITLE must appear in
- *     it verbatim, wherever in the row it is named (a guard test cited inside a
- *     justification is a claim about this repository too);
+ *     test must exist — the FILE must be on disk and the TITLE must be one of
+ *     the titles that file declares, MATCHED WHOLE, wherever in the row it is
+ *     named (a guard test cited inside a justification is a claim about this
+ *     repository too);
  *   • every row NOT marked «покрыто» must carry a justification, and that
  *     justification must RESOLVE — see below;
  *   • every requirement of §1.2.A (all sixteen) must have a row, and blocks
@@ -44,11 +45,30 @@
  *     the decision (an ADR, a module, a guard test), and every path it names
  *     must exist;
  *   • and no non-covered row may defer into a task this repository has already
- *     CLOSED. Closure is read off two things and nothing else: the task named
- *     in a test TITLE (`describe('M5.1 — …')`), and the task named on the
- *     `Context:` line of an accepted ADR. Both are places where naming a task
- *     asserts "the work is here"; a task named in a comment asserts nothing,
- *     which is why comments are not read.
+ *     CLOSED. Closure is read off three things and nothing else: the task named
+ *     in a test TITLE (`describe('M5.1 — …')`), the task named on the `Context:`
+ *     line of an accepted ADR, and the task a test file claims as its own
+ *     subject on the opening line of its header block (`M4.2 acceptance: …`).
+ *     All three are places where naming a task asserts "the work is here"; a
+ *     task named anywhere else in a comment asserts nothing, which is why the
+ *     rest of the comments are not read.
+ *
+ * ── Why the header block is read, after it was not ──────────────────────────
+ * The first version of this rule read titles and ADRs only, and argued that
+ * comments assert nothing. The exemption it actually created was its own: THIS
+ * file's header opens with `M6.2 — the guard that makes docs/conformance.md an
+ * ARTIFACT`, which is the only place M6.2 is claimed anywhere in the repository.
+ * So the one task the closure check could never see was the task the closure
+ * check itself delivers, and a row deferring "into M6.2" stayed green while the
+ * guard it deferred into was running. The same held for `M6.1` (the era matrix
+ * lives in `test/support/era-matrix.ts`, a helper with no titles of its own) and
+ * for `M3.9`.
+ *
+ * The distinction that survives is not comment-vs-title, it is claim-vs-mention.
+ * A line that OPENS a test file's header block with `M4.2 acceptance:` is the
+ * file saying what it delivers; `the limit arrives in M3.8`, mid-sentence in
+ * some other paragraph, is a remark about work that may not exist. Only the
+ * first form is read, and only in the leading block of a file under `test/`.
  *
  * That last rule is the one that makes the table self-correcting rather than
  * merely well-intentioned: the commit that closes M5.1 turns every row still
@@ -247,8 +267,116 @@ function everyFileUnder(directory: string, suffix: string): string[] {
   return found;
 }
 
-/** The string literal of a `describe(…)` / `it(…)` / `test(…)` call. */
-const SUITE_TITLE = /\b(?:describe|it|test)(?:\.\w+)?\s*\(\s*(['"`])((?:\\.|(?!\1)[^\\])*)\1/g;
+/** A `describe` / `it` / `test` call, with any modifiers (`.each`, `.skip`, …). */
+const SUITE_CALL = /\b(?:describe|it|test)((?:\.\w+)*)\s*\(/g;
+
+/**
+ * Reads a quoted literal starting at `at`, returning its TEXT — escapes
+ * resolved, so `express.json()\'s` compares equal to what the table quotes.
+ * Returns undefined for a template literal carrying a substitution: a title
+ * assembled at run time has no verbatim form to cite, and pretending otherwise
+ * would let the table cite a title that never appears on any run.
+ */
+function readLiteral(code: string, at: number): { text: string; end: number } | undefined {
+  const quote = code[at];
+  if (quote !== "'" && quote !== '"' && quote !== '`') return undefined;
+  let text = '';
+  for (let index = at + 1; index < code.length; index += 1) {
+    const character = code[index]!;
+    if (character === '\\') {
+      const escaped = code[index + 1] ?? '';
+      text += { n: '\n', t: '\t', r: '\r' }[escaped] ?? escaped;
+      index += 1;
+      continue;
+    }
+    if (quote === '`' && character === '$' && code[index + 1] === '{') return undefined;
+    if (character === quote) return { text, end: index + 1 };
+    text += character;
+  }
+  return undefined;
+}
+
+/** Index just past the `)` matching the `(` at `at - 1`. Skips string literals. */
+function skipArguments(code: string, at: number): number {
+  let depth = 1;
+  for (let index = at; index < code.length; index += 1) {
+    const character = code[index]!;
+    if (character === "'" || character === '"' || character === '`') {
+      let scan = index + 1;
+      while (scan < code.length && code[scan] !== character) scan += code[scan] === '\\' ? 2 : 1;
+      index = scan;
+      continue;
+    }
+    if (character === '(') depth += 1;
+    else if (character === ')') {
+      depth -= 1;
+      if (depth === 0) return index + 1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Every suite/case title a file DECLARES, as whole strings.
+ *
+ * Whole strings, because the check that uses this used to be
+ * `source.includes(title)` — and a substring match does not rot. Extend
+ * `answers -32022` into `answers -32022 with data.requested` and the table goes
+ * on citing the old, now non-existent title with a green run behind it: exactly
+ * the silent decay this file exists to prevent, one level down.
+ *
+ * `it.each(cases)('…')` is parsed too. The parameterised titles are four of the
+ * ones the table cites, and a scanner that skipped them would have made those
+ * four rows unfalsifiable rather than merely unchecked.
+ */
+function suiteTitles(code: string): string[] {
+  const titles: string[] = [];
+  SUITE_CALL.lastIndex = 0;
+  for (let call = SUITE_CALL.exec(code); call !== null; call = SUITE_CALL.exec(code)) {
+    let at = call.index + call[0].length;
+    if (call[1]!.includes('.each')) {
+      at = skipArguments(code, at);
+      if (at === -1) continue;
+      while (/\s/.test(code[at] ?? '')) at += 1;
+      if (code[at] !== '(') continue;
+      at += 1;
+    }
+    while (/\s/.test(code[at] ?? '')) at += 1;
+    const literal = readLiteral(code, at);
+    if (literal !== undefined) titles.push(literal.text);
+  }
+  return titles;
+}
+
+/**
+ * A task a test file claims as its own subject, on the opening line of its
+ * header block: `M4.2 acceptance: …`, `M6.2 — …`, `M3.1 / M3.2 — …`.
+ *
+ * Deliberately narrow. The claim has to BEGIN the line and be followed by a
+ * dash, a colon or the word "acceptance", which is the form a file uses to say
+ * what it delivers. Every other mention — `(F1 / M3.10)` inside a bullet,
+ * "pagination lands in M4.3" mid-sentence — is a remark, and remarks close
+ * nothing.
+ */
+const OWNERSHIP_CLAIM =
+  /^((?:M\d+\.\d+)(?:\s*(?:[–—/-]|and)\s*M?\d+(?:\.\d+)?)*)\s*(?:[–—:-]|acceptance\b)/;
+
+/**
+ * The opening line of a file's leading `/** … *\/` block, with the comment
+ * furniture stripped. Only that line: a claim is what a file leads with, and
+ * reading the whole block would pick up every task the prose below argues
+ * about.
+ */
+function headerOpening(source: string): string {
+  const block = /^\s*\/\*\*([\s\S]*?)\*\//.exec(source);
+  if (block === null) return '';
+  return (
+    block[1]!
+      .split('\n')
+      .map((line) => line.replace(/^\s*\*\s?/, '').trim())
+      .find((line) => line.length > 0) ?? ''
+  );
+}
 
 /**
  * Plan tasks this repository claims to have CLOSED, mapped to the evidence.
@@ -259,11 +387,18 @@ const SUITE_TITLE = /\b(?:describe|it|test)(?:\.\w+)?\s*\(\s*(['"`])((?:\\.|(?!\
  *   • a test title — `describe('M5.1 — RFC 9207 issuer identification')` says
  *     the proof is in this file;
  *   • the `Context:` line of an ADR whose `Status:` is `accepted` — the shape a
- *     decision task takes when its outcome is a decision rather than a test.
+ *     decision task takes when its outcome is a decision rather than a test;
+ *   • the OWNERSHIP CLAIM opening a test file's header block — `M4.2
+ *     acceptance: …` — which is how a suite that has no room for the id in any
+ *     one title, and a helper that declares no titles at all, say what they
+ *     deliver.
  *
- * Comments are deliberately NOT read. A comment names tasks freely, including
- * ones nobody has started ("the limit arrives in M3.8"), so reading them would
- * turn this into a check that fires on intent rather than on work.
+ * The rest of the comments are deliberately NOT read. A comment names tasks
+ * freely, including ones nobody has started ("the limit arrives in M3.8"), so
+ * reading them all would turn this into a check that fires on intent rather
+ * than on work. Reading NONE of them was the previous rule, and it exempted
+ * this very file: M6.2 is claimed in the block above and nowhere else, so the
+ * check could not see the task it is itself the delivery of.
  */
 function closedTasks(): Map<string, string> {
   const closed = new Map<string, string>();
@@ -272,15 +407,19 @@ function closedTasks(): Map<string, string> {
   };
 
   for (const file of everyFileUnder(join(root, 'test'), '.ts')) {
-    // Comments are stripped BEFORE the titles are read, which is the whole
-    // point: this very file documents the convention with a `describe('M5.1 —
-    // …')` example in its header, and reading it would close M5.1 by talking
-    // about it. That is exactly the failure the rule exists to avoid.
-    const code = readFileSync(file, 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '');
-    for (const call of code.matchAll(SUITE_TITLE)) {
-      const title = call[2]!;
+    const source = readFileSync(file, 'utf8');
+    // The header block is read FIRST and only in its claim form, then thrown
+    // away with the rest of the comments: the example this file's own header
+    // spells out mid-paragraph (`describe('M5.1 — …')`) must not close M5.1 by
+    // being talked about, and it does not — it opens no line.
+    const claim = OWNERSHIP_CLAIM.exec(headerOpening(source));
+    if (claim !== null) {
+      for (const id of citedTasks(claim[1]!)) {
+        record(id, `${relative(root, file)} (header block claims «${claim[1]!.trim()}»)`);
+      }
+    }
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    for (const title of suiteTitles(code)) {
       for (const id of title.matchAll(TASK)) {
         record(id[0], `${relative(root, file)} › «${title}»`);
       }
@@ -304,14 +443,19 @@ const rows = parseRows(markdown);
 const closed = closedTasks();
 /** Every test a row names, in the «Тест» column and in the justification alike. */
 const namedTests = (row: Row): TestReference[] => [...row.tests, ...row.guards];
-/** Files are read once: the table cites the same suite dozens of times. */
-const sources = new Map<string, string>();
-const sourceOf = (file: string): string => {
-  if (!sources.has(file)) sources.set(file, readFileSync(join(root, file), 'utf8'));
-  return sources.get(file)!;
+/** Files are parsed once: the table cites the same suite dozens of times. */
+const declared = new Map<string, Set<string>>();
+const titlesOf = (file: string): Set<string> => {
+  if (!declared.has(file)) {
+    const code = readFileSync(join(root, file), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    declared.set(file, new Set(suiteTitles(code)));
+  }
+  return declared.get(file)!;
 };
 
-describe('docs/conformance.md is checkable, not merely written', () => {
+describe('M6.2 — docs/conformance.md is checkable, not merely written', () => {
   it('parses into rows at all', () => {
     expect(rows.length).toBeGreaterThan(30);
   });
@@ -363,16 +507,40 @@ describe('docs/conformance.md is checkable, not merely written', () => {
     // justification are held to the same standard: an «неприменимо» row that
     // says "the guard against this is over there" is making a claim about this
     // repository, and it decays the same way.
+    //
+    // WHOLE TITLES, not substrings. `source.includes(title)` was the first
+    // version and it only half-rotted: renaming a test breaks it, but WIDENING
+    // one does not — `answers -32022` goes on resolving after the test it names
+    // has become `answers -32022 on the modern leg only`, and the row keeps
+    // citing a title no run will ever print. The scope of a citation is part of
+    // the claim, so the citation has to move when the scope does.
     const misses: string[] = [];
     for (const row of rows) {
       for (const test of namedTests(row)) {
         if (!existsSync(join(root, test.file))) continue;
-        if (!sourceOf(test.file).includes(test.title)) {
-          misses.push(`${row.id}: "${test.title}" not found in ${test.file}`);
-        }
+        const titles = titlesOf(test.file);
+        if (titles.has(test.title)) continue;
+        const widened = [...titles].filter(
+          (title) => title.includes(test.title) || test.title.includes(title),
+        );
+        misses.push(
+          `${row.id}: "${test.title}" is not a title in ${test.file}` +
+            (widened.length > 0 ? ` — did it become ${JSON.stringify(widened)}?` : ''),
+        );
       }
     }
     expect(misses).toEqual([]);
+  });
+
+  it('reads whole titles, including the parameterised ones', () => {
+    // A guard on the assertion above: it is only as strong as the parser
+    // feeding it, and a parser that silently stops recognising a form turns
+    // every citation of that form into a miss — or, if it had been written to
+    // skip what it cannot read, into a citation nobody checks. Both shapes the
+    // table cites must be readable here.
+    const titles = titlesOf('test/conformance/public-contract.test.ts');
+    expect(titles.has('%s names every revision the code advertises')).toBe(true);
+    expect(titlesOf('test/conformance/errors.test.ts').size).toBeGreaterThan(10);
   });
 
   it('justifies every row that is not покрыто', () => {
@@ -464,6 +632,33 @@ describe('docs/conformance.md is checkable, not merely written', () => {
     // assertion would pass vacuously and go on passing forever.
     expect(closed.size).toBeGreaterThan(0);
     expect([...closed.keys()].some((task) => task.startsWith('M5.'))).toBe(true);
+  });
+
+  it('is not exempt from itself: the task this file delivers reads as closed', () => {
+    // The hole this assertion pins shut. Closure used to be read from titles
+    // and ADRs alone, and M6.2 — the task that IS this file — is claimed in the
+    // header block above and in no title anywhere, so the one deferral the
+    // guard could never falsify was a deferral into the guard. A row saying
+    // "не покрыто — таблица проверяется задачей M6.2" passed, with the check it
+    // named running in the same process.
+    //
+    // Named tasks, not a count: `closed.size > 0` is satisfied by any other
+    // file and would go on passing the day this one stops being read.
+    for (const task of ['M6.2', 'M6.1', 'M3.9']) {
+      expect(closed.get(task), `${task} does not read as closed anywhere`).toBeDefined();
+    }
+    expect(closed.get('M6.2')).toContain('conformance-doc.test.ts');
+  });
+
+  it('closes a task on a claim, never on a mention', () => {
+    // The other half: reading header blocks must not turn every task a comment
+    // discusses into a closed one. M4.3 (`tools/list` pagination) is named in
+    // `test/caching-hints.test.ts` in the middle of a comment about what this
+    // suite deliberately does NOT do, and M8.7 — the scope split D6 defers to —
+    // is named in the table itself. Neither is work that landed.
+    for (const task of ['M4.3', 'M8.7', 'M5.10']) {
+      expect(closed.get(task), `${task} reads as closed on a mention alone`).toBeUndefined();
+    }
   });
 
   it('cites only documents that exist in the research corpus', () => {
