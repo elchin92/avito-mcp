@@ -15,12 +15,34 @@
  *      traffic is refused with `-32022` naming the revisions we do serve.
  *
  * "Legacy traffic" in (2) means traffic the classifier CALLS legacy, and the
- * classifier reads the body. Exactly one request has no era at all — one whose
- * body does not parse — and `dual` answers that the modern way (`-32700`) where
- * a pure `legacy` deployment answers 1.3.3's `{"error":"bad_request"}`. The
- * decision is argued in `src/http/app.ts` and asserted from both sides in
- * `test/wire-error-shapes.test.ts`; it is named here so the byte-for-byte claim
- * above is not read as covering a case it cannot reach.
+ * classifier reads the body. A body that does not parse belongs to no era at
+ * all, and `dual` answers it the modern way (`-32700`) where a pure `legacy`
+ * deployment answers 1.3.3's `{"error":"bad_request"}`.
+ *
+ * That is THREE requests, not one. `express.json()` refuses for three different
+ * reasons and only one of them is "not JSON": a body that stops mid-frame, a
+ * body that is not JSON at all, and valid JSON that is not an object — steps
+ * `38-body-truncated-json`, `39-body-not-json` and `40-body-json-but-not-an-
+ * object` of `test/legacy-wire-regression.test.ts`. Naming one of the three, as
+ * this paragraph first did, leaves the byte-for-byte claim above reading as
+ * though it still covered the other two.
+ *
+ * And parsing is not the boundary either, which running that bench against a
+ * `dual` process is what showed. The era comes from `classifyInboundRequest`,
+ * so ANY body it will not call legacy goes to the modern leg — including two
+ * that parse as JSON perfectly well and are simply not JSON-RPC messages:
+ * `{"params": null}` on `tools/call` and an empty body (steps 37 and 41).
+ * `dual` answers those `-32600` with the id echoed where 1.3.3 answered
+ * `-32700` with `id: null`. FIVE exchanges of the 1.3.3 plan, then, are outside
+ * the byte-for-byte claim, and every one of them is a malformed frame no
+ * working client sends on purpose. They are enumerated with both sides' values
+ * in `DUAL_ERA_DELTAS`, and the bench fails if either side moves.
+ *
+ * The decision is argued in `src/http/app.ts` — for the three; the argument
+ * extends to the two, and the count in that comment predates them — and
+ * asserted from both sides in `test/wire-error-shapes.test.ts`. The exclusions
+ * are enumerated here so the claim above is not read as covering cases it
+ * cannot reach.
  *
  * The routing decision is the SDK's own `classifyInboundRequest`, so these tests
  * are also the guard that our hand-wired split has not drifted from what

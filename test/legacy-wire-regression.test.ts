@@ -53,9 +53,11 @@ import { createSandbox, removeSandbox } from './support/sandbox.js';
 import {
   BASELINE_PATH,
   BASELINE_RELATIVE_PATH,
+  DUAL_ERA_DELTAS,
   LEGACY_WIRE_STEPS,
   REFERENCE_VERSION,
   REPO_ROOT,
+  applyEraDelta,
   applyKnownAdditions,
   applyRebases,
   bootServer,
@@ -85,28 +87,61 @@ let sandbox: string | undefined;
 let actual: WireCapture = {};
 let bootFailure: unknown;
 
-beforeAll(async () => {
-  sandbox = await createSandbox('legacy-wire-bench');
+let dualServer: BootedServer | undefined;
+let dualSandbox: string | undefined;
+let dualActual: WireCapture = {};
+let dualBootFailure: unknown;
+
+/** Boots one process and drives the whole plan against it. */
+async function capture(
+  era: 'legacy' | 'dual',
+): Promise<{ server?: BootedServer; sandbox: string; capture: WireCapture; failure?: unknown }> {
+  const scratch = await createSandbox(`legacy-wire-bench-${era}`);
   try {
-    server = await bootServer({
+    const booted = await bootServer({
       command: join(REPO_ROOT, 'node_modules', '.bin', 'tsx'),
       args: [join(REPO_ROOT, 'src', 'server.ts')],
       cwd: REPO_ROOT,
-      sandbox,
-      // The whole point: the leg under test is the one a 1.3.x operator gets by
-      // default. `legacy` is also the default of the variable, set explicitly so
-      // the test still means what it says if that default ever changes.
-      env: { AVITO_MCP_PROTOCOL_ERA: 'legacy' },
+      sandbox: scratch,
+      env: { AVITO_MCP_PROTOCOL_ERA: era },
     });
-    actual = await captureWire(server);
+    return { server: booted, sandbox: scratch, capture: await captureWire(booted) };
   } catch (err) {
-    bootFailure = err;
+    return { sandbox: scratch, capture: {}, failure: err };
   }
+}
+
+beforeAll(async () => {
+  // TWO processes, one plan.
+  //
+  //   • `legacy` is the posture a 1.3.x operator gets by default — set
+  //     explicitly so this still means what it says if the default moves;
+  //   • `dual` is the posture block F of the criterion puts into production,
+  //     and therefore the one the compatibility promise is actually about. A
+  //     bench that only ever booted `legacy` could not have seen a regression
+  //     in the leg the promise will be kept on.
+  //
+  // Sequential, not parallel: a `tsx` boot with 148 tools is CPU-bound, and two
+  // of them racing on a CI runner is how a bench starts timing out and being
+  // read as "the wire moved".
+  const legacy = await capture('legacy');
+  server = legacy.server;
+  sandbox = legacy.sandbox;
+  actual = legacy.capture;
+  bootFailure = legacy.failure;
+
+  const dual = await capture('dual');
+  dualServer = dual.server;
+  dualSandbox = dual.sandbox;
+  dualActual = dual.capture;
+  dualBootFailure = dual.failure;
 }, BOOT_BUDGET_MS);
 
 afterAll(async () => {
   await server?.stop();
+  await dualServer?.stop();
   if (sandbox) await removeSandbox(sandbox);
+  if (dualSandbox) await removeSandbox(dualSandbox);
 });
 
 /** `git` inside this checkout. Never throws; the caller reads `status`. */
@@ -303,6 +338,108 @@ describe('legacy wire vs the published 1.3.3 build', () => {
 
       expect(canonical(actual[step.id])).toEqual(
         canonical(applyRebases(applyKnownAdditions(expected, step.knownAdditions), step.rebase)),
+      );
+    });
+  }
+});
+
+/**
+ * The same plan, the same reference, against `AVITO_MCP_PROTOCOL_ERA=dual`.
+ *
+ * WHY THIS IS NOT A DUPLICATE OF THE SUITE ABOVE. The promise "a 2025 client
+ * keeps working" is a promise about the process an operator runs, and block F
+ * of the criterion puts `dual` into production — so `legacy` is the posture the
+ * promise is about only until M7.7 lands, and `dual` is the posture it is about
+ * afterwards. Proving compatibility exclusively on the leg that will be turned
+ * off is proving it on the wrong process.
+ *
+ * The comparison is against the SAME 1.3.3 capture, reconciled the same way,
+ * with one extra layer: `DUAL_ERA_DELTAS`, which names every path where dual
+ * does not answer what 1.3.3 answered, with BOTH values. Running this the first
+ * time is what turned up steps 37 and 41 — two malformed frames that parse as
+ * JSON, are answered `-32700` by 1.3.3 and `-32600` by dual, and were covered
+ * by no argument anywhere: `src/http/app.ts` reasons only about the bodies that
+ * do not parse. They are declared rather than silenced, and the declaration
+ * fails the day either side moves or the two converge.
+ */
+describe('the same plan on era=dual — the posture production will run', () => {
+  it('booted a dual process and drove the whole plan against it', () => {
+    expect(dualBootFailure).toBeUndefined();
+    expect(Object.keys(dualActual)).toEqual(LEGACY_WIRE_STEPS.map((step) => step.id));
+  });
+
+  it('differs from the legacy leg on exactly the steps declared, and no others', () => {
+    // The assertion that keeps the delta list honest in BOTH directions, and
+    // the only one here that does not consult the reference: a new difference
+    // between the two legs fails even if someone remembers to update the
+    // baseline, and a declaration that has become unnecessary fails too.
+    expect(bootFailure).toBeUndefined();
+    expect(dualBootFailure).toBeUndefined();
+    const differing = LEGACY_WIRE_STEPS.filter(
+      (step) =>
+        JSON.stringify(canonical(actual[step.id])) !==
+        JSON.stringify(canonical(dualActual[step.id])),
+    ).map((step) => step.id);
+    expect(differing.sort()).toEqual(Object.keys(DUAL_ERA_DELTAS).sort());
+  });
+
+  for (const step of LEGACY_WIRE_STEPS) {
+    it(`dual ${step.id}: ${step.note}`, () => {
+      expect(dualBootFailure).toBeUndefined();
+      const reference = baseline.steps[step.id];
+      expect(
+        reference,
+        `no reference answer for ${step.id}; regenerate ${BASELINE_RELATIVE_PATH} ` +
+          'with `npm run capture:legacy-baseline`',
+      ).toBeDefined();
+
+      const delta = DUAL_ERA_DELTAS[step.id];
+      if (delta !== undefined) {
+        // Both sides pinned, exactly like a DeclaredDivergence: the entry fails
+        // if the legacy leg stops answering what it is said to answer, if dual
+        // stops answering what it is said to answer, or if the difference goes
+        // away and the declaration outlives its reason.
+        for (const fact of delta.facts) {
+          const where = fact.path.join('.');
+          expect(
+            readPath(actual[step.id], fact.path),
+            `era=legacy at ${where}: ${delta.why}`,
+          ).toEqual(fact.legacy);
+          expect(
+            readPath(dualActual[step.id], fact.path),
+            `era=dual at ${where}: ${delta.why}`,
+          ).toEqual(fact.dual);
+          expect(
+            fact.dual,
+            `${where} is declared an ERA DELTA but both eras hold the same value; ` +
+              'delete the entry in DUAL_ERA_DELTAS',
+          ).not.toEqual(fact.legacy);
+        }
+      }
+
+      const divergence = step.divergence;
+      if (divergence !== undefined) {
+        // A divergence from 1.3.3 is a property of the branch, not of the era,
+        // so dual has to show the branch side of it too.
+        for (const fact of divergence.facts) {
+          expect(
+            readPath(dualActual[step.id], fact.path),
+            `era=dual at ${fact.path.join('.')}: ${divergence.why}`,
+          ).toEqual(fact.branch);
+        }
+        return;
+      }
+
+      // Everything the delta does not name is compared against 1.3.3 exactly as
+      // it is for the legacy leg — status, content type, session header, `Allow`
+      // and every other byte of the body.
+      expect(canonical(dualActual[step.id])).toEqual(
+        canonical(
+          applyEraDelta(
+            applyRebases(applyKnownAdditions(reference, step.knownAdditions), step.rebase),
+            delta,
+          ),
+        ),
       );
     });
   }

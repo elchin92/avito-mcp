@@ -143,6 +143,16 @@ function rebindingGuard(config: HttpConfig): RequestHandler {
  * `id: null` because there is, by construction, no id to echo — the bytes that
  * would have carried it did not parse.
  *
+ * This handler owns three of those bodies (the three ways `express.json()` can
+ * refuse). It is not the whole set of exchanges where `dual` answers a 2025
+ * client differently from 1.3.3: the rule above is about CLASSIFICATION, not
+ * about parsing, so a body that parses and is still not a JSON-RPC message —
+ * `params: null`, an empty body — is not legacy traffic either and is answered
+ * `-32600` by the modern leg. Same argument, two more frames, and all five are
+ * pinned with both sides' values in `DUAL_ERA_DELTAS`
+ * (`test/support/legacy-wire-bench.ts`), which is where the count lives so that
+ * this comment cannot quietly become the wrong one again.
+ *
  * A body that is too large keeps its `413`: that is a transport-level limit
  * with its own status, and dressing it as a parse error would be a lie.
  */

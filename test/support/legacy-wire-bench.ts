@@ -804,6 +804,136 @@ export const LEGACY_WIRE_STEPS: readonly WireStep[] = [
   },
 ];
 
+// ──────────────────────── the same plan, on era=dual ─────────────────────────
+
+/**
+ * Where `AVITO_MCP_PROTOCOL_ERA=dual` does not answer the 1.3.3 wire that
+ * `legacy` answers.
+ *
+ * WHY THIS LIST HAS TO EXIST AT ALL. Every step of the plan above is run twice:
+ * once against a `legacy` process, which is the posture a 1.3.x operator gets
+ * today, and once against a `dual` one, which is the posture block F of the
+ * criterion puts into production. Compatibility with 2025 is a promise about
+ * the process an operator will actually be running, and the bench proved it
+ * only on the leg nobody will be running by then — a `dual` regression could
+ * have landed under a green suite.
+ *
+ * It found five exchanges, and only three of them had been argued anywhere:
+ * `src/http/app.ts` reasons about the bodies that do not PARSE (38–40) and the
+ * count that reasoning was written with was one. Steps 37 and 41 parse as JSON
+ * perfectly well and still differ, which the prose did not cover, because the
+ * rule is not about parsing: under `dual` the era of a POST comes from
+ * `classifyInboundRequest`, and a body it will not call `legacy` — for ANY
+ * reason, including "this is valid JSON that is not a JSON-RPC message" — goes
+ * to the modern leg, which answers in modern shapes.
+ *
+ * WHY IT IS DECLARED RATHER THAN FIXED. Routing an unclassifiable body to the
+ * 2025 manager instead would hand a 2026 client a 2025-shaped error, and it
+ * would break the invariant that this split cannot disagree with the SDK's own
+ * (`classifyInboundRequest` is what `createMcpHandler` routes with, and
+ * `test/modern-conformance.test.ts` pins the two together). What is left is a
+ * difference on five malformed frames: no working client reproduces one on
+ * purpose, and the default posture stays byte-identical. That is an argument
+ * for the difference, not for hiding it — hence one entry per path, both values
+ * named, and a run that fails if either moves or if the two ever converge.
+ *
+ * Note what is NOT here: every well-formed exchange in the plan — the
+ * handshake, all 148 tools, the resources, the prompts, the session errors, the
+ * five reported scenarios — is byte-identical on `dual` and needs no entry.
+ */
+export interface EraDelta {
+  /** The argument for the difference. Read in review; keep it complete. */
+  readonly why: string;
+  readonly facts: readonly {
+    readonly path: readonly string[];
+    /** What `era=legacy` (and, at every path but one, 1.3.3) answers here. */
+    readonly legacy: unknown;
+    /** What `era=dual` answers here. Must not equal `legacy`. */
+    readonly dual: unknown;
+  }[];
+}
+
+/** The modern leg's answer to a body that did not parse at all. */
+const MODERN_PARSE_ERROR = {
+  error: { code: -32700, message: 'Parse error: the request body is not valid JSON' },
+  id: null,
+  jsonrpc: '2.0',
+};
+
+/** The modern leg's answer to a body that parsed but is not a JSON-RPC message. */
+const MODERN_NOT_A_MESSAGE = (id: string | null): unknown => ({
+  error: { code: -32600, message: 'Bad Request: the request body is not a valid JSON-RPC message' },
+  id,
+  jsonrpc: '2.0',
+});
+
+/** The 2025 leg's answer to the same, frozen at what 1.3.3 said. */
+const LEGACY_NOT_A_MESSAGE = {
+  error: { code: -32700, message: 'Parse error: Invalid JSON-RPC message' },
+  id: null,
+  jsonrpc: '2.0',
+};
+
+export const DUAL_ERA_DELTAS: Readonly<Record<string, EraDelta>> = {
+  '10-resources-read-config': {
+    why:
+      'The diagnostic snapshot reports the era the process is serving, which is the ' +
+      'point of the field (M3, declared as a KnownAddition against 1.3.3 above). A ' +
+      'dual process reporting "legacy" here would be the defect.',
+    facts: [
+      {
+        path: ['body', 'contents', '0', 'text', 'config', 'protocolEra'],
+        legacy: 'legacy',
+        dual: 'dual',
+      },
+    ],
+  },
+  '37-tools-call-params-null': {
+    why:
+      '`{"method":"tools/call","params":null}` parses as JSON and is not a JSON-RPC ' +
+      'message. `classifyInboundRequest` will not call it legacy, so under dual the ' +
+      'modern leg answers it: -32600 with the id echoed, where 1.3.3 answered -32700 ' +
+      'with id null. Both are refusals of the same frame; the frame is malformed, and ' +
+      'no client sends it on purpose.',
+    facts: [
+      {
+        path: ['body'],
+        legacy: LEGACY_NOT_A_MESSAGE,
+        dual: MODERN_NOT_A_MESSAGE('37-tools-call-params-null'),
+      },
+    ],
+  },
+  '38-body-truncated-json': {
+    why: 'A body that does not parse belongs to no era; argued in full in `src/http/app.ts`.',
+    facts: [{ path: ['body'], legacy: { error: 'bad_request' }, dual: MODERN_PARSE_ERROR }],
+  },
+  '39-body-not-json': {
+    why: 'The same, for the second of the three reasons express.json() refuses.',
+    facts: [{ path: ['body'], legacy: { error: 'bad_request' }, dual: MODERN_PARSE_ERROR }],
+  },
+  '40-body-json-but-not-an-object': {
+    why: 'The same, for the third: valid JSON that strict mode refuses.',
+    facts: [{ path: ['body'], legacy: { error: 'bad_request' }, dual: MODERN_PARSE_ERROR }],
+  },
+  '41-body-empty': {
+    why:
+      'An empty body is NOT a parse failure — express.json() hands the MCP layer `{}` ' +
+      'and the envelope check refuses it — which is why the plan keeps it next to the ' +
+      'three above. It moves under dual for the same reason step 37 does, not for ' +
+      'theirs: `{}` is a body the classifier will not call legacy.',
+    facts: [{ path: ['body'], legacy: LEGACY_NOT_A_MESSAGE, dual: MODERN_NOT_A_MESSAGE(null) }],
+  },
+};
+
+/** A deep copy of `value` with every era fact set to what `dual` answers. */
+export function applyEraDelta(value: unknown, delta: EraDelta | undefined): unknown {
+  if (delta === undefined) return value;
+  return applyKnownAdditions(
+    value,
+    delta.facts.map((fact) => ({ path: fact.path, value: fact.dual, why: delta.why })),
+  );
+}
+
 // ─────────────────────────── proving the reference ───────────────────────────
 
 /**
