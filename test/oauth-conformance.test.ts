@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ts from 'typescript';
@@ -291,6 +292,43 @@ describe('M5.6 — regression guards on the authorization contour', () => {
     });
     expect(replay.status).toBe(400);
     expect(await replay.json()).toMatchObject({ error: 'invalid_grant' });
+  });
+});
+
+describe('M5.6 — no secret from the flow reaches the log stream', () => {
+  it('keeps every code, verifier, secret and token out of stderr at debug level', () => {
+    // `logger` binds pino to fd 2 with writeSync and reads LOG_LEVEL once at
+    // import, so this is only observable from a process that started noisy.
+    const result = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', 'test/support/oauth-log-probe.ts'],
+      {
+        cwd: join(import.meta.dirname, '..'),
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+          AVITO_ENV_FILE: '/dev/null',
+          LOG_LEVEL: 'debug',
+        },
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const probe = JSON.parse(result.stdout) as {
+      secrets: Record<string, string>;
+      clientId: string;
+    };
+
+    // The probe really did run and really did log: without this the assertions
+    // below would pass just as happily against an empty stream.
+    expect(result.stderr).toContain('oauth: registered client (DCR)');
+    expect(result.stderr).toContain('oauth: owner password mismatch');
+    expect(result.stderr).toContain(probe.clientId);
+
+    const leaked = Object.entries(probe.secrets).filter(
+      ([, value]) => value.length > 0 && result.stderr.includes(value),
+    );
+    expect(leaked.map(([name]) => name)).toEqual([]);
   });
 });
 
