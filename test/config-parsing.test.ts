@@ -100,6 +100,55 @@ describe('strict environment parsing', () => {
     expect(result.stderr).toContain('AVITO_MCP_WEBHOOK_ENABLED must be one of');
   });
 
+  // ── M3.1: AVITO_MCP_PROTOCOL_ERA ─────────────────────────────────────────
+  //
+  // Read through a spawned process rather than by importing config.ts: the
+  // module is a singleton evaluated at first import, so a same-process test
+  // could only ever observe the era the very first test file happened to set.
+  const readEra = (value?: string): { status: number | null; stdout: string; stderr: string } => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        '--input-type=module',
+        '--eval',
+        "const m = await import('./src/config.ts'); process.stdout.write(JSON.stringify({ raw: m.config.protocolEra, resolved: m.protocolEraOf(m.config) }));",
+      ],
+      {
+        cwd: resolve(import.meta.dirname, '..'),
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+          AVITO_ENV_FILE: '/dev/null',
+          ...(value === undefined ? {} : { AVITO_MCP_PROTOCOL_ERA: value }),
+        },
+      },
+    );
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  };
+
+  it('defaults the protocol era to legacy when the variable is unset', () => {
+    const result = readEra();
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ raw: 'legacy', resolved: 'legacy' });
+  });
+
+  it.each(['legacy', 'dual', 'modern'] as const)('accepts protocol era %s', (era) => {
+    const result = readEra(era);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ raw: era, resolved: era });
+  });
+
+  it('fails startup for an unknown protocol era instead of falling back to legacy', () => {
+    // A typo must be loud. Silently serving `legacy` when the operator asked for
+    // `dual` would make a canary look healthy while proving nothing.
+    const result = readEra('duel');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('AVITO_MCP_PROTOCOL_ERA must be one of: legacy, dual, modern');
+  });
+
   it('documents approval and runtime-state settings in --help', () => {
     const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/server.ts', '--help'], {
       cwd: resolve(import.meta.dirname, '..'),
@@ -109,5 +158,6 @@ describe('strict environment parsing', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('AVITO_MCP_APPROVAL_MODE');
     expect(result.stdout).toContain('AVITO_MCP_RUNTIME_STATE_DIR');
+    expect(result.stdout).toContain('AVITO_MCP_PROTOCOL_ERA');
   });
 });

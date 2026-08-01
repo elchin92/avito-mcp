@@ -10,11 +10,13 @@
  * without duplicating the Avito client or token cache.
  */
 import { McpServer } from '@modelcontextprotocol/server';
+import type { McpServerFactory } from '@modelcontextprotocol/server';
 import type { Config } from './config.js';
 import type { ToolContext } from './core/tool-factory.js';
 import { domains } from './meta/domain-registry.js';
 import { registerResources } from './resources.js';
 import { registerPrompts } from './prompts.js';
+import { bindMcpLogger } from './logger.js';
 import { PACKAGE_NAME, VERSION } from './version.js';
 import { hasConfiguredCredentials } from './core/credentials.js';
 import { applyLegacyWireDefaults } from './core/wire-compat.js';
@@ -78,6 +80,68 @@ export function buildMcpServer(baseCtx: ToolContext): McpServer {
   registerPrompts(server, ctx);
 
   return server;
+}
+
+/**
+ * M3.2 — the {@link McpServerFactory} both v2 serving entries take.
+ *
+ * `serveStdio(factory)` and `createMcpHandler(factory)` do NOT accept a ready
+ * instance: they own the era decision and call the factory themselves — once per
+ * connection for stdio (plus once more for a `server/discover` probe instance
+ * that is discarded again if the client falls back to `initialize`), and once
+ * per HTTP request for the modern path. That makes every side effect inside the
+ * factory a per-call cost, so:
+ *
+ *   • The heavy singletons stay in `baseCtx` (AvitoClient, token cache, the
+ *     pending/idempotency/webhook stores) and are never rebuilt here.
+ *   • The one per-instance side effect we do need — registering the instance as
+ *     an MCP log sink — is torn down on that instance's own `close()`. The sink
+ *     registry in `src/logger.ts` is a strong `Map`, so an unbound instance
+ *     would be a permanent leak of a fully-registered 148-tool server; both
+ *     entries close the instances they discard, which is what makes the
+ *     `onclose` hook a reliable teardown point.
+ *
+ * `background` mirrors the existing split: a stdio connection is the process's
+ * only client and receives background (non-request-scoped) log events, whereas
+ * an HTTP instance only receives the events produced inside its own request.
+ */
+export function createServerFactory(
+  baseCtx: ToolContext,
+  options: { background: boolean },
+): McpServerFactory {
+  return () => {
+    const server = buildMcpServer(baseCtx);
+    const unbind = bindMcpLogger(server, { background: options.background });
+
+    // Teardown is hooked in TWO places because neither covers the other:
+    //
+    //   • `onclose` fires when the connection ends — including when the peer
+    //     hangs up and nobody calls `close()` on our side. Chained, not
+    //     assigned: both v2 entries install their own `onclose` afterwards and
+    //     chain onto whatever they find, so overwriting would drop theirs (and
+    //     assigning after them would drop ours).
+    //   • `close()` covers an instance that is discarded WITHOUT ever having
+    //     been connected. `Protocol.close()` is `await this._transport?.close()`
+    //     — with no transport it is a no-op and `onclose` never fires, so an
+    //     instance built for a connection that failed before `connect()` would
+    //     otherwise stay in the sink registry forever.
+    //
+    // `unbind` is idempotent, so both firing is harmless.
+    const previousOnClose = server.server.onclose;
+    server.server.onclose = () => {
+      unbind();
+      previousOnClose?.();
+    };
+    const originalClose = server.close.bind(server);
+    server.close = async () => {
+      try {
+        await originalClose();
+      } finally {
+        unbind();
+      }
+    };
+    return server;
+  };
 }
 
 /**

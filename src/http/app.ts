@@ -17,7 +17,7 @@ import express, { type ErrorRequestHandler, type RequestHandler } from 'express'
 import { timingSafeEqual } from 'node:crypto';
 import type { Server as HttpServer } from 'node:http';
 
-import type { Config, HttpConfig } from '../config.js';
+import { protocolEraOf, type Config, type HttpConfig } from '../config.js';
 import type { ToolContext } from '../core/tool-factory.js';
 import { hasConfiguredCredentials } from '../core/credentials.js';
 import { isRuntimeStateReady, runtimeStateDirectory } from '../core/runtime-state.js';
@@ -200,7 +200,9 @@ export async function startHttpServer(
 
     let mcp: ReturnType<typeof createMcpHttpHandler>;
     try {
-      mcp = createMcpHttpHandler(baseCtx, h);
+      // M3.3: the era posture decides which serving legs are mounted at all.
+      // The default `legacy` mounts exactly what M2 mounted, and nothing else.
+      mcp = createMcpHttpHandler(baseCtx, h, protocolEraOf(config));
     } catch (err) {
       await closeOAuth?.().catch(() => undefined);
       throw err;

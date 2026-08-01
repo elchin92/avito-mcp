@@ -32,6 +32,30 @@ export type SafetyMode = 'read_only' | 'guarded' | 'full_access';
 export type ConfirmationMode = 'off' | 'money_public' | 'all_destructive';
 export type ApprovalMode = 'self' | 'external';
 
+/**
+ * M3.1 — which protocol era(s) this process is willing to serve.
+ *
+ * This is a DEPLOYMENT POSTURE, not the era of a live connection. The era of a
+ * connection is owned by the SDK (`ProtocolEra`, `server/discover`,
+ * `isLegacyRequest`); this flag only says which serving paths are mounted at
+ * all:
+ *
+ *   - `legacy` (default) — only the 2025-era path exists. Byte-for-byte the
+ *     1.3.x / M2 behaviour: stdio is a hand-wired `StdioServerTransport`
+ *     (hand-constructed instances are legacy-era forever, DV-13), and `/mcp`
+ *     runs only the existing sessionful Streamable HTTP manager. Nothing in the
+ *     process can answer a 2026-07-28 request.
+ *   - `dual` — both paths are mounted and traffic is routed per request:
+ *     `serveStdio(factory, { legacy: 'serve' })` on stdio, `isLegacyRequest` in
+ *     front of `createMcpHandler(factory, { legacy: 'reject' })` on HTTP.
+ *   - `modern` — only the 2026-07-28 path is mounted; 2025-era traffic is
+ *     refused with the SDK's unsupported-protocol-version answer.
+ *
+ * Default is `legacy` and stays `legacy` until the dual path has been proven in
+ * production — the whole point of M3 is that the new code ships switched off.
+ */
+export type ProtocolEraMode = 'legacy' | 'dual' | 'modern';
+
 // ───────────────────────── v0.9.0: HTTP transport + webhook ─────────────────────────
 
 /** Which MCP transport(s) to run. `both` = stdio + HTTP in one process. */
@@ -262,6 +286,9 @@ const ConfigSchema = z.object({
   runtimeStateDir: z.string().min(1),
   /** Max wait for cross-process token file lock, ms. */
   tokenLockTimeoutMs: z.number().int().positive().default(30_000),
+  // M3.1 ─────────────────────────────────────────────────────
+  /** Which protocol era(s) this process serves. See {@link ProtocolEraMode}. */
+  protocolEra: z.enum(['legacy', 'dual', 'modern']).default('legacy'),
 });
 
 /** Strips a trailing slash so URLs concatenate predictably. */
@@ -274,6 +301,20 @@ function resolveTransport(): TransportMode {
     'stdio',
     'http',
     'both',
+  ] as const);
+}
+
+/**
+ * M3.1 — reads `AVITO_MCP_PROTOCOL_ERA`. Unknown values are a hard startup
+ * failure (`parseChoice` throws) rather than a silent fall back to the default:
+ * an operator who typed `AVITO_MCP_PROTOCOL_ERA=duel` must find out at boot, not
+ * by discovering months later that the canary never actually served 2026-07-28.
+ */
+function resolveProtocolEra(): ProtocolEraMode {
+  return parseChoice(process.env.AVITO_MCP_PROTOCOL_ERA, 'legacy', 'AVITO_MCP_PROTOCOL_ERA', [
+    'legacy',
+    'dual',
+    'modern',
   ] as const);
 }
 
@@ -386,14 +427,33 @@ function buildWebhookConfig(httpPublicUrl: string): WebhookConfig {
 }
 
 type ParsedConfig = z.infer<typeof ConfigSchema>;
-export type Config = Omit<ParsedConfig, 'approvalMode' | 'runtimeStateDir'> & {
+export type Config = Omit<ParsedConfig, 'approvalMode' | 'runtimeStateDir' | 'protocolEra'> & {
   /** Optional in programmatic Config fixtures; environment-loaded config always sets it. */
   approvalMode?: ApprovalMode;
   /** Optional in programmatic Config fixtures; environment-loaded config always sets it. */
   runtimeStateDir?: string;
+  /**
+   * Optional in programmatic Config fixtures; environment-loaded config always
+   * sets it. Absent means `legacy` — read it through {@link protocolEraOf} so
+   * the safe default can never be forgotten at a call site.
+   */
+  protocolEra?: ProtocolEraMode;
   http: HttpConfig;
   webhook: WebhookConfig;
 };
+
+/**
+ * The protocol-era posture of a config, defaulting to `legacy`.
+ *
+ * Every consumer must go through this helper rather than reading
+ * `config.protocolEra` directly: the field is optional (programmatic fixtures
+ * omit it) and a bare `config.protocolEra === 'dual'` in one place plus a
+ * truthiness check in another is exactly how a "switched off" feature gets
+ * half-enabled.
+ */
+export function protocolEraOf(config: Pick<Config, 'protocolEra'>): ProtocolEraMode {
+  return config.protocolEra ?? 'legacy';
+}
 
 function loadUnchecked(): Config {
   const tokenFile = process.env.AVITO_TOKEN_FILE?.trim() || defaultTokenFile();
@@ -461,6 +521,8 @@ function loadUnchecked(): Config {
       'AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS',
       300_000,
     ),
+    // M3.1 ───────────────────────────────────────────────────
+    protocolEra: resolveProtocolEra(),
   };
 
   const parsed = ConfigSchema.safeParse(raw);

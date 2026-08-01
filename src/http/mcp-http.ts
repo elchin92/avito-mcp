@@ -1,5 +1,23 @@
 /**
  * v0.9.0: Streamable HTTP MCP session manager.
+ * M3.3: plus the modern (2026-07-28) leg, mounted only when
+ * `AVITO_MCP_PROTOCOL_ERA` asks for it.
+ *
+ * ── Era routing (M3.3) ──────────────────────────────────────────────────────
+ * `AVITO_MCP_PROTOCOL_ERA=legacy` (the default) returns EXACTLY the handler
+ * below and nothing else: no `createMcpHandler`, no classification step, no
+ * extra `await` on the hot path. That is deliberate — the acceptance criterion
+ * for M3 is that the flag-off process is indistinguishable from M2, and the
+ * cheapest way to guarantee that is for the second path not to exist.
+ *
+ * `dual` puts the SDK's own `isLegacyRequest` predicate in front: it runs the
+ * very code `createMcpHandler` runs to make its routing decision, so a
+ * hand-wired split cannot disagree with the entry about what "legacy" means.
+ * Requests it calls legacy go to the sessionful manager below, unchanged;
+ * everything else — including the modern path's own validation-ladder
+ * rejections (`-32602`, `-32020`, unsupported-version) — goes to the modern
+ * handler, which owns those answers. `modern` mounts only the modern leg and
+ * lets it refuse 2025-era traffic (`legacy: 'reject'`).
  *
  * Mounted by the HTTP server on the /mcp route (POST/GET/DELETE). Maintains one
  * StreamableHTTPServerTransport + McpServer per MCP session, keyed by the session
@@ -22,12 +40,20 @@
  * Host and Origin allowlists cannot be derived.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { isInitializeRequest } from '@modelcontextprotocol/server';
-import type { McpServer, AuthInfo } from '@modelcontextprotocol/server';
-import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
+import {
+  createMcpHandler,
+  isInitializeRequest,
+  isLegacyRequest,
+} from '@modelcontextprotocol/server';
+import type { McpHttpHandler, McpServer, AuthInfo } from '@modelcontextprotocol/server';
+import {
+  NodeStreamableHTTPServerTransport,
+  toNodeHandler,
+  toWebRequest,
+} from '@modelcontextprotocol/node';
 import type { RequestHandler } from 'express';
-import type { HttpConfig } from '../config.js';
-import { buildMcpServer } from '../build-server.js';
+import type { HttpConfig, ProtocolEraMode } from '../config.js';
+import { buildMcpServer, createServerFactory } from '../build-server.js';
 import type { ToolContext } from '../core/tool-factory.js';
 import { bindMcpLogger, logger, runWithMcpLogger } from '../logger.js';
 
@@ -203,6 +229,7 @@ function requestPrincipal(req: Parameters<RequestHandler>[0]): string {
 export function createMcpHttpHandler(
   baseCtx: ToolContext,
   httpConfig: HttpConfig,
+  protocolEra: ProtocolEraMode = 'legacy',
 ): { handleRequest: RequestHandler; closeAll(): Promise<void> } {
   const sessions = new Map<string, Session>();
   const initializations = new Set<Promise<void>>();
@@ -316,7 +343,7 @@ export function createMcpHttpHandler(
     }
   }
 
-  const handleRequest: RequestHandler = (req, res, next) => {
+  const handleLegacyRequest: RequestHandler = (req, res, next) => {
     void (async () => {
       try {
         const sessionId = req.headers['mcp-session-id'];
@@ -400,6 +427,65 @@ export function createMcpHttpHandler(
     })();
   };
 
+  // ── modern (2026-07-28) leg — M3.3 ─────────────────────────────────────────
+  // Constructed only when the operator asked for it. `legacy: 'reject'` because
+  // WE own the legacy routing (via isLegacyRequest) and hand this entry only the
+  // traffic it must answer; leaving the default `'stateless'` would give the SDK
+  // a second, session-less 2025 implementation running beside the real one.
+  let modern: McpHttpHandler | undefined;
+  let modernNodeHandler: ReturnType<typeof toNodeHandler> | undefined;
+  if (protocolEra !== 'legacy') {
+    modern = createMcpHandler(createServerFactory(baseCtx, { background: false }), {
+      legacy: 'reject',
+      onerror: (err) => logger.warn({ err, era: 'modern' }, 'mcp http modern handler error'),
+    });
+    modernNodeHandler = toNodeHandler(modern, {
+      onerror: (err) => logger.error({ err, era: 'modern' }, 'mcp http modern adapter error'),
+    });
+  }
+
+  /**
+   * Era dispatcher. Only reachable when `protocolEra !== 'legacy'` — the legacy
+   * default returns `handleLegacyRequest` itself, so the default deployment does
+   * not even execute this function.
+   */
+  const dispatchByEra: RequestHandler = (req, res, next) => {
+    void (async () => {
+      try {
+        if (protocolEra === 'modern') {
+          await modernNodeHandler!(req, res, req.body);
+          return;
+        }
+        // dual. express.json() has already drained the Node stream, so the
+        // parsed body must be handed over explicitly — without it the predicate
+        // would try to clone an already-used body and reject.
+        const probe = await toWebRequest(req, req.body);
+        if (await isLegacyRequest(probe, req.body)) {
+          handleLegacyRequest(req, res, next);
+          return;
+        }
+        await modernNodeHandler!(req, res, req.body);
+      } catch (err) {
+        logger.error({ err }, 'mcp http era dispatch failed');
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: '2.0',
+            error: { code: -32603, message: 'Internal server error' },
+            id: null,
+          });
+        } else {
+          next(err);
+        }
+      }
+    })();
+  };
+
+  // The legacy default is the ORIGINAL handler by identity, not a wrapper around
+  // it: no added await, no added branch, nothing that could behave differently
+  // under load than the M2 build did.
+  const handleRequest: RequestHandler =
+    protocolEra === 'legacy' ? handleLegacyRequest : dispatchByEra;
+
   function closeAll(): Promise<void> {
     if (shutdownPromise) return shutdownPromise;
     closing = true;
@@ -411,7 +497,12 @@ export function createMcpHttpHandler(
       const snapshot = [...sessions.values()];
       sessions.clear();
       for (const session of snapshot) session.unbindLogger();
-      await Promise.allSettled(snapshot.flatMap((s) => [s.transport.close(), s.server.close()]));
+      await Promise.allSettled([
+        ...snapshot.flatMap((s) => [s.transport.close(), s.server.close()]),
+        // Aborts in-flight modern exchanges and closes their per-request
+        // instances; a no-op when the modern leg was never mounted.
+        ...(modern ? [modern.close()] : []),
+      ]);
     })();
     return shutdownPromise;
   }
