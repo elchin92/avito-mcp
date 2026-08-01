@@ -485,3 +485,81 @@ describe('OAuth bearer auth over HTTP (SDK v2 resource-server path)', () => {
     expect((await confirm(sessionA, 201))?.error?.kind).toBe('RATE_LIMITED');
   });
 });
+
+/**
+ * M5.5 — RFC 9728 protected-resource metadata, per auth mode.
+ *
+ * A 2026-07-28 client that meets a 401 discovers its authorization server from
+ * `resource_metadata` in the challenge and from the document it points at. Only
+ * `oauth` serves either. The decision recorded in README/SECURITY is to leave it
+ * that way — `bearer` is a shared-secret door for deployments that control both
+ * ends, and dressing it in discovery metadata would advertise an authorization
+ * server that does not exist — so this suite pins the actual behaviour of all
+ * three modes rather than the aspiration, and the documented non-conformance
+ * stays a checked fact.
+ */
+describe('M5.5 — protected-resource metadata across the three auth modes', () => {
+  const PRM_PATH = '/.well-known/oauth-protected-resource/mcp';
+
+  it('oauth: serves the document and points every 401 at it', async () => {
+    const rig = await startRig();
+    handle = rig.handle;
+
+    const prm = await fetch(`${rig.base}${PRM_PATH}`);
+    expect(prm.status).toBe(200);
+    expect(await prm.json()).toMatchObject({
+      resource: RESOURCE,
+      authorization_servers: [`${PUBLIC_URL}/`],
+      scopes_supported: ['avito:mcp'],
+    });
+
+    const denied = await fetch(`${rig.base}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: initializeBody(),
+    });
+    expect(denied.status).toBe(401);
+    const challenge = denied.headers.get('www-authenticate') ?? '';
+    expect(challenge).toContain(`resource_metadata="${PUBLIC_URL}${PRM_PATH}"`);
+    expect(challenge).toContain('scope="avito:mcp"');
+    expect(challenge).not.toContain('offline_access');
+  });
+
+  it('bearer: no metadata document, and the challenge says so', async () => {
+    const rig = await startRig({
+      auth: 'bearer',
+      authTokens: ['shared-secret-token-0123456789abcdef'],
+    });
+    handle = rig.handle;
+
+    expect((await fetch(`${rig.base}${PRM_PATH}`)).status).toBe(404);
+    expect((await fetch(`${rig.base}/.well-known/oauth-authorization-server`)).status).toBe(404);
+
+    const denied = await fetch(`${rig.base}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: initializeBody(),
+    });
+    expect(denied.status).toBe(401);
+    // A bare realm and nothing to discover. This is the documented
+    // non-conformance, asserted rather than assumed.
+    expect(denied.headers.get('www-authenticate')).toBe('Bearer realm="avito-mcp"');
+  });
+
+  it('none: no metadata document and no challenge at all', async () => {
+    const rig = await startRig({ auth: 'none' });
+    handle = rig.handle;
+
+    expect((await fetch(`${rig.base}${PRM_PATH}`)).status).toBe(404);
+    const open = await fetch(`${rig.base}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      body: initializeBody(),
+    });
+    expect(open.status).toBe(200);
+    expect(open.headers.get('www-authenticate')).toBeNull();
+  });
+});

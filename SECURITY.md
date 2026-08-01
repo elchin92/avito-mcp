@@ -8,6 +8,7 @@ Use **GitHub Private Vulnerability Reporting**:
 **https://github.com/elchin92/avito-mcp/security/advisories/new**
 
 Please include:
+
 - Affected version (`npm view avito-mcp version` for latest)
 - What the issue is and what an attacker could do
 - A minimal reproduction — **do not** paste real `Client_id` / `Client_secret` / tokens. Use placeholders like `EXAMPLE_TOKEN`.
@@ -31,6 +32,12 @@ We'll reply on the same advisory thread. Once a fix is released, the advisory be
 - A user accidentally pasting their own token somewhere public — that's a credential rotation problem, rotate it.
 
 ## Operational notes for the remote HTTP surface
+
+### `bearer` and `none` do not claim MCP authorization conformance
+
+Only `AVITO_MCP_HTTP_AUTH=oauth` implements the MCP authorization specification. `bearer` is a shared-secret guard and `none` is no guard at all; neither publishes RFC 9728 protected-resource metadata, neither runs an authorization server, and the challenge on a rejected request is a bare `Bearer realm="avito-mcp"` with no `resource_metadata` parameter. An MCP client written against revision 2026-07-28 therefore cannot discover an authorization server from these modes and cannot complete a flow it is required to initiate itself.
+
+This is a deliberate scope decision, not an oversight: `bearer` exists for a caller you configure by hand with a secret you generated, and publishing discovery metadata for an authorization server that does not exist would be worse than publishing none. **Use `oauth` for MCP clients.** A report that `bearer` lacks OAuth discovery is not a vulnerability; a report that `bearer` accepts a token it was not given, or that `oauth` can be bypassed, very much is.
 
 ### `AVITO_MCP_HTTP_PUBLIC_URL` is the OAuth issuer identifier
 
