@@ -9,8 +9,7 @@
  * own `server` reference — so an HTTP deployment can hold many concurrent sessions
  * without duplicating the Avito client or token cache.
  */
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
+import { McpServer } from '@modelcontextprotocol/server';
 import type { Config } from './config.js';
 import type { ToolContext } from './core/tool-factory.js';
 import { domains } from './meta/domain-registry.js';

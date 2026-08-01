@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client } from '@modelcontextprotocol/client';
+import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -122,13 +121,18 @@ async function listNames(client: Client): Promise<string[]> {
   return tools.map((t) => t.name).sort();
 }
 
-function makeCtx(mode: SafetyMode, allow: string[] = [], deny: string[] = []): { ctx: ToolContext; cfg: Config; fetchMock: ReturnType<typeof vi.fn> } {
+function makeCtx(
+  mode: SafetyMode,
+  allow: string[] = [],
+  deny: string[] = [],
+): { ctx: ToolContext; cfg: Config; fetchMock: ReturnType<typeof vi.fn> } {
   const cfg = makeConfig({ mode, allowTools: allow, denyTools: deny });
-  const fetchMock = vi.fn(async () =>
-    new Response(JSON.stringify({ ok: true }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }),
+  const fetchMock = vi.fn(
+    async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
   );
   vi.stubGlobal('fetch', fetchMock);
   const avito = new AvitoClient(cfg, {

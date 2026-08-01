@@ -8,9 +8,8 @@
  *
  * Run: `npm run generate:manifest`
  */
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client } from '@modelcontextprotocol/client';
+import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -163,7 +162,16 @@ async function main(): Promise<void> {
     tools: flat,
   };
   const schemaHash = createHash('sha256')
-    .update(JSON.stringify(flat.map(({ name, risk, environment, inputSchema }) => ({ name, risk, environment, inputSchema }))))
+    .update(
+      JSON.stringify(
+        flat.map(({ name, risk, environment, inputSchema }) => ({
+          name,
+          risk,
+          environment,
+          inputSchema,
+        })),
+      ),
+    )
     .digest('hex');
   const manifest = { ...manifestBase, schema_hash: schemaHash };
 

@@ -22,9 +22,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-
-import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
-
+import type { OAuthClientInformationFull } from '@modelcontextprotocol/server';
 import { logger } from '../../logger.js';
 
 export interface AuthCodeRecord {

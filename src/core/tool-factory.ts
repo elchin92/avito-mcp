@@ -1,5 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import type { McpServer, CallToolResult, ToolAnnotations } from '@modelcontextprotocol/server';
 import { z, type ZodRawShape } from 'zod';
 
 import type { Config } from '../config.js';
@@ -538,6 +537,7 @@ export function defineTool<I extends ZodRawShape>(
     metaRecord.supportsIdempotency = true;
   }
 
+  /* @mcp-codemod-error Could not verify `inputSchema` is a schema object. Raw shapes are deprecated in v2 — pass a Standard Schema object (e.g. z.object({ … })); no change is needed if it already is one. */
   server.registerTool(
     spec.name,
     {

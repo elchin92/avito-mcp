@@ -5,9 +5,8 @@
  * same payload for clients capable of parsing it. Covers the object/array/binary/error cases.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client } from '@modelcontextprotocol/client';
+import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

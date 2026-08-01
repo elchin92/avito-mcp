@@ -19,7 +19,12 @@
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
-
+import type {
+  AuthInfo,
+  OAuthClientInformationFull,
+  OAuthTokenRevocationRequest,
+  OAuthTokens,
+} from '@modelcontextprotocol/server';
 import {
   InvalidClientMetadataError,
   InvalidGrantError,
@@ -27,20 +32,13 @@ import {
   InvalidScopeError,
   InvalidTokenError,
   ServerError,
-} from '@modelcontextprotocol/sdk/server/auth/errors.js';
-import { redirectUriMatches } from '@modelcontextprotocol/sdk/server/auth/handlers/authorize.js';
+  redirectUriMatches,
+} from '@modelcontextprotocol/server-legacy/auth';
 import type {
   AuthorizationParams,
   OAuthServerProvider,
-} from '@modelcontextprotocol/sdk/server/auth/provider.js';
-import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
-import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import type {
-  OAuthClientInformationFull,
-  OAuthTokenRevocationRequest,
-  OAuthTokens,
-} from '@modelcontextprotocol/sdk/shared/auth.js';
-
+  OAuthRegisteredClientsStore,
+} from '@modelcontextprotocol/server-legacy/auth';
 import type { HttpConfig } from '../../config.js';
 import { logger } from '../../logger.js';
 import { OAuthStore } from './store.js';

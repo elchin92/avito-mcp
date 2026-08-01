@@ -16,13 +16,11 @@
 import express from 'express';
 import type { Router, RequestHandler } from 'express';
 import { rateLimit } from 'express-rate-limit';
-
 import {
   mcpAuthRouter,
   getOAuthProtectedResourceMetadataUrl,
-} from '@modelcontextprotocol/sdk/server/auth/router.js';
-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
-
+  requireBearerAuth,
+} from '@modelcontextprotocol/server-legacy/auth';
 import type { HttpConfig } from '../../config.js';
 import { AvitoOAuthProvider } from './provider.js';
 
@@ -85,10 +83,12 @@ export function createOAuthSubsystem(httpConfig: HttpConfig): OAuthSubsystem {
       }),
     );
 
+    /* @mcp-codemod-error requireBearerAuth: resource-server auth helpers routed to the frozen @modelcontextprotocol/server-legacy/auth copy. The maintained v2 home is @modelcontextprotocol/express — when re-pointing, verifiers must throw the v2 OAuthError (the express middleware does not recognize the legacy error classes). See the migration guide's server auth split section. */
     const requireAuth = requireBearerAuth({
       verifier: provider,
       requiredScopes: ['avito:mcp'],
       // Matches the path mcpAuthMetadataRouter serves for a resource server at /mcp.
+      /* @mcp-codemod-error getOAuthProtectedResourceMetadataUrl: resource-server auth helpers routed to the frozen @modelcontextprotocol/server-legacy/auth copy. The maintained v2 home is @modelcontextprotocol/express — when re-pointing, verifiers must throw the v2 OAuthError (the express middleware does not recognize the legacy error classes). See the migration guide's server auth split section. */
       resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
     });
 
