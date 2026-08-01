@@ -2,7 +2,7 @@
  * M2 (SDK v2): end-to-end contract of the Resource-Server half of the OAuth
  * subsystem, over a real HTTP listener.
  *
- * Two things are proven here that nothing else in the suite could see, because
+ * Three things are proven here that nothing else in the suite could see, because
  * every other MCP test runs over InMemoryTransport with no HTTP request at all:
  *
  *  1. An invalid or expired Bearer token is answered with 401 and a usable
@@ -22,6 +22,12 @@
  *     principal to `session:<id>`. That would quietly change who is allowed to
  *     confirm money/public actions and how the confirmation rate limit is
  *     counted, so it is asserted on the real value stored with a pending action.
+ *
+ *  3. The hard-confirmation rate limit is metered on that principal, so two MCP
+ *     sessions opened on one access token share one budget. Under the degraded
+ *     principal each new `initialize` handed the caller a fresh budget, turning
+ *     a brute-force guard into a formality — the consequence that makes the
+ *     shape of `CallerExtra` a security property and not a cosmetic one.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
@@ -65,7 +71,10 @@ interface Rig {
   pendingStore: PendingActionStore;
 }
 
-async function startRig(httpOverrides: Partial<HttpConfig> = {}): Promise<Rig> {
+async function startRig(
+  httpOverrides: Partial<HttpConfig> = {},
+  configOverrides: Partial<Config> = {},
+): Promise<Rig> {
   const port = await reservePort();
   const http: HttpConfig = {
     transport: 'http',
@@ -112,6 +121,7 @@ async function startRig(httpOverrides: Partial<HttpConfig> = {}): Promise<Rig> {
       path: '/avito/webhook',
       bufferSize: 100,
     },
+    ...configOverrides,
   } as unknown as Config;
 
   const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
@@ -208,6 +218,25 @@ function mcpHeaders(token: string, sessionId?: string): Record<string, string> {
     authorization: `Bearer ${token}`,
     ...(sessionId ? { 'mcp-session-id': sessionId } : {}),
   };
+}
+
+/** Initializes a fresh MCP session on the given token and returns its session id. */
+async function openSession(base: string, token: string): Promise<string> {
+  const init = await fetch(`${base}/mcp`, {
+    method: 'POST',
+    headers: mcpHeaders(token),
+    body: initializeBody(),
+  });
+  expect(init.status).toBe(200);
+  const sessionId = init.headers.get('mcp-session-id');
+  expect(sessionId).toBeTruthy();
+  await init.text();
+  await fetch(`${base}/mcp`, {
+    method: 'POST',
+    headers: mcpHeaders(token, sessionId!),
+    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+  });
+  return sessionId!;
 }
 
 /** Reads a JSON-RPC result out of either a plain JSON or an SSE-framed response. */
@@ -394,5 +423,63 @@ describe('OAuth bearer auth over HTTP (SDK v2 resource-server path)', () => {
     expect(pending[0]!.initiator).toBe(
       `bearer:${createHash('sha256').update(sharedToken).digest('base64url')}`,
     );
+  });
+
+  it('meters the hard-confirmation rate limit per OAuth principal, not per MCP session', async () => {
+    // The downstream consequence of the principal, and the reason the shape of
+    // CallerExtra is a security property rather than a cosmetic one:
+    // meta_confirm_action budgets confirmation attempts by
+    // pendingStore.checkConfirmationRateLimit(callerPrincipal(...)). Keyed on the
+    // OAuth client the budget is a property of the *caller*; keyed on the MCP
+    // session id it becomes a property of the connection, and any caller can mint
+    // a fresh budget by re-running `initialize` — which is exactly what the stale
+    // v1 CallerExtra shape did, silently, to a brute-force guard.
+    const rig = await startRig(
+      {},
+      { confirmationSecret: 'hard-confirmation-secret-of-at-least-32-chars' },
+    );
+    handle = rig.handle;
+    const { token } = await mintAccessToken(rig.base);
+
+    // Two independent MCP sessions on ONE issued token, i.e. one principal.
+    const sessionA = await openSession(rig.base, token);
+    const sessionB = await openSession(rig.base, token);
+    expect(sessionA).not.toBe(sessionB);
+
+    const confirm = async (
+      sessionId: string,
+      id: number,
+    ): Promise<{ error?: { kind?: string } } | undefined> => {
+      const response = await fetch(`${rig.base}/mcp`, {
+        method: 'POST',
+        headers: mcpHeaders(token, sessionId),
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id,
+          method: 'tools/call',
+          params: {
+            name: 'meta_confirm_action',
+            arguments: { confirmation_id: 'nonexistent-confirmation-id-0000' },
+          },
+        }),
+      });
+      expect(response.status).toBe(200);
+      const rpc = await readRpc(response);
+      return (rpc.result as { structuredContent?: { error?: { kind?: string } } } | undefined)
+        ?.structuredContent;
+    };
+
+    // Burn the whole 20-attempt window on session A. Each attempt is answered
+    // "not found" (no structuredContent), so the budget is spent, not the ids.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      expect((await confirm(sessionA, 100 + attempt))?.error?.kind).toBeUndefined();
+    }
+
+    // Session B is a different connection but the same authenticated caller, so
+    // it must inherit the exhausted budget. With a session-derived principal it
+    // would get a pristine one and the guard would be trivially bypassable.
+    expect((await confirm(sessionB, 200))?.error?.kind).toBe('RATE_LIMITED');
+    // …and the original session stays blocked too.
+    expect((await confirm(sessionA, 201))?.error?.kind).toBe('RATE_LIMITED');
   });
 });
