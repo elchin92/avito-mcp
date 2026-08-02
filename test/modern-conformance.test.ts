@@ -56,6 +56,7 @@ import {
   initializeMessage,
   legacyPost,
   makeConfig,
+  modernListAll,
   modernPost,
   rawRequest,
   resultOf,
@@ -902,9 +903,10 @@ describe('B — legacy compatibility after the modern work', () => {
   it('exposes the same tool set on both eras', async () => {
     const rig = await startRig('dual');
     const { toolNames } = await legacyOpening(rig);
-    const modern = (
-      (resultOf(await modernPost(rig, 'tools/list'))?.tools ?? []) as { name: string }[]
-    )
+    // Walked, not read off page one: since M4.3 the modern leg pages
+    // `tools/list`, and the claim here is about the SET, which is the whole
+    // catalogue on both eras.
+    const modern = ((await modernListAll(rig, 'tools/list', 'tools')) as { name: string }[])
       .map((t) => t.name)
       .sort();
     expect(modern).toEqual(toolNames);

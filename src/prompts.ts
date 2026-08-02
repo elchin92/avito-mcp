@@ -1,9 +1,9 @@
 /**
- * MCP Prompts (spec 2025-11-25). Ready-made prompts that guide an agent through
- * common Avito operations. They do not call the API themselves — they render an
- * instruction for the LLM about which tools to use and in what order. This
- * reduces agent hallucinations and saves context: a single prompt operation
- * instead of a lengthy "first do X, then Y".
+ * MCP Prompts. Ready-made prompts that guide an agent through common Avito
+ * operations. They do not call the API themselves — they render an instruction
+ * for the LLM about which tools to use and in what order. This reduces agent
+ * hallucinations and saves context: a single prompt operation instead of a
+ * lengthy "first do X, then Y".
  *
  *  - avito_daily_overview      — balance + list of listings + spendings
  *  - avito_check_unread_chats  — find and summarize unread chats
@@ -13,14 +13,162 @@
  *
  * All prompts render a role='user' message, as is standard in MCP. The client
  * can supply parameters (limit, item_id, tool_name) via the completion API.
+ *
+ * ── M1.8. Why the arguments are validated the way they are ──────────────────
+ *
+ * This file is a text-injection surface, and until M1.8 it was an unguarded
+ * one. `tool_name` and `item_id` arrive as arbitrary caller strings and are
+ * interpolated straight into the text of a prompt that goes on to TELL A MODEL
+ * WHAT TO DO — including which money/public tools exist and that a confirmation
+ * flow guards them. Anything a caller can put in those two fields becomes
+ * instructions in the model's context, sitting under this server's name.
+ *
+ * The revision is explicit that this is the server's job:
+ *
+ *   > Servers **SHOULD**: Validate all arguments … Implementations **MUST**
+ *   > carefully validate all prompt inputs and outputs to prevent injection
+ *   > attacks or unauthorized access to resources.
+ *   > — https://modelcontextprotocol.io/specification/2026-07-28/server/prompts
+ *
+ * and that a bad argument is a refusal, not a stub: `-32602` covers "invalid
+ * arguments" and "missing required arguments" for `prompts/get`
+ * (`docs/mcp-2026-07-28/schema-2.md`). Before M1.8, a blank required argument
+ * produced a SUCCESSFUL result whose text asked the model to supply the value —
+ * an answer the client cannot distinguish from a real expansion, so an agent
+ * would happily hand it to the model and act on a prompt that never rendered.
+ *
+ * Two layers, and both are load-bearing:
+ *
+ *   1. **Allowlists in the schema.** Every argument is constrained to a
+ *      character set with no expressive power: digits for `item_id` and the
+ *      numeric arguments, `[a-z0-9_]` for `tool_name`. A value that cannot
+ *      contain a newline, a quote, a bracket or a non-Latin letter cannot carry
+ *      an instruction, so validation here is not "escaping done well", it is
+ *      escaping made unnecessary. Failure is the SDK's own `-32602` from
+ *      `prompts/get`, on both eras, with the offending field named.
+ *   2. **A sweep at the interpolation point** ({@link promptSafeText}). Layer 1
+ *      is the guarantee; layer 2 is what survives someone loosening a schema
+ *      later, and it refuses control characters, bidi/format overrides and
+ *      over-long values wherever they come from. It is a second opinion on
+ *      every value that reaches prompt text, and it fails the same `-32602`.
+ *
+ * ── Era ────────────────────────────────────────────────────────────────────
+ *
+ * Both. This is not a wire-shape question that the era flag arbitrates: the old
+ * behaviour was a defect on 2025-11-25 too (its own prompts page carries the
+ * same MUST), and shipping a known injection surface to legacy clients in order
+ * to keep byte-identity with a defect would be the wrong reading of §1.2.B.
+ * The 1.3.3 regression bench is unaffected — it never sent a blank or hostile
+ * argument, only a MISSING one, which answered `-32602` then and still does.
  */
 import { z } from 'zod';
+import { ProtocolError, ProtocolErrorCode } from '@modelcontextprotocol/server';
 import type { McpServer, GetPromptResult, PromptMessage } from '@modelcontextprotocol/server';
 import { logger } from './logger.js';
 import type { ToolContext } from './core/tool-factory.js';
 
 function userMessage(text: string): PromptMessage {
   return { role: 'user', content: { type: 'text', text } };
+}
+
+/**
+ * Characters that must never reach the text of a prompt, whatever schema let
+ * them through.
+ *
+ *   • U+0000–U+001F and U+007F–U+009F — C0/C1 controls. A newline is
+ *     the cheapest injection there is: it ends the sentence the server wrote
+ *     and starts one the caller wrote, in the same message.
+ *   • U+200B–U+200F, U+202A–U+202E, U+2066–U+2069 and U+FEFF — zero-width
+ *     and bidirectional-override formatting. These are invisible in every
+ *     review surface a human uses and change what the rendered text reads as,
+ *     which makes them the standard way to smuggle text past a reader who
+ *     approves a prompt on sight.
+ */
+const UNSAFE_PROMPT_TEXT =
+  // eslint-disable-next-line no-control-regex -- matching them is exactly the point
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/;
+
+/**
+ * The longest a caller-supplied value may be once it is inside prompt text.
+ * Far above every allowlist in this file (a tool name is capped at 64
+ * characters, an item id at 19); it is the bound that applies to a field whose
+ * own limit is ever relaxed.
+ */
+const MAX_PROMPT_ARGUMENT_CHARS = 128;
+
+/** The refusal a bad prompt argument earns, naming the field and nothing else. */
+function invalidPromptArgument(field: string, why: string): ProtocolError {
+  // The value is not echoed: it is caller-chosen text, and reflecting it would
+  // put the very thing that was refused into the client's logs and UI.
+  return new ProtocolError(
+    ProtocolErrorCode.InvalidParams,
+    `Invalid value for prompt argument ${field}: ${why}`,
+  );
+}
+
+/**
+ * The form of a caller-supplied value that may be interpolated into prompt
+ * text, or a `-32602` if there is none.
+ *
+ * Deliberately a REFUSAL rather than a sanitiser that strips and continues:
+ * silently rewriting an argument would hand the model a prompt the caller did
+ * not ask for and cannot see, which is a quieter version of the same problem.
+ */
+export function promptSafeText(field: string, value: string): string {
+  if (value.length > MAX_PROMPT_ARGUMENT_CHARS) {
+    return raise(field, `longer than ${MAX_PROMPT_ARGUMENT_CHARS} characters`);
+  }
+  if (UNSAFE_PROMPT_TEXT.test(value)) {
+    return raise(field, 'contains a control or bidirectional formatting character');
+  }
+  return value;
+}
+
+function raise(field: string, why: string): never {
+  throw invalidPromptArgument(field, why);
+}
+
+/**
+ * The shape of a tool name on this server, as an allowlist.
+ *
+ * Deliberately syntactic rather than a lookup against the live registry. A
+ * registry check would tie the prompt's answer to the deployment's safety
+ * policy — asking about a tool the operator has hidden would become an error
+ * rather than an explanation, which is the opposite of what a "explain a tool"
+ * prompt is for, and it would leak which tools a policy hides. The pattern is
+ * the same one `src/meta/tool-naming.ts` produces (`<domain>_<operation>`), so
+ * anything outside it names nothing this server could describe anyway.
+ *
+ * What matters for injection is the CHARACTER SET: `[a-z0-9_]` cannot express a
+ * sentence, a newline, a quote or a markup delimiter.
+ */
+const TOOL_NAME_PATTERN = /^[a-z][a-z0-9_]{2,63}$/;
+
+/** An Avito listing id: digits only, within the range a 64-bit id can occupy. */
+const ITEM_ID_PATTERN = /^[1-9][0-9]{0,18}$/;
+
+/** The longest spendings window `avito_daily_overview` will build a date range for. */
+const MAX_OVERVIEW_DAYS = 365;
+
+/** The most chats `avito_check_unread_chats` will ask the agent to walk. */
+const MAX_CHAT_LIMIT = 100;
+
+/**
+ * A prompt argument holding a bounded count. MCP prompt arguments are strings
+ * on the wire, so the bound is expressed on the decimal form and re-checked as
+ * a number: `"7"` is accepted, `"0"`, `"-1"`, `"1e3"`, `"07 "` and `"9999"` are
+ * not. Before M1.8 these went through `Number.parseInt(...) || fallback`, which
+ * accepted `"-500"` (a date window running into the future) and `"99999"`
+ * (a request the agent will be rate-limited on) and silently rewrote every
+ * other malformation to the default.
+ */
+function countArgument(field: string, max: number, description: string) {
+  return z
+    .string()
+    .regex(/^[1-9][0-9]{0,4}$/, `${field} must be a decimal integer without a leading zero`)
+    .refine((value) => Number(value) <= max, `${field} must be at most ${max}`)
+    .optional()
+    .describe(description);
 }
 
 export function registerPrompts(server: McpServer, ctx: ToolContext): void {
@@ -35,16 +183,17 @@ export function registerPrompts(server: McpServer, ctx: ToolContext): void {
         'Готовый промпт для агента: проверить баланс, активные объявления и расходы за период. ' +
         'Все вызовы read-only — безопасно запускать на боевом аккаунте без подтверждений.',
       argsSchema: z.object({
-        days: z
-          .string()
-          .optional()
-          .describe(
-            'Spendings period in days (defaults to 7). / Период расходов в днях (по умолчанию 7).',
-          ),
+        days: countArgument(
+          'days',
+          MAX_OVERVIEW_DAYS,
+          'Spendings period in days (defaults to 7). / Период расходов в днях (по умолчанию 7).',
+        ),
       }),
     },
     async (args): Promise<GetPromptResult> => {
-      const days = Number.parseInt(args.days ?? '7', 10) || 7;
+      // No fallback arithmetic left: the schema has already refused everything
+      // that is not a decimal integer in range, so the only case left is absent.
+      const days = args.days === undefined ? 7 : Number(args.days);
       const dateTo = new Date().toISOString().slice(0, 10);
       const dateFrom = new Date(Date.now() - days * 86400_000).toISOString().slice(0, 10);
       return {
@@ -93,16 +242,15 @@ export function registerPrompts(server: McpServer, ctx: ToolContext): void {
         'Найти непрочитанные чаты и показать последние сообщения. Read-only — не отправляет, ' +
         'только читает. Решение о пометке прочитанным или ответе оставляется человеку.',
       argsSchema: z.object({
-        limit: z
-          .string()
-          .optional()
-          .describe(
-            'How many chats to look at (defaults to 20). / Сколько чатов смотреть (по умолчанию 20).',
-          ),
+        limit: countArgument(
+          'limit',
+          MAX_CHAT_LIMIT,
+          'How many chats to look at (defaults to 20). / Сколько чатов смотреть (по умолчанию 20).',
+        ),
       }),
     },
     async (args): Promise<GetPromptResult> => {
-      const limit = Number.parseInt(args.limit ?? '20', 10) || 20;
+      const limit = args.limit === undefined ? 20 : Number(args.limit);
       return {
         description: `Search for up to ${limit} unread chats / Поиск до ${limit} непрочитанных чатов`,
         messages: [
@@ -183,23 +331,21 @@ export function registerPrompts(server: McpServer, ctx: ToolContext): void {
       argsSchema: z.object({
         tool_name: z
           .string()
+          .regex(
+            TOOL_NAME_PATTERN,
+            'tool_name must be a tool name: lowercase letters, digits and underscores, ' +
+              '3 to 64 characters, starting with a letter',
+          )
           .describe(
             'Tool name, e.g. "items_update_price" or "messenger_get_chats_v2". / Имя tool, например "items_update_price" или "messenger_get_chats_v2".',
           ),
       }),
     },
     async (args): Promise<GetPromptResult> => {
-      const name = args.tool_name?.trim() ?? '';
-      if (!name) {
-        return {
-          description: 'tool_name is required',
-          messages: [
-            userMessage(
-              'Provide tool_name, e.g. items_update_price.\n\n— Русский / Russian —\n\nУкажи tool_name, например items_update_price.',
-            ),
-          ],
-        };
-      }
+      // `"   "` used to reach this line and render a "tool_name is required"
+      // stub as a SUCCESSFUL result; it is now refused by the pattern above
+      // with -32602 before the handler runs. See the M1.8 note in the header.
+      const name = promptSafeText('tool_name', args.tool_name);
       return {
         description: `Description of tool ${name} / Описание tool ${name}`,
         messages: [
@@ -238,17 +384,19 @@ export function registerPrompts(server: McpServer, ctx: ToolContext): void {
       argsSchema: z.object({
         item_id: z
           .string()
+          .regex(
+            ITEM_ID_PATTERN,
+            'item_id must be an Avito listing id: 1 to 19 digits, no leading zero',
+          )
           .describe('Avito listing ID to promote. / ID объявления Avito для продвижения.'),
       }),
     },
     async (args): Promise<GetPromptResult> => {
-      const itemId = args.item_id?.trim() ?? '';
-      if (!itemId) {
-        return {
-          description: 'item_id is required',
-          messages: [userMessage('Provide item_id.\n\n— Русский / Russian —\n\nУкажи item_id.')],
-        };
-      }
+      // This prompt names four tools by name and explains the confirmation
+      // flow that guards the money ones, so text smuggled through `item_id`
+      // would be read by the model as part of that briefing. The pattern above
+      // leaves nothing but digits; the sweep is the second opinion.
+      const itemId = promptSafeText('item_id', args.item_id);
       return {
         description: `Promotion preparation for item ${itemId} / Подготовка продвижения для item ${itemId}`,
         messages: [

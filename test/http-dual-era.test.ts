@@ -63,6 +63,7 @@ import {
   closeRigs,
   initializeMessage,
   legacyPost,
+  modernListAll,
   modernPost,
   rawRequest,
   resultOf,
@@ -163,7 +164,10 @@ describe('era=dual: both legs, routed per request', () => {
     const rig = await startRig('dual');
     const list = await modernPost(rig, 'tools/list');
     expect(list.status).toBe(200);
-    const tools = resultOf(list)!.tools as { name: string }[];
+    // A PAGE since M4.3 — the whole catalogue takes a walk (see
+    // `src/core/pagination.ts`), and this test is about the leg answering at
+    // all, so it asks for the catalogue the way a client would.
+    const tools = (await modernListAll(rig, 'tools/list', 'tools')) as { name: string }[];
     expect(tools.length).toBeGreaterThan(100);
     expect(tools.map((t) => t.name)).toContain('meta_health');
 
@@ -187,10 +191,11 @@ describe('era=dual: both legs, routed per request', () => {
       { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
       init.sessionId,
     );
-    const modernList = await modernPost(rig, 'tools/list');
-    const names = (a: Answer): string[] =>
-      ((resultOf(a)?.tools ?? []) as { name: string }[]).map((t) => t.name).sort();
-    expect(names(modernList)).toEqual(names(legacyList));
+    const modernTools = (await modernListAll(rig, 'tools/list', 'tools')) as { name: string }[];
+    const names = (tools: { name: string }[]): string[] => tools.map((t) => t.name).sort();
+    expect(names(modernTools)).toEqual(
+      names((resultOf(legacyList)?.tools ?? []) as { name: string }[]),
+    );
   });
 });
 

@@ -176,11 +176,17 @@ describe('the values that actually reach a 2026 client', () => {
   });
 
   it('keeps cacheScope identical across every page of one list request', async () => {
-    // Trivially true while each list fits in one page, and deliberately written
-    // as a page walk anyway: `tools/list` pagination lands in M4.3, and this is
-    // the assertion that has to still be here when it does. A per-page hint
-    // would let a shared cache hold page 1 of a private listing.
+    // Written as a page walk while every list still fitted in one page, so
+    // that the assertion would already be standing when pagination arrived. It
+    // has: `tools/list` now answers in pages (`src/core/pagination.ts`), so
+    // this loop makes several round trips and the MUST it checks has stopped
+    // being vacuous. A per-page hint would let a shared cache hold page 1 of a
+    // private listing.
     const rig = await startRig('dual');
+    // Guarded rather than assumed: if `tools/list` ever stops paging, this test
+    // silently goes back to proving nothing, and the whole reason it was
+    // written this way was to notice that.
+    let sawMultiplePages = false;
     for (const method of [
       'tools/list',
       'prompts/list',
@@ -200,9 +206,11 @@ describe('the values that actually reach a 2026 client', () => {
         pages += 1;
         expect(pages, `${method} paged more than expected`).toBeLessThan(50);
       } while (cursor !== undefined);
+      if (pages > 1) sawMultiplePages = true;
       expect(new Set(scopes).size, method).toBe(1);
       expect(scopes[0], method).toBe(MODERN_CACHE_HINTS[method as 'tools/list']!.cacheScope);
     }
+    expect(sawMultiplePages, 'no list paged at all — this test proves nothing').toBe(true);
   });
 
   it('never emits cache fields on the 2025 wire', async () => {
