@@ -22,13 +22,16 @@ mcp.example.com {
 	#
 	# Credentials do not enter it: Caddy records `Authorization` and `Cookie` as
 	# REDACTED (verified by sending both) because `log_credentials` is off, and
-	# it must stay off. Request headers ARE recorded, which is what allows the
-	# log to be split by era on `Mcp-Protocol-Version` the same way the server's
-	# own classifier splits it.
+	# it must stay off. The webhook's only credential is instead the final URL
+	# path segment, so webhook requests must be omitted from the access log. Keep
+	# this matcher in sync if AVITO_MCP_WEBHOOK_PATH is changed from its default.
+	# Request headers ARE recorded, which is what allows the log to be split by
+	# era on `Mcp-Protocol-Version` the same way the server's own classifier does.
 	log {
 		output stderr
 		format json
 	}
+	log_skip /avito/webhook/*
 
 	reverse_proxy 127.0.0.1:3000
 }

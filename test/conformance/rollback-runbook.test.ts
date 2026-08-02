@@ -309,6 +309,17 @@ describe('M6.8 — the rollback criteria are checkable, not merely written', () 
     expect(dropped).toContain('M1.15');
   });
 
+  it('excludes path-authenticated webhook requests from the access log', () => {
+    // Authorization/Cookie redaction cannot protect this credential: Avito's
+    // webhook protocol puts the only secret in the URL path. A site-wide log
+    // without log_skip would therefore turn every legitimate delivery into a
+    // reusable credential disclosure.
+    const caddyfile = read(CADDYFILE);
+    expect(caddyfile).toMatch(/^\s*log_skip \/avito\/webhook\/\*\s*$/m);
+    expect(runbook).toContain('log_skip /avito/webhook/*');
+    expect(runbook).toContain('AVITO_MCP_WEBHOOK_PATH');
+  });
+
   it('does not present an observation window it has not run', () => {
     // The failure this pins: a runbook that quietly reads as complete because
     // the section meant to hold seven days of readings is a table nobody

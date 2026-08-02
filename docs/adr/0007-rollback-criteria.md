@@ -121,7 +121,10 @@ Three things about that block, all measured on the Caddy actually installed here
   a fiction, so the explicit form is not style.
 - **Credentials do not enter it.** `Authorization` and `Cookie` are recorded as
   `REDACTED` — verified by sending both — because `log_credentials` is off and
-  stays off.
+  stays off. The webhook credential is a URL path segment rather than a header,
+  so `log_skip /avito/webhook/*` excludes those requests entirely. If
+  `AVITO_MCP_WEBHOOK_PATH` is customized, the matcher must be changed to the
+  same path before logging is enabled.
 - **The request headers are recorded**, which is what makes era attribution
   possible at the edge: `Mcp-Protocol-Version` is the field the server's own
   classifier reads, so the log can be split the same way the process splits it.
@@ -146,17 +149,20 @@ Neither is optional, and neither is something this document can do for itself.
 
 1. **The access log must be enabled in `/etc/caddy/avito-mcp.Caddyfile`** — the
    file this repository ships is an example, not the running config. Add the
-   same `log { output stderr / format json }` block to the site, then:
+   same `log { output stderr / format json }` block and webhook `log_skip`
+   matcher to the site, then:
 
    ```bash
    caddy validate --config /etc/caddy/avito-mcp.Caddyfile --adapter caddyfile \
      && systemctl reload caddy \
      && journalctl -u caddy --since "-1min" --no-pager -o cat \
-        | jq -Rc 'fromjson? | select(.msg == "handled request") | .request.uri' | head
+        | jq -Rc 'fromjson? | select(.msg == "handled request") | [.request.method, .status]' | head
    ```
 
    Until that prints something, §4 is not computable and `dual` must not be
-   turned on.
+   turned on. Also send a webhook probe and confirm its path does **not** appear
+   in the journal before registering the webhook with Avito; a logged webhook
+   URL discloses the receiver's only authentication credential.
 
 2. **journald must keep the observation window.** `/etc/systemd/journald.conf`
    on this host is empty — defaults only — and the journal currently reaches
