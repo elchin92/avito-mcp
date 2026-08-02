@@ -178,12 +178,57 @@ export function applyKnownAdditions(
  *
  * A rebase whose path does not already exist in the capture is a typo, and the
  * test says so rather than quietly asserting nothing.
+ *
+ * The second thing a captured value can be a function of is the CLOCK, and the
+ * problem has the same shape with a sharper edge. `avito_daily_overview`
+ * renders a seven-day window ending today, so the literal the capture pinned
+ * was true for the remainder of that UTC day and false every day after it: the
+ * bench reported "the 2025 wire moved" on a schedule, starting at the first
+ * midnight, on a branch that had touched nothing. Silencing that by
+ * regenerating the baseline would redefine "compatible with 1.3.3" once a day,
+ * which is precisely the pressure this file exists to keep off the baseline.
+ *
+ * So `value` receives the captured leaf. A rebase can then RE-ANCHOR a
+ * time-derived value to the moment of comparison instead of recomputing it from
+ * scratch, which keeps everything the pinned literal asserted that was ever a
+ * claim about this server — the same prose, the same window length, the window
+ * still ending today — and drops only the part that was a claim about the
+ * calendar.
  */
 export interface RebasedValue {
   readonly path: readonly string[];
-  /** Recomputed at comparison time from whatever the answer is derived from. */
-  readonly value: () => unknown;
+  /**
+   * Recomputed at comparison time from whatever the answer is derived from —
+   * a live repository file, or the captured value itself, which is handed in so
+   * that a clock-derived value can be re-anchored rather than re-derived.
+   */
+  readonly value: (captured: unknown) => unknown;
   readonly why: string;
+}
+
+/**
+ * Re-anchors every `YYYY-MM-DD` in `captured` so that the LATEST of them lands
+ * on `now`, preserving every interval between them.
+ *
+ * The anchor is read out of the text rather than out of `$provenance`: the
+ * latest date in a "window ending today" is today-as-of-the-capture by
+ * construction, and deriving it from the value keeps the shift correct if the
+ * baseline is ever recaptured. Everything else in the string — including any
+ * date that is NOT part of the window — is left exactly as it was, so a stray
+ * literal date appearing in the prompt would still fail the comparison.
+ */
+export function reanchorDates(captured: string, now: Date): string {
+  const ISO_DAY = /\d{4}-\d{2}-\d{2}/g;
+  const day = (value: string): number => Date.parse(`${value}T00:00:00Z`);
+  const found = captured.match(ISO_DAY);
+  if (found === null) return captured;
+  const anchor = Math.max(...found.map(day));
+  if (!Number.isFinite(anchor)) return captured;
+  const target = day(now.toISOString().slice(0, 10));
+  const shift = target - anchor;
+  return captured.replace(ISO_DAY, (match) =>
+    new Date(day(match) + shift).toISOString().slice(0, 10),
+  );
 }
 
 /** A deep copy of `value` with every rebased path recomputed from live sources. */
@@ -196,7 +241,9 @@ export function applyRebases(value: unknown, rebases: readonly RebasedValue[] = 
     if (parent === null || typeof parent !== 'object') {
       throw new Error(`rebase ${rebase.path.join('.')} has no parent in the reference answer`);
     }
-    (parent as Record<string, unknown>)[leaf] = rebase.value();
+    (parent as Record<string, unknown>)[leaf] = rebase.value(
+      (parent as Record<string, unknown>)[leaf],
+    );
   }
   return out;
 }
@@ -561,6 +608,20 @@ export const LEGACY_WIRE_STEPS: readonly WireStep[] = [
     note: 'a registered prompt renders',
     method: 'prompts/get',
     params: { name: 'avito_daily_overview', arguments: {} },
+    rebase: [
+      {
+        path: ['body', 'result', 'messages', '0', 'content', 'text'],
+        value: (captured) => reanchorDates(captured as string, new Date()),
+        why:
+          'The prompt embeds a seven-day window ending today (`src/prompts.ts`), so the ' +
+          'captured literal stops being true at the first UTC midnight after the capture — ' +
+          'and did, turning the bench red on a branch that changed nothing. Re-anchoring the ' +
+          'reference keeps everything the literal proved about this server (the same prose ' +
+          'around the dates, a window of exactly seven days, the window still ending TODAY) ' +
+          'and drops only what it proved about the calendar. The branch narrowing the window ' +
+          'or dating it to yesterday still fails here.',
+      },
+    ],
   },
   {
     id: '19-prompts-get-unknown',
