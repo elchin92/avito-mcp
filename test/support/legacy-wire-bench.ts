@@ -75,11 +75,28 @@
  *     well-formed request. Declared with both sides' values at every checked
  *     path, so the declaration fails the day it stops being true.
  *   • {@link RebasedValue} — the digest of `avito://docs/safety`, which is a
- *     property of `docs/safety.md` and not of the wire. Recomputed from the
- *     live file, which makes the assertion stricter than the frozen one: the
- *     branch must serve that file byte for byte.
+ *     property of `docs/safety.md` and not of the wire, and the RELEASE NUMBER
+ *     at the three places the wire reports it ({@link RELEASE_NUMBER_REBASE}).
+ *     Both are recomputed from the live repository file, which makes the
+ *     assertion stricter than the frozen one: the branch must serve that
+ *     document byte for byte, and must report the version it actually ships.
  *
- * Nothing else in this file may differ.
+ * Nothing else in this file may differ. TWO values are normalised on both sides
+ * rather than declared as differences, because neither is a property of the
+ * wire and neither can be compared where it appears:
+ *
+ *   • The release number inside `avito://manifest`, a 380 KB document that
+ *     embeds it ({@link condenseManifestDocument}). Removing it leaves the
+ *     frozen 1.3.3 digest pinning every other byte of the catalogue, and the
+ *     version is still compared on its own at the three places the wire reports
+ *     it plainly.
+ *   • The reporting window in `avito_daily_overview`, which is computed from
+ *     the clock ({@link condensePromptDates}). Left alone it would turn every
+ *     UTC midnight into "the legacy wire moved".
+ *
+ * Neither is an allowance. Both are values that would otherwise force a
+ * re-capture on a schedule — the failure mode that ends with the reference no
+ * longer being 1.3.3.
  *
  * Not named *.test.ts, so vitest's include pattern does not collect it.
  */
@@ -335,13 +352,64 @@ function safetyDocument(): string {
 
 /** A `resources/read` whose text is a large document: digest plus a shape probe. */
 function condenseDocument(body: unknown): unknown {
+  return condenseDocumentWith(body, (text) => text);
+}
+
+/**
+ * The same, with the RELEASE NUMBER normalised out of the document first.
+ *
+ * `avito://manifest` embeds `version`, so a release bump moves the digest of a
+ * 380 KB document in which nothing else changed. Left alone, that turns "we cut
+ * a version" into "the legacy wire moved" on every single release — a false
+ * verdict this bench must never produce, and one whose pressure would land on
+ * the bench rather than on the code.
+ *
+ * Normalising is what keeps the assertion strong rather than what weakens it.
+ * The alternative to a placeholder is a rebase of the whole digest against a
+ * recomputed document, and that would have to replicate `liveManifest()` here —
+ * the bench asserting the server against a second copy of the server, which is
+ * no assertion at all. With the release number replaced by a fixed-width token,
+ * the digest frozen from the real 1.3.3 still pins EVERY OTHER BYTE of the
+ * catalogue: 148 tool definitions, their risks, domains, annotations and
+ * schemas, the per-risk and per-domain counts, and `schema_hash`. The version
+ * itself is not lost either — it is compared on its own, against
+ * `package.json`, at the three other places the wire reports it.
+ *
+ * A CONSTANT token matters, and being the same width as the version it replaces
+ * does not: `length` is part of the same condensation, and replacing the
+ * version outright is what makes that length independent of how many digits the
+ * release number happens to have. `1.3.3` and a later `2.0.10` condense to the
+ * same document, which is the property that keeps this step from failing on
+ * every release from now on.
+ */
+const RELEASE_NUMBER_TOKEN = '<release>';
+
+function condenseManifestDocument(body: unknown): unknown {
+  return condenseDocumentWith(body, (text) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Not JSON at all is a finding, not something to normalise past: hand the
+      // raw text on and let the comparison report it.
+      return text;
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return text;
+    const document = parsed as Record<string, unknown>;
+    if (typeof document.version !== 'string') return text;
+    return JSON.stringify({ ...document, version: RELEASE_NUMBER_TOKEN }, null, 2);
+  });
+}
+
+function condenseDocumentWith(body: unknown, normalise: (text: string) => string): unknown {
   const contents = resultOf(body)?.contents;
   if (!Array.isArray(contents)) return { unexpected: body };
   return {
     envelope: { ...(body as Frame), result: { contentCount: contents.length } },
     contents: contents.map((entry) => {
       const item = entry as Record<string, unknown>;
-      const text = typeof item.text === 'string' ? item.text : null;
+      const raw = typeof item.text === 'string' ? item.text : null;
+      const text = raw === null ? null : normalise(raw);
       return {
         ...item,
         text:
@@ -350,6 +418,84 @@ function condenseDocument(body: unknown): unknown {
             : { length: text.length, firstLine: text.split('\n', 1)[0], sha256: digest(text) },
       };
     }),
+  };
+}
+
+/**
+ * A `prompts/get` whose text embeds a reporting window computed from the clock.
+ *
+ * `avito_daily_overview` renders `dateFrom` as today-minus-seven and `dateTo`
+ * as today (`src/prompts.ts`), so the captured text is a picture of the DAY the
+ * reference was measured. Compared verbatim, the step passes on the day of the
+ * capture and fails on every day after it: the suite goes red at the next UTC
+ * midnight with nothing having changed, and it does so on a step whose failure
+ * reads "the legacy wire moved". That is the single most expensive false
+ * verdict this bench can produce, because the obvious way to clear it is to
+ * re-capture — which is how the reference stops being 1.3.3 and becomes
+ * whatever the branch happened to answer that morning.
+ *
+ * Both sides are normalised, so what stays pinned is every other byte of the
+ * prompt: the wording, the tool names, the argument shapes, the ordering, the
+ * Russian half, and the fact that a date appears at exactly these two places.
+ * The window's ARITHMETIC is not this bench's to assert — `test/prompts.test.ts`
+ * owns that — and asserting it from a frozen capture is not possible anyway.
+ */
+function condensePromptDates(body: unknown): unknown {
+  const frame = body as Frame;
+  const result = resultOf(body);
+  if (result === null) return body;
+  const messages = (result as Record<string, unknown>).messages;
+  if (!Array.isArray(messages)) return body;
+  return {
+    ...frame,
+    result: {
+      ...(result as Record<string, unknown>),
+      messages: messages.map((message) => {
+        const item = message as Record<string, unknown>;
+        const content = item.content as Record<string, unknown> | undefined;
+        if (content === undefined || typeof content.text !== 'string') return item;
+        return {
+          ...item,
+          content: { ...content, text: content.text.replace(/\d{4}-\d{2}-\d{2}/g, '<date>') },
+        };
+      }),
+    },
+  };
+}
+
+/** The release number this branch ships, which the wire reports in four places. */
+function packageVersion(): string {
+  const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
+    version?: string;
+  };
+  if (typeof pkg.version !== 'string') throw new Error('package.json has no version');
+  return pkg.version;
+}
+
+/**
+ * The release number, wherever the wire reports it, rebased onto `package.json`.
+ *
+ * This is the one value in the capture that is SUPPOSED to move, and it moves
+ * on exactly the commits this bench is least interested in — a version bump
+ * touches no protocol code. Frozen at `1.3.3` it would fail every release from
+ * this one onwards, and the fix under that pressure is always to re-capture the
+ * baseline, which is how a compatibility reference quietly becomes a picture of
+ * the branch.
+ *
+ * As a rebase it is STRICTER than the frozen value, on the bench's own terms:
+ * the branch must report the version it actually ships, in all three places, or
+ * the step fails. A build whose `serverInfo.version` disagreed with its
+ * `package.json` — the shape a botched release actually takes — was invisible
+ * to the frozen comparison the moment the number changed, and is caught here.
+ */
+function RELEASE_NUMBER_REBASE(path: readonly string[]): RebasedValue {
+  return {
+    path,
+    value: packageVersion,
+    why:
+      'The release number is a property of package.json, not of the protocol. Rebasing it ' +
+      'keeps every other byte of the answer pinned to the real 1.3.3 while requiring this ' +
+      'build to report the version it actually ships.',
   };
 }
 
@@ -424,6 +570,7 @@ export const LEGACY_WIRE_STEPS: readonly WireStep[] = [
       capabilities: {},
       clientInfo: { name: 'legacy-wire-bench', version: '1.0.0' },
     },
+    rebase: [RELEASE_NUMBER_REBASE(['body', 'result', 'serverInfo', 'version'])],
   },
   {
     id: '02-notifications-initialized',
@@ -475,7 +622,11 @@ export const LEGACY_WIRE_STEPS: readonly WireStep[] = [
     note: 'the manifest resource — the published tool registry',
     method: 'resources/read',
     params: { uri: 'avito://manifest' },
-    condense: condenseDocument,
+    // The release number is normalised out of this document before it is
+    // digested; see {@link condenseManifestDocument} for why that keeps the
+    // frozen digest strong instead of weakening it. Everything else in the
+    // catalogue is still compared against the real 1.3.3, byte for byte.
+    condense: condenseManifestDocument,
   },
   {
     id: '10-resources-read-config',
@@ -512,6 +663,7 @@ export const LEGACY_WIRE_STEPS: readonly WireStep[] = [
         why: 'AVITO_MCP_HTTP_MAX_STREAMS, new in M3.8: the bound on open subscriptions/listen streams, for the same reason.',
       },
     ],
+    rebase: [RELEASE_NUMBER_REBASE(['body', 'contents', '0', 'text', 'version'])],
   },
   {
     id: '11-resources-read-unregistered',
@@ -543,6 +695,7 @@ export const LEGACY_WIRE_STEPS: readonly WireStep[] = [
     method: 'tools/call',
     params: { name: 'meta_capabilities', arguments: {} },
     condense: condenseCapabilities,
+    rebase: [RELEASE_NUMBER_REBASE(['body', 'payload', 'version'])],
   },
   {
     id: '16-tools-call-unknown',
@@ -561,6 +714,10 @@ export const LEGACY_WIRE_STEPS: readonly WireStep[] = [
     note: 'a registered prompt renders',
     method: 'prompts/get',
     params: { name: 'avito_daily_overview', arguments: {} },
+    // `avito_daily_overview` renders a REPORTING WINDOW from the clock, so its
+    // text carries today's date and today-minus-seven. See
+    // {@link condensePromptDates}.
+    condense: condensePromptDates,
   },
   {
     id: '19-prompts-get-unknown',

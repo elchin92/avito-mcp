@@ -87,7 +87,7 @@
  * typo or an invention, and either way the citation cannot be followed.
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -254,12 +254,38 @@ function citedTasks(text: string): Set<string> {
   return ids;
 }
 
+/**
+ * Every file under `directory` ending in `suffix`, walked so that a SIBLING
+ * SUITE cannot make this one fail.
+ *
+ * This walks `test/`, and `test/.sandbox/` is scratch space that other suites
+ * create and delete while this one runs (`test/support/sandbox.ts`). The
+ * previous walk did `readdirSync` and then `statSync` on each entry, which is a
+ * race by construction: a sandbox torn down in the gap between the two calls
+ * threw `ENOENT` out of a test whose subject is a documentation table, reddening
+ * the run for a reason no reader could connect to the failure.
+ *
+ * Three changes, each closing part of it. `withFileTypes` takes the answer from
+ * the directory entry that has already been read, so there is no second syscall
+ * to lose the race with. Dot-directories are skipped outright — scratch and
+ * tooling state, never a source file this walk is looking for. And a directory
+ * that disappears mid-walk is treated as empty rather than fatal, because by
+ * then it is genuinely not a directory containing anything this test grades.
+ */
 function everyFileUnder(directory: string, suffix: string): string[] {
   const found: string[] = [];
   const walk = (current: string): void => {
-    for (const entry of readdirSync(current)) {
-      const path = join(current, entry);
-      if (statSync(path).isDirectory()) walk(path);
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) walk(path);
       else if (path.endsWith(suffix)) found.push(path);
     }
   };

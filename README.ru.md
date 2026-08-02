@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![CI](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-388_passing-brightgreen)](./test)
+[![Tests](https://img.shields.io/badge/tests-785_passing-brightgreen)](./test)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
@@ -19,7 +19,7 @@
 
 <a href="https://glama.ai/mcp/servers/elchin92/avito-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/card.svg" alt="avito-mcp MCP server" /></a>
 
-> **Новое в v1.3.3** — каталог аренды, оставшийся от процесса, убитого до записи owner-маркера, больше не блокирует свой домен навсегда, а снапшоты rate-limit пишутся через очередь, а не через захват лока без ожидания результата. Подробности — в [CHANGELOG](./CHANGELOG.md).
+> **Новое в v2.0.0** — сервер умеет ревизию MCP **2026-07-28**, по умолчанию выключенную за `AVITO_MCP_PROTOCOL_ERA` ([Ревизии протокола](#ревизии-протокола)), а режим OAuth теперь требует `https` в публичном URL. Те же 148 tools и те же схемы. Перед обновлением HTTP-развёртывания прочитайте [CHANGELOG](./CHANGELOG.md).
 
 ---
 

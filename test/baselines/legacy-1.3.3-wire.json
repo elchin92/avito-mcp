@@ -1,6 +1,6 @@
 {
   "$provenance": {
-    "capturedAt": "2026-08-01T20:11:32.719Z",
+    "capturedAt": "2026-08-02T00:02:58.157Z",
     "capturedByNode": "v22.23.1",
     "reference": {
       "entrypoint": "/srv/avito_mcp/dist/server.js",
@@ -679,8 +679,8 @@
             "mimeType": "application/json",
             "text": {
               "firstLine": "{",
-              "length": 380741,
-              "sha256": "32421f165712158094901c88fbad068b"
+              "length": 380745,
+              "sha256": "d84390e504e9e58b4c7b210a67a1450f"
             },
             "uri": "avito://manifest"
           }
@@ -914,7 +914,7 @@
           "messages": [
             {
               "content": {
-                "text": "Prepare a daily overview of my Avito account for the last 7 days.\n\nUse these tools (all read-only, no confirmation required):\n  1. user_get_user_balance — current wallet balance (real + bonus).\n  2. items_get_items_info { status: \"active\", per_page: 50 } — active listings.\n  3. items_post_account_spendings {\n       dateFrom: \"2026-07-25\",\n       dateTo:   \"2026-08-01\",\n       spendingTypes: [\"all\"],\n       grouping: \"day\"\n     }\n\nProduce a summary: balance, number of active listings (by status), total spendings for the period broken down by type. No long tables.\n\n— Русский / Russian —\n\nПодготовь ежедневную сводку моего Avito-аккаунта за последние 7 дней.\n\nИспользуй эти tools (все read-only, не требуют confirmation):\n  1. user_get_user_balance — текущий баланс кошелька (real + bonus).\n  2. items_get_items_info { status: \"active\", per_page: 50 } — активные объявления.\n  3. items_post_account_spendings {\n       dateFrom: \"2026-07-25\",\n       dateTo:   \"2026-08-01\",\n       spendingTypes: [\"all\"],\n       grouping: \"day\"\n     }\n\nСформируй итог: баланс, количество активных объявлений (по статусам), сумма расходов за период с разбивкой по типам. Без длинных таблиц.",
+                "text": "Prepare a daily overview of my Avito account for the last 7 days.\n\nUse these tools (all read-only, no confirmation required):\n  1. user_get_user_balance — current wallet balance (real + bonus).\n  2. items_get_items_info { status: \"active\", per_page: 50 } — active listings.\n  3. items_post_account_spendings {\n       dateFrom: \"<date>\",\n       dateTo:   \"<date>\",\n       spendingTypes: [\"all\"],\n       grouping: \"day\"\n     }\n\nProduce a summary: balance, number of active listings (by status), total spendings for the period broken down by type. No long tables.\n\n— Русский / Russian —\n\nПодготовь ежедневную сводку моего Avito-аккаунта за последние 7 дней.\n\nИспользуй эти tools (все read-only, не требуют confirmation):\n  1. user_get_user_balance — текущий баланс кошелька (real + bonus).\n  2. items_get_items_info { status: \"active\", per_page: 50 } — активные объявления.\n  3. items_post_account_spendings {\n       dateFrom: \"<date>\",\n       dateTo:   \"<date>\",\n       spendingTypes: [\"all\"],\n       grouping: \"day\"\n     }\n\nСформируй итог: баланс, количество активных объявлений (по статусам), сумма расходов за период с разбивкой по типам. Без длинных таблиц.",
                 "type": "text"
               },
               "role": "user"

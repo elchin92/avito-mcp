@@ -518,13 +518,36 @@ describe('public contract — supported protocol revisions', () => {
 
   const serverJson = (): ServerJson => JSON.parse(read('server.json')) as ServerJson;
 
-  /** The `## [Unreleased]` section only — a released section is a different claim. */
-  function unreleasedSection(): string {
+  /**
+   * The changelog section that SHIPS this claim: `## [Unreleased]` while the
+   * work is unreleased, and the newest numbered section once it has been cut.
+   *
+   * Originally this read `## [Unreleased]` and nothing else, on the reasoning
+   * that a numbered heading would date the claim twice. That reasoning held
+   * only until the release carrying the work was actually cut — at which point
+   * the section empties, and a guard written to check the changelog's statement
+   * about the protocol revisions would pass by reading nothing at all. Silently
+   * asserting against an empty string is the worst outcome available to a test
+   * like this one, and it would have arrived exactly when the statement started
+   * being read by users.
+   *
+   * So the rule is "the topmost section that has a body", which is the entry a
+   * reader lands on and the entry the release ships. It cannot drift into an
+   * older section: the slice stops at the next `## [` heading, and the caller
+   * asserts the result carries exactly one heading of its own.
+   */
+  function shippingSection(): string {
     const changelog = read('CHANGELOG.md');
-    const start = changelog.indexOf('## [Unreleased]');
-    expect(start).toBeGreaterThanOrEqual(0);
-    const next = changelog.indexOf('\n## [', start + 1);
-    return next === -1 ? changelog.slice(start) : changelog.slice(start, next);
+    const headings = [...changelog.matchAll(/^## \[[^\]]+\].*$/gm)];
+    expect(headings.length, 'CHANGELOG.md has no version sections').toBeGreaterThan(0);
+    for (const [index, heading] of headings.entries()) {
+      const start = heading.index;
+      const end = headings[index + 1]?.index ?? changelog.length;
+      const section = changelog.slice(start, end);
+      const body = section.slice(heading[0].length);
+      if (body.trim().length > 0) return section;
+    }
+    throw new Error('every CHANGELOG.md section is empty');
   }
 
   it('declares in server.json exactly the revisions the code advertises', () => {
@@ -674,29 +697,31 @@ describe('public contract — supported protocol revisions', () => {
     // reader acts on: whether the upgrade changes anything for the client they
     // already run, and how to undo it if it does. Three parts, each checked
     // against the code rather than against a remembered sentence.
-    const unreleased = unreleasedSection();
+    const shipping = shippingSection();
     const byDefault =
       DEFAULT_PROTOCOL_ERA === 'modern' ? MODERN_PROTOCOL_VERSION : LEGACY_PROTOCOL_VERSION;
     // 1. Which revision an installation that sets nothing keeps answering.
-    expect(unreleased).toContain(DEFAULT_PROTOCOL_ERA);
-    expect(unreleased, `the changelog never says a default install answers ${byDefault}`).toMatch(
+    expect(shipping).toContain(DEFAULT_PROTOCOL_ERA);
+    expect(shipping, `the changelog never says a default install answers ${byDefault}`).toMatch(
       new RegExp(`${byDefault}[^.]*\\bonly\\b|\\bdefault\\b[^.]*${byDefault}`),
     );
     // 2. That the new revision is opt-in, not something an upgrade turns on.
-    expect(unreleased).toMatch(/[Nn]othing changes for an existing client until/);
+    expect(shipping).toMatch(/[Nn]othing changes for an existing client until/);
     // 3. And that the way back is the same one variable.
-    expect(unreleased).toMatch(/rollback|roll back/i);
+    expect(shipping).toMatch(/rollback|roll back/i);
   });
 
   it('says the same thing in the changelog and in both READMEs', () => {
-    const unreleased = unreleasedSection();
-    // Not pinned to a version section: the release that carries this is the
-    // owner's to cut, and a numbered heading here would date a claim twice.
-    expect(unreleased).not.toMatch(/^## \[\d/m);
+    const shipping = shippingSection();
+    // Exactly one heading: its own. The slice must not have run past the next
+    // section and picked up a claim an older release made.
+    expect(shipping.match(/^## \[/gm)).toHaveLength(1);
     for (const revision of SUPPORTED_PROTOCOL_VERSIONS) {
-      expect(unreleased, `CHANGELOG [Unreleased] never names ${revision}`).toContain(revision);
+      expect(shipping, `the shipping CHANGELOG section never names ${revision}`).toContain(
+        revision,
+      );
     }
-    expect(unreleased).toContain('AVITO_MCP_PROTOCOL_ERA');
+    expect(shipping).toContain('AVITO_MCP_PROTOCOL_ERA');
 
     // Both locales carry the section, at the same line, in the same order —
     // server.json points a registry consumer at the English anchor, and a
