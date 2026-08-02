@@ -254,12 +254,44 @@ function citedTasks(text: string): Set<string> {
   return ids;
 }
 
+/**
+ * Every `*.<suffix>` under `directory`, skipping dot-directories.
+ *
+ * Both halves of that sentence are load-bearing, and the second one was learned
+ * the hard way. This walk runs at MODULE LOAD, i.e. while every other suite in
+ * the run is executing, and `test/.sandbox/<random>` is a scratch directory
+ * those suites create and delete constantly. A `statSync` on an entry that has
+ * been removed between the `readdirSync` and the call throws ENOENT, which is
+ * not a failed assertion but a collection error: the whole file reports as
+ * failed with no test having run, intermittently, on whichever CI leg lost the
+ * race. It happened on Node 22 and not on Node 24 in the same run, which is
+ * exactly how a race presents itself as a platform bug.
+ *
+ * Skipping dot-directories fixes it at the source rather than by catching the
+ * error: a task claim, an accepted ADR and a suite title are all committed
+ * files, so a scratch directory has nothing this function is looking for. The
+ * ENOENT tolerance stays as well, because "skipped the one directory we know
+ * about" is not the same as "cannot be raced".
+ */
 function everyFileUnder(directory: string, suffix: string): string[] {
   const found: string[] = [];
   const walk = (current: string): void => {
-    for (const entry of readdirSync(current)) {
+    let entries: string[];
+    try {
+      entries = readdirSync(current);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.startsWith('.')) continue;
       const path = join(current, entry);
-      if (statSync(path).isDirectory()) walk(path);
+      let isDirectory: boolean;
+      try {
+        isDirectory = statSync(path).isDirectory();
+      } catch {
+        continue;
+      }
+      if (isDirectory) walk(path);
       else if (path.endsWith(suffix)) found.push(path);
     }
   };

@@ -65,6 +65,7 @@ import {
   captureWire,
   foreignReferenceViolations,
   readPath,
+  reanchorDates,
   referenceProbes,
   sameWireValue,
   type Baseline,
@@ -200,6 +201,33 @@ describe('legacy wire vs the published 1.3.3 build', () => {
       }
     }
     expect(toothless).toEqual([]);
+  });
+
+  it('re-anchors the clock-derived reference without blunting it', () => {
+    // The rebase on step 18 is the only place this bench lets a captured value
+    // move, and a rebase that erases a difference is worse than no rebase: it
+    // reports green for a prompt that has stopped saying what it said. So the
+    // shift is checked in both directions — it must absorb the calendar, and it
+    // must not absorb the window.
+    const captured =
+      'window from "2026-07-25" to "2026-08-01", inclusive';
+    const now = new Date('2026-09-14T11:00:00Z');
+
+    // The calendar moves; the interval does not.
+    expect(reanchorDates(captured, now)).toBe(
+      'window from "2026-09-07" to "2026-09-14", inclusive',
+    );
+
+    // A narrowed window and a stale end date both survive the shift as
+    // differences, which is the whole point of re-anchoring rather than
+    // stripping the dates out.
+    expect(reanchorDates('from "2026-07-26" to "2026-08-01"', now)).not.toBe(
+      reanchorDates(captured, now),
+    );
+    expect(reanchorDates(captured, now)).not.toContain('2026-09-13"');
+
+    // Text with no date in it is returned untouched rather than guessed at.
+    expect(reanchorDates('no dates here', now)).toBe('no dates here');
   });
 
   it('names a reference commit that cannot be a build of this branch', () => {
