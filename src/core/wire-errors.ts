@@ -80,63 +80,33 @@
  * `McpServer` installs itself — there is no call site of ours to change and no
  * option to pass. The reachable seam is the handler the protocol will dispatch
  * to, so this module re-wraps exactly that, once, after registration is
- * complete.
+ * complete. The private-field probe and the loud failure that guards it live
+ * in `src/core/handler-seam.ts`, which `src/core/pagination.ts` shares.
  *
- * It reads `Protocol._requestHandlers` to do it. That is a private field, so
- * {@link requestHandlerMap} fails LOUDLY at construction if a future SDK
- * renames or reshapes it — a silent no-op here would mean the legacy wire moves
- * again with every suite still green, which is the exact failure this module
- * was written to end. Re-registering through the public `setRequestHandler`
- * instead was considered and rejected: it re-runs the codec's request
- * validation for every wrapped method on every call, i.e. it pays a hot-path
- * cost on `tools/call` for a repair that only matters on the error path.
+ * Re-registering through the public `setRequestHandler` instead was considered
+ * and rejected: it re-runs the codec's request validation for every wrapped
+ * method on every call, i.e. it pays a hot-path cost on `tools/call` for a
+ * repair that only matters on the error path.
  */
 import { ProtocolError, ProtocolErrorCode, ResourceNotFoundError } from '@modelcontextprotocol/server';
 import type { McpServer, ProtocolEra } from '@modelcontextprotocol/server';
 
-/** The minimum of a JSON-RPC request this module needs to look at. */
-interface WireRequest {
-  method: string;
-  params?: Record<string, unknown>;
-}
+import {
+  requestHandlerMap,
+  rewrap as rewrapHandler,
+  type StoredHandler,
+} from './handler-seam.js';
 
-/** A handler as the protocol stores it: already codec- and role-wrapped. */
-type StoredHandler = (request: WireRequest, ctx: unknown) => Promise<unknown>;
+/** How this module names itself when the seam fails. */
+const SUBSYSTEM = 'wire-errors';
 
-/**
- * The registry the protocol dispatches from.
- *
- * Guarded rather than trusted: an SDK upgrade that renames the field would
- * otherwise turn every wrapper below into a no-op, and the only symptom would
- * be a wire that quietly regressed. Failing here fails server construction, and
- * server construction is covered by every suite in the repository.
- */
-function requestHandlerMap(server: McpServer): Map<string, StoredHandler> {
-  const candidate = (server.server as unknown as { _requestHandlers?: unknown })._requestHandlers;
-  if (!(candidate instanceof Map)) {
-    throw new Error(
-      'wire-errors: Protocol._requestHandlers is not a Map any more. The error-shape ' +
-        'layer in src/core/wire-errors.ts has lost its seam — the legacy wire would ' +
-        'silently regress. Re-point it at the SDK’s new handler registry.',
-    );
-  }
-  return candidate as Map<string, StoredHandler>;
-}
-
-/** Replaces one stored handler with `wrap(previous)`. Absent method ⇒ loud failure. */
+/** {@link rewrapHandler} with this module's label already applied. */
 function rewrap(
   handlers: Map<string, StoredHandler>,
   method: string,
   wrap: (stored: StoredHandler) => StoredHandler,
 ): void {
-  const stored = handlers.get(method);
-  if (stored === undefined) {
-    throw new Error(
-      `wire-errors: no request handler registered for ${method}; the error-shape layer ` +
-        'must be installed after the server has registered its primitives.',
-    );
-  }
-  handlers.set(method, wrap(stored));
+  rewrapHandler(handlers, method, SUBSYSTEM, wrap);
 }
 
 // ─────────────────────────────── error helpers ───────────────────────────────
@@ -421,7 +391,7 @@ function legacyErrorMessages(stored: StoredHandler): StoredHandler {
  * way.
  */
 export function applyWireErrorShapes(server: McpServer, era: ProtocolEra): void {
-  const handlers = requestHandlerMap(server);
+  const handlers = requestHandlerMap(server, SUBSYSTEM);
 
   // Both eras: never reflect a caller's raw URI.
   rewrap(handlers, 'resources/read', (stored) => resourceReadShape(stored, era));

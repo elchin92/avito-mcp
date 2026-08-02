@@ -289,6 +289,39 @@ export async function modernPost(
   });
 }
 
+/**
+ * Every item of a paginated list on the modern leg, walked to exhaustion.
+ *
+ * Since M4.3 a modern `tools/list` answers a PAGE, so a suite that wants the
+ * whole catalogue has to ask for the whole catalogue. Kept here rather than
+ * copied into each suite for the obvious reason, and also for a less obvious
+ * one: a hand-rolled walk that terminates on a falsy `nextCursor` would treat
+ * an empty-string cursor as the end of the list, which is exactly the client
+ * mistake the revision calls out. The loop below ends on ABSENCE.
+ *
+ * `test/pagination.test.ts` is what tests the paging itself; this helper exists
+ * so every OTHER suite can go on being about its own subject.
+ */
+export async function modernListAll(
+  rig: Rig,
+  method: string,
+  itemsKey: string,
+): Promise<unknown[]> {
+  const items: unknown[] = [];
+  let cursor: string | undefined;
+  let pages = 0;
+  do {
+    const answer = await modernPost(rig, method, cursor === undefined ? {} : { cursor });
+    const result = resultOf(answer);
+    if (result === undefined) throw new Error(`${method} answered no result: ${JSON.stringify(answer.body)}`);
+    items.push(...((result[itemsKey] ?? []) as unknown[]));
+    cursor = result.nextCursor as string | undefined;
+    pages += 1;
+    if (pages > 64) throw new Error(`${method} produced more than 64 pages — the walk is looping`);
+  } while (cursor !== undefined);
+  return items;
+}
+
 /** One JSON-RPC message read off an open SSE stream. */
 export interface Frame {
   jsonrpc: string;

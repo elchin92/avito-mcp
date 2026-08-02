@@ -55,15 +55,22 @@ describe.each(ERAS)('era=%s — the primitive surface', (era: EraName) => {
     expect(answer.status).toBe(200);
 
     const result = resultOf(answer)!;
-    const tools = result.tools as Array<{ name: string; inputSchema: unknown }>;
-    expect(tools.length).toBeGreaterThan(100);
-    expect(tools.map((tool) => tool.name)).toContain('meta_health');
-    for (const tool of tools.slice(0, 5)) expect(tool.inputSchema).toBeTypeOf('object');
+    const page = result.tools as Array<{ name: string; inputSchema: unknown }>;
+    expect(page.length).toBeGreaterThan(0);
+    for (const tool of page.slice(0, 5)) expect(tool.inputSchema).toBeTypeOf('object');
+
+    // The CATALOGUE is the same on both legs; only the number of answers it
+    // takes to read it differs, which is `traits.paginatesLists`.
+    const all = (await session.listAll('tools/list', 'tools')) as Array<{ name: string }>;
+    expect(all.length).toBeGreaterThan(100);
+    expect(all.map((tool) => tool.name)).toContain('meta_health');
+    expect(page.length < all.length).toBe(traits.paginatesLists);
 
     // The era delta, read from the trait table rather than branched on inline.
     expect(result.resultType).toBe(traits.resultType);
     expect('ttlMs' in result).toBe(traits.cacheHints);
     expect('cacheScope' in result).toBe(traits.cacheHints);
+    expect('nextCursor' in result).toBe(traits.paginatesLists);
     expect(session.sessionId !== null).toBe(traits.sessions);
   });
 
@@ -114,21 +121,46 @@ describe.each(ERAS)('era=%s — the primitive surface', (era: EraName) => {
     expect((messages[0]!.content.text ?? '').length).toBeGreaterThan(0);
   });
 
-  it('treats a blank required prompt argument identically on both eras', async () => {
+  it('M1.8 — refuses a blank required prompt argument with -32602 on both eras', async () => {
     const session = await openEraSession(era);
     const answer = await session.call('prompts/get', {
       name: 'avito_explain_tool',
       arguments: { tool_name: '   ' },
     });
-    // Today this renders a "tool_name is required" stub rather than answering
-    // `-32602`, which plan task M1.8 calls a defect and intends to change. This
-    // row does NOT bless that: it pins the behaviour to be the SAME on both
-    // eras, which is the property the dual matrix owns. When M1.8 lands, this
-    // test fails on both eras at once — which is the correct signal, and far
-    // better than a disjunction that would have passed either way and proved
-    // nothing about era parity.
+    // Until M1.8 this row asserted only that both eras did the SAME thing, and
+    // what they both did was render a "tool_name is required" stub as a
+    // SUCCESSFUL result — an answer no client can tell from a real expansion,
+    // so an agent hands the model a prompt that never rendered. The weakened
+    // form was honest about being weak (it named the defect and the task) but
+    // it could never have gone red on the defect itself.
+    //
+    // It now asserts the correct behaviour, and still asserts it per era: the
+    // validation lives in the `argsSchema`, which both legs share, so a change
+    // that fixed one wire and not the other still fails here.
+    expect(resultOf(answer)).toBeUndefined();
+    const error = errorOf(answer)!;
+    expect(error).toBeDefined();
+    expect(error.code).toBe(-32602);
+    // The rendering is era-shaped (the legacy leg carries 1.3.x's
+    // `MCP error -32602: ` prefix and its JSON issue dump, the modern one the
+    // v2 one-liner), so the assertion is on what both must name: the prompt
+    // and the argument at fault.
+    expect(error.message).toContain('avito_explain_tool');
+    expect(error.message).toContain('tool_name');
+  });
+
+  it('M1.8 — still renders the same prompt when the argument is valid', async () => {
+    // The other half of the row above: a schema tight enough to refuse `"   "`
+    // must still let a real tool name through, or "validated" would only mean
+    // "broken".
+    const session = await openEraSession(era);
+    const answer = await session.call('prompts/get', {
+      name: 'avito_explain_tool',
+      arguments: { tool_name: 'items_update_price' },
+    });
     expect(errorOf(answer)).toBeUndefined();
-    expect(resultOf(answer)!.description).toMatch(/required/i);
+    const messages = resultOf(answer)!.messages as Array<{ content: { text?: string } }>;
+    expect(messages[0]!.content.text).toContain('items_update_price');
   });
 
   it('lists resources and reads one with non-empty contents', async () => {
@@ -275,8 +307,11 @@ describe('the two legs are the same server, not two servers', () => {
     const rig = await startRig('dual');
     const legacy = await openEraSessionOn(rig, 'legacy');
     const modern = await openEraSessionOn(rig, 'modern');
+    // Read through `listAll`, so the modern leg is compared on its whole
+    // catalogue rather than on its first page: the claim is that the two legs
+    // serve one registry in one order, not that they serve it in one answer.
     const names = async (session: EraSession): Promise<string[]> =>
-      (resultOf(await session.call('tools/list'))!.tools as Array<{ name: string }>).map(
+      ((await session.listAll('tools/list', 'tools')) as Array<{ name: string }>).map(
         (tool) => tool.name,
       );
     expect(await names(modern)).toEqual(await names(legacy));
