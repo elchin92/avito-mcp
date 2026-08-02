@@ -26,6 +26,7 @@ import { PACKAGE_NAME, VERSION } from './version.js';
 import { hasConfiguredCredentials } from './core/credentials.js';
 import { applyLegacyWireDefaults } from './core/wire-compat.js';
 import { applyWireErrorShapes } from './core/wire-errors.js';
+import { applyListPagination } from './core/pagination.js';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -316,10 +317,14 @@ export function buildMcpServer(
   registerResources(server, ctx);
   registerPrompts(server, ctx);
 
-  // LAST, and it has to be last: this replaces the request handlers that are
-  // already installed, so anything registered after it would keep the SDK's own
-  // error shapes. See src/core/wire-errors.ts for what each era gets.
+  // LAST, and it has to be last: these replace the request handlers that are
+  // already installed, so anything registered after them would keep the SDK's
+  // own shapes. See src/core/wire-errors.ts for what each era gets.
   applyWireErrorShapes(server, era);
+  // M4.3, modern era only. Independent of the layer above rather than ordered
+  // after it: it wraps the four list methods, which `applyWireErrorShapes`
+  // does not touch on this era. See src/core/pagination.ts.
+  applyListPagination(server, era);
 
   return server;
 }

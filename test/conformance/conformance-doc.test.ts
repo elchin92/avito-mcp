@@ -255,22 +255,30 @@ function citedTasks(text: string): Set<string> {
 }
 
 /**
- * Every file under `directory` ending in `suffix`, walked so that a SIBLING
- * SUITE cannot make this one fail.
+ * Every `*.<suffix>` under `directory`, skipping dot-directories, walked so
+ * that a SIBLING SUITE cannot make this one fail.
  *
- * This walks `test/`, and `test/.sandbox/` is scratch space that other suites
- * create and delete while this one runs (`test/support/sandbox.ts`). The
- * previous walk did `readdirSync` and then `statSync` on each entry, which is a
- * race by construction: a sandbox torn down in the gap between the two calls
- * threw `ENOENT` out of a test whose subject is a documentation table, reddening
- * the run for a reason no reader could connect to the failure.
+ * Both halves of that first sentence are load-bearing, and the second one was
+ * learned the hard way. This walk runs at MODULE LOAD, i.e. while every other
+ * suite in the run is executing, and `test/.sandbox/<random>` is a scratch
+ * directory those suites create and delete constantly
+ * (`test/support/sandbox.ts`). A `statSync` on an entry removed between the
+ * `readdirSync` and the call throws ENOENT, which is not a failed assertion but
+ * a collection error: the whole file reports as failed with no test having run,
+ * intermittently, on whichever CI leg lost the race. It happened on Node 22 and
+ * not on Node 24 in the same run, which is exactly how a race presents itself
+ * as a platform bug — out of a test whose subject is a documentation table.
  *
- * Three changes, each closing part of it. `withFileTypes` takes the answer from
- * the directory entry that has already been read, so there is no second syscall
- * to lose the race with. Dot-directories are skipped outright — scratch and
- * tooling state, never a source file this walk is looking for. And a directory
- * that disappears mid-walk is treated as empty rather than fatal, because by
- * then it is genuinely not a directory containing anything this test grades.
+ * Three changes, each closing part of it. Skipping dot-directories fixes it at
+ * the source rather than by catching the error: a task claim, an accepted ADR
+ * and a suite title are all committed files, so a scratch directory has nothing
+ * this function is looking for. `withFileTypes` takes the answer from the
+ * directory entry that has already been read, so there is no second syscall to
+ * lose the race with at all. And the ENOENT tolerance stays, because "skipped
+ * the one directory we know about" is not the same as "cannot be raced": a
+ * directory that disappears mid-walk is treated as empty rather than fatal,
+ * because by then it is genuinely not a directory containing anything this test
+ * grades.
  */
 function everyFileUnder(directory: string, suffix: string): string[] {
   const found: string[] = [];
@@ -381,8 +389,8 @@ function suiteTitles(code: string): string[] {
  * Deliberately narrow. The claim has to BEGIN the line and be followed by a
  * dash, a colon or the word "acceptance", which is the form a file uses to say
  * what it delivers. Every other mention — `(F1 / M3.10)` inside a bullet,
- * "pagination lands in M4.3" mid-sentence — is a remark, and remarks close
- * nothing.
+ * "the audit trail arrives in M1.15" mid-sentence — is a remark, and remarks
+ * close nothing.
  */
 const OWNERSHIP_CLAIM =
   /^((?:M\d+\.\d+)(?:\s*(?:[–—/-]|and)\s*M?\d+(?:\.\d+)?)*)\s*(?:[–—:-]|acceptance\b)/;
@@ -677,12 +685,24 @@ describe('M6.2 — docs/conformance.md is checkable, not merely written', () => 
   });
 
   it('closes a task on a claim, never on a mention', () => {
-    // The other half: reading header blocks must not turn every task a comment
-    // discusses into a closed one. M4.3 (`tools/list` pagination) is named in
-    // `test/caching-hints.test.ts` in the middle of a comment about what this
-    // suite deliberately does NOT do, and M8.7 — the scope split D6 defers to —
-    // is named in the table itself. Neither is work that landed.
-    for (const task of ['M4.3', 'M8.7', 'M5.10']) {
+    // The other half: reading header blocks and ADRs must not turn every task
+    // a document mentions into a closed one.
+    //
+    // M1.15 (the durable audit trail) is the sharpest case, because it is named
+    // in all three kinds of place a mention can hide: in the BODY of an
+    // accepted ADR (`docs/adr/0007-rollback-criteria.md`, four times) rather
+    // than on its `Context:` line, inside a test BODY as a string literal
+    // (`test/conformance/rollback-runbook.test.ts`), and in the F3 row of the
+    // table itself. It is still open — nothing in `src/` writes an audit log —
+    // and the extractor must say so.
+    //
+    // M8.7 (the scope split D6 defers to) and M5.10 are named in the table and
+    // nowhere else. None of the three is work that landed.
+    //
+    // This list previously led with M4.3, which was the pagination task; M4.3
+    // landed, `test/pagination.test.ts` claims it on its opening line, and it
+    // stopped being an example of anything. That is the check working.
+    for (const task of ['M1.15', 'M8.7', 'M5.10']) {
       expect(closed.get(task), `${task} reads as closed on a mention alone`).toBeUndefined();
     }
   });

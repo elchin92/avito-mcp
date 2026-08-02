@@ -55,6 +55,7 @@ import {
   BASELINE_RELATIVE_PATH,
   DUAL_ERA_DELTAS,
   LEGACY_WIRE_STEPS,
+  PROMPT_ARGUMENT_CASES,
   REFERENCE_VERSION,
   REPO_ROOT,
   applyEraDelta,
@@ -64,12 +65,16 @@ import {
   canonical,
   captureWire,
   foreignReferenceViolations,
+  modernPromptGet,
+  promptArgumentStepId,
   readPath,
+  reanchorDates,
   referenceProbes,
   sameWireValue,
   type Baseline,
   type BootedServer,
   type WireCapture,
+  type WireRecord,
 } from './support/legacy-wire-bench.js';
 
 /**
@@ -200,6 +205,33 @@ describe('legacy wire vs the published 1.3.3 build', () => {
       }
     }
     expect(toothless).toEqual([]);
+  });
+
+  it('re-anchors the clock-derived reference without blunting it', () => {
+    // The rebase on step 18 is the only place this bench lets a captured value
+    // move, and a rebase that erases a difference is worse than no rebase: it
+    // reports green for a prompt that has stopped saying what it said. So the
+    // shift is checked in both directions — it must absorb the calendar, and it
+    // must not absorb the window.
+    const captured =
+      'window from "2026-07-25" to "2026-08-01", inclusive';
+    const now = new Date('2026-09-14T11:00:00Z');
+
+    // The calendar moves; the interval does not.
+    expect(reanchorDates(captured, now)).toBe(
+      'window from "2026-09-07" to "2026-09-14", inclusive',
+    );
+
+    // A narrowed window and a stale end date both survive the shift as
+    // differences, which is the whole point of re-anchoring rather than
+    // stripping the dates out.
+    expect(reanchorDates('from "2026-07-26" to "2026-08-01"', now)).not.toBe(
+      reanchorDates(captured, now),
+    );
+    expect(reanchorDates(captured, now)).not.toContain('2026-09-13"');
+
+    // Text with no date in it is returned untouched rather than guessed at.
+    expect(reanchorDates('no dates here', now)).toBe('no dates here');
   });
 
   it('names a reference commit that cannot be a build of this branch', () => {
@@ -443,4 +475,145 @@ describe('the same plan on era=dual — the posture production will run', () => 
       );
     });
   }
+});
+
+/**
+ * M1.8, re-landed as an ERA SPLIT — the two halves, measured on ONE process.
+ *
+ * WHAT WENT WRONG THE FIRST TIME. M1.8 put an allowlist on every prompt
+ * argument and a sanitising sweep at the interpolation point, and installed
+ * both on both eras, on the argument that the old behaviour was a defect on
+ * 2025-11-25 as well. It was. It was also the answer 1.3.3 gave, and §1.2.B
+ * freezes the answers, not the subset of them we would write again. Seventeen
+ * of the nineteen forms in `PROMPT_ARGUMENT_CASES` moved from a rendered
+ * prompt to `-32602` on the legacy leg — and the bench said nothing, because
+ * until this change it never sent a prompt argument with a VALUE in it.
+ *
+ * WHY THE ASSERTIONS ARE HERE RATHER THAN IN A SELF-COMPARING SUITE. The two
+ * suites above pin the legacy half: every one of those nineteen answers is
+ * compared against a captured 1.3.3 process, on `legacy` and on `dual`. Read
+ * alone, that half is indistinguishable from having simply reverted M1.8 — a
+ * green bench is exactly what a rollback produces. The modern half is what
+ * separates the two, and it has to be measured on the SAME PROCESS, because
+ * "the era decides" is a claim about one deployment answering two ways, not
+ * about two builds each answering one way.
+ *
+ * So these send the identical `arguments` object to the identical `dual`
+ * server, over the 2026-07-28 envelope, and require the opposite outcome. A
+ * change that re-broke the legacy leg fails above; a change that quietly
+ * dropped the validation from the modern leg fails here; and a change that made
+ * both eras agree again fails in BOTH directions, which is the property the
+ * original row in `dual-matrix.test.ts` lacked.
+ */
+/**
+ * The two readers below exist because one step in the corpus is CONDENSED.
+ *
+ * `48-prompt-arg-tool-name-5000-chars` reduces its answer to lengths and
+ * digests (its rendered prompt repeats a 5000-character value six times), which
+ * moves `result` to `envelope` and `result.messages` to the top level. Reading
+ * `body.result` directly would therefore find `undefined` there and quietly
+ * conclude the legacy leg had refused a value it in fact rendered — an
+ * assertion that passes for the wrong reason on exactly the case the corpus
+ * added the reducer for.
+ */
+function recordedError(record: WireRecord | undefined): unknown {
+  const body = record?.body as Record<string, unknown> | undefined;
+  const envelope = body?.envelope as Record<string, unknown> | undefined;
+  return body?.error ?? envelope?.error;
+}
+
+function renderedMessages(record: WireRecord | undefined): unknown {
+  const body = record?.body as Record<string, unknown> | undefined;
+  const result = body?.result as Record<string, unknown> | undefined;
+  return result?.messages ?? body?.messages;
+}
+
+describe('M1.8 — the same prompt arguments on the MODERN leg of the same process', () => {
+  it('drove the corpus on the legacy leg first, so the comparison has two sides', () => {
+    expect(dualBootFailure).toBeUndefined();
+    expect(PROMPT_ARGUMENT_CASES.length).toBe(19);
+    // Two controls, and not fewer: the corpus has to contain values that must
+    // still work, or "the modern leg refuses these" would be satisfied by a
+    // modern leg that refuses everything.
+    expect(PROMPT_ARGUMENT_CASES.filter((entry) => entry.modern === 'renders')).toHaveLength(2);
+  });
+
+  for (const entry of PROMPT_ARGUMENT_CASES) {
+    const stepId = promptArgumentStepId(entry);
+
+    it(`${stepId}: modern ${entry.modern}, legacy renders as 1.3.3`, async () => {
+      expect(dualBootFailure).toBeUndefined();
+
+      // The legacy side of the split, restated as a property rather than
+      // re-derived: whatever 1.3.3 answered, it answered with rendered
+      // messages. The step above already proved it is the SAME answer; this
+      // proves it is not an error, which is the bit the comparison turns on.
+      expect(
+        recordedError(dualActual[stepId]),
+        `${stepId}: the legacy leg refused a value 1.3.3 rendered`,
+      ).toBeUndefined();
+      expect(renderedMessages(dualActual[stepId])).toBeDefined();
+
+      const answer = await modernPromptGet(
+        dualServer!,
+        entry.prompt,
+        entry.arguments,
+        `${stepId}-modern`,
+      );
+      const body = answer.body as {
+        result?: { messages?: Array<{ content?: { text?: string } }> };
+        error?: { code?: number; message?: string };
+      };
+
+      if (entry.modern === 'refuses') {
+        expect(body.result, `${stepId}: the modern leg rendered a value it must refuse`).toBe(
+          undefined,
+        );
+        expect(body.error?.code).toBe(-32602);
+        // The refusal names the argument at fault and does NOT echo the value:
+        // reflecting caller-chosen text would put the very thing that was
+        // refused into the client's logs and UI.
+        const field = Object.keys(entry.arguments)[0]!;
+        expect(body.error?.message).toContain(field);
+        return;
+      }
+
+      expect(body.error, `${stepId}: the modern leg refused an ordinary value`).toBe(undefined);
+      const text = body.result?.messages?.[0]?.content?.text ?? '';
+      expect(text).toContain(entry.rendered!);
+    });
+  }
+
+  it('lets nothing the sweep exists for reach the modern prompt text', async () => {
+    // The other layer, stated as a property of the ANSWER instead of as a list
+    // of refusals. Layer 1 (the schema allowlist) and layer 2 (`promptSafeText`)
+    // are both installed on this leg, and what they are jointly for is that no
+    // control character, bidi/zero-width override or runaway value ever lands
+    // in text a model will read as instructions. So: send every hostile form,
+    // collect whatever the modern leg DID render, and require that none of it
+    // came from the caller.
+    expect(dualBootFailure).toBeUndefined();
+    const leaked: string[] = [];
+    for (const entry of PROMPT_ARGUMENT_CASES) {
+      if (entry.modern !== 'refuses') continue;
+      const stepId = promptArgumentStepId(entry);
+      const answer = await modernPromptGet(
+        dualServer!,
+        entry.prompt,
+        entry.arguments,
+        `${stepId}-sweep`,
+      );
+      const rendered = JSON.stringify(
+        (answer.body as { result?: unknown }).result ?? null,
+      );
+      for (const value of Object.values(entry.arguments)) {
+        if (value.length > 0 && rendered.includes(value)) leaked.push(`${stepId}: ${value.slice(0, 40)}`);
+      }
+      // eslint-disable-next-line no-control-regex -- the point is that none reach the text
+      if (/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/.test(rendered)) {
+        leaked.push(`${stepId}: a control or formatting character reached the modern answer`);
+      }
+    }
+    expect(leaked).toEqual([]);
+  });
 });

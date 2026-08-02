@@ -42,6 +42,7 @@ import {
   closeRigs,
   initializeMessage,
   legacyPost,
+  modernListAll,
   modernPost,
   resultOf,
   errorOf,
@@ -73,10 +74,16 @@ export const ERA_TRAITS: Record<
     cacheHints: boolean;
     /** The revision removed protocol sessions, so only the legacy leg mints an id. */
     sessions: boolean;
+    /**
+     * M4.3: the modern leg answers a list request with a PAGE and a
+     * `nextCursor`; the legacy leg answers it whole and mints no cursor, which
+     * §1.2.B freezes because 1.3.3 did the same. See `src/core/pagination.ts`.
+     */
+    paginatesLists: boolean;
   }
 > = {
-  legacy: { resultType: undefined, cacheHints: false, sessions: true },
-  modern: { resultType: 'complete', cacheHints: true, sessions: false },
+  legacy: { resultType: undefined, cacheHints: false, sessions: true, paginatesLists: false },
+  modern: { resultType: 'complete', cacheHints: true, sessions: false, paginatesLists: true },
 };
 
 export interface EraSession {
@@ -93,6 +100,17 @@ export interface EraSession {
   ): Promise<Answer>;
   /** `tools/call`, with the `Mcp-Name` header derived for the modern leg. */
   callTool(name: string, args?: Record<string, unknown>): Promise<Answer>;
+  /**
+   * Every item of a list, however this era delivers it.
+   *
+   * Since M4.3 the modern leg answers `tools/list` in PAGES and the legacy leg
+   * still answers it whole. That is a genuine era difference and it belongs
+   * behind the calling convention rather than in a test body: a scenario that
+   * wants the catalogue wants the catalogue, and should not have to know which
+   * leg it is on to get it. The difference itself is the subject of
+   * `test/pagination.test.ts`, not of anything that calls this.
+   */
+  listAll(method: string, itemsKey: string): Promise<unknown[]>;
 }
 
 export interface EraSessionOptions {
@@ -132,6 +150,7 @@ export async function openEraSessionOn(rig: Rig, era: EraName): Promise<EraSessi
         modernPost(rig, method, params, { id: nextId++, ...postOptions }),
       callTool: (name, args = {}) =>
         modernPost(rig, 'tools/call', { name, arguments: args }, { id: nextId++ }),
+      listAll: (method, itemsKey) => modernListAll(rig, method, itemsKey),
     };
   }
 
@@ -149,6 +168,17 @@ export async function openEraSessionOn(rig: Rig, era: EraName): Promise<EraSessi
     sessionId,
     call,
     callTool: (name, args = {}) => call('tools/call', { name, arguments: args }),
+    // No walk on this leg, and the assertion is part of the point: the 2025
+    // wire is frozen to what 1.3.3 answered, which is the whole list and no
+    // `nextCursor`. If a `nextCursor` ever appears here, pagination has leaked
+    // onto the legacy era and every existing client has quietly lost 118 tools.
+    listAll: async (method, itemsKey) => {
+      const result = resultOf(await call(method))!;
+      if (result.nextCursor !== undefined) {
+        throw new Error(`the legacy leg paginated ${method}, which §1.2.B forbids`);
+      }
+      return (result[itemsKey] ?? []) as unknown[];
+    },
   };
 }
 

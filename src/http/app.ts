@@ -24,8 +24,12 @@ import { isRuntimeStateReady, runtimeStateDirectory } from '../core/runtime-stat
 import { logger } from '../logger.js';
 import { PACKAGE_NAME, VERSION } from '../version.js';
 import { createOAuthSubsystem } from './oauth/index.js';
+import { attachMirroredHeaderResponder } from './malformed-headers.js';
 import { createMcpHttpHandler, resolveRebindingProtection } from './mcp-http.js';
 import { createWebhookRouter } from './webhook.js';
+
+/** The one path the MCP transport is mounted at, named once. */
+const MCP_PATH = '/mcp';
 
 export interface HttpServerHandle {
   url: string;
@@ -199,6 +203,13 @@ export async function startHttpServer(
   const app = express();
   let closing = false;
   let oauthReady: (() => boolean) | undefined;
+  /**
+   * Set once the 2026-07-28 leg is mounted, and read after `listen` to decide
+   * whether the mirrored-header responder is attached at all. On the default
+   * `legacy` posture it must NOT be: no `'clientError'` listener means Node's
+   * own answer to a malformed header stands exactly where 1.3.3 left it.
+   */
+  let modernLegMounted = false;
   app.disable('x-powered-by');
   // The documented remote setup is a local reverse proxy (nginx/Caddy) doing TLS.
   // Trust exactly that hop so req.ip (rate-limit keying, logs) is the real client
@@ -284,6 +295,7 @@ export async function startHttpServer(
     }
 
     const era = protocolEraOf(config);
+    modernLegMounted = era !== 'legacy';
     let mcp: ReturnType<typeof createMcpHttpHandler>;
     try {
       // M3.3: the era posture decides which serving legs are mounted at all.
@@ -306,7 +318,7 @@ export async function startHttpServer(
     // the two end up disagreeing about which method is allowed; `405` is
     // therefore answered by whoever owns the era decision.
     app.all(
-      '/mcp',
+      MCP_PATH,
       guard,
       express.json({ limit: '4mb' }),
       jsonRpcBodyError(era),
@@ -354,6 +366,12 @@ export async function startHttpServer(
     ]);
     throw err;
   });
+
+  // §1.2.A item 6: a mirrored SEP-2243 header whose value carries a byte the
+  // HTTP parser refuses never reaches Express, so `-32020` can only be answered
+  // from here. See `src/http/malformed-headers.ts` for why it is scoped to the
+  // modern leg, to POST /mcp, and to the three mirrored headers.
+  if (modernLegMounted) attachMirroredHeaderResponder(server, MCP_PATH);
 
   logger.info(
     {
