@@ -39,28 +39,43 @@ This server speaks two revisions of MCP on the same endpoint and in the same pro
 2025-11-25 leg is unchanged and its threat model is unchanged with it. The 2026-07-28 leg removed
 protocol sessions altogether, and that moves several things this file used to take for granted.
 
-### There is no session, so caller identity comes from the request
+### There is no session on the 2026 leg, so caller identity comes from the request
 
-`initialize`, `Mcp-Session-Id` and session state are gone from the revision. An inbound
-`Mcp-Session-Id` is ignored rather than rejected, and the server mints none. Nothing on this leg
+`initialize`, `Mcp-Session-Id` and session state are gone from revision 2026-07-28. An inbound
+`Mcp-Session-Id` is ignored rather than rejected, and the server mints none. Nothing on that leg
 identifies a caller by remembering a previous request.
 
 Identity is derived per request, in `callerPrincipal()` (`src/core/pending-actions.ts`), from what
-the request itself carries, in this order:
+the request itself carries. It has **four** forms, checked in this order, and the last two are told
+apart by which leg answered — a `dual` process produces both, from the same function, in the same
+minute:
 
 1. `oauth:<client_id>` — the `client_id` of the access token this deployment's own authorization
    server issued and verified for this request (`AVITO_MCP_HTTP_AUTH=oauth`). This is the only
-   branch backed by an authentication event.
+   branch backed by an authentication event, and it is the only one that is the same principal
+   across both legs.
 2. `bearer:<sha256 of the token>` — the shared secret of `AVITO_MCP_HTTP_AUTH=bearer`, fingerprinted
    rather than stored. It separates *this secret* from *another secret*; it does not identify a
    person, and everyone holding the same secret is the same principal.
-3. `session:local-stdio` — the fallback when the request carries no credential at all: stdio, and
-   HTTP under `AVITO_MCP_HTTP_AUTH=none`. On the 2026 leg the session id that once fed this branch
-   is always absent, so the name is now a label for "the operator who started this process", and
-   under `none` **every caller shares it**. That is the reason `none` is a development mode.
+3. `session:<Mcp-Session-Id>` — the **2025-11-25 leg**, which still has sessions. When no credential
+   was presented, the principal is the session id the server minted at `initialize`, so it is
+   per-connection: a caller who re-runs `initialize` is a **different** principal, holding the same
+   (absent) credential. This is what 1.3.3 did and it is deliberately unchanged — the 2025 wire is
+   frozen, and `AVITO_MCP_APPROVAL_MODE=external`, which requires the confirming identity to differ
+   from the initiating one, is built on this leg's per-session identity.
+4. `session:local-stdio` — the fallback when there is neither a credential nor a session: stdio on
+   either era, and the **2026-07-28 leg** under `AVITO_MCP_HTTP_AUTH=none`. There the name is a
+   label for "the operator who started this process", and **every caller shares it**. That is one
+   reason `none` is a development mode.
+
+The consequence to size a deployment by: under `AVITO_MCP_HTTP_AUTH=none` the two legs of one
+process attribute anonymous callers **differently** — the 2026 leg funnels them all into a single
+principal, the 2025 leg gives each `initialize` its own. Anything keyed by principal therefore
+behaves differently per leg; the per-principal confirmation budget below says what that means for
+it.
 
 Consequences worth reporting: a request whose token verifies as one `client_id` being attributed to
-another; a request with no credential being attributed to anything other than the local principal;
+another; a request that presented a credential being attributed to a session principal instead;
 the `bearer` fingerprint appearing anywhere in a log, a resource or a result.
 
 ### State handle hijacking replaces session hijacking
@@ -78,8 +93,14 @@ What bounds it today:
 - **A short life.** `AVITO_MCP_CONFIRMATION_TTL_SEC`, default 900 seconds, capped at 24 hours.
 - **One shot.** The pending record is claimed atomically under a file lock before the executor
   runs, so two concurrent callers presenting the same handle produce exactly one operation.
-- **A per-principal budget** on hard-confirmation attempts, keyed by `callerPrincipal()` and not by
-  a connection, so exhausting it cannot be dodged by reconnecting.
+- **A per-principal budget** on hard-confirmation attempts, keyed by `callerPrincipal()`
+  (`checkConfirmationRateLimit`). What that buys depends on the principal, so it is worth stating
+  exactly: under `oauth` and `bearer` the key survives reconnection, so exhausting the budget cannot
+  be dodged by opening a new connection. On the **2025-11-25 leg with no credential** the key is the
+  session id, so a caller who re-runs `initialize` starts a fresh budget — the budget bounds a
+  connection there, not a caller, and the thing actually bounding the guess is the one-shot claim and
+  the 128-bit handle, not this counter. Deployments that need the budget to bind a caller must give
+  callers a credential: `AVITO_MCP_HTTP_AUTH=oauth` or `bearer`.
 - **An out-of-band factor when configured.** `AVITO_MCP_CONFIRMATION_SECRET` requires a value that
   never travelled over MCP, and `AVITO_MCP_APPROVAL_MODE=external` refuses a confirmation from the
   same identity that created the action.
@@ -129,6 +150,12 @@ Three things exist on the 2026 leg that did not exist before, and each of them i
   validated before dispatch: a missing or wrong-typed key is `-32602`, a header disagreeing with the
   body is `-32020`, an undeclared capability is `-32021`, an unknown revision is `-32022`, each with
   an HTTP 4xx. Any envelope that produces a 500, or that gets served without validation, is in scope.
+  The SEP-2243 mirrors (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`) are part of the same
+  surface, including the values a conforming client cannot transmit: a byte outside the HTTP token
+  set — a control character, or a bare CR/LF used to smuggle a second header — is refused by Node's
+  HTTP parser before any handler runs, and `src/http/malformed-headers.ts` turns that refusal into
+  the `-32020` the revision asks for without letting the offending bytes into anything the server
+  says back. A mirrored value that reaches a log, a response header or a result is in scope.
 - **Quantitative limits instead of a session table.** With sessions gone, `AVITO_MCP_HTTP_MAX_SESSIONS`
   and `AVITO_MCP_HTTP_SESSION_IDLE_SEC` bound nothing on this leg; `AVITO_MCP_HTTP_MAX_INFLIGHT`
   (default 64) bounds concurrent `/mcp` exchanges and `AVITO_MCP_HTTP_MAX_STREAMS` (default 32)
