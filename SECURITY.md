@@ -150,12 +150,6 @@ Three things exist on the 2026 leg that did not exist before, and each of them i
   validated before dispatch: a missing or wrong-typed key is `-32602`, a header disagreeing with the
   body is `-32020`, an undeclared capability is `-32021`, an unknown revision is `-32022`, each with
   an HTTP 4xx. Any envelope that produces a 500, or that gets served without validation, is in scope.
-  The SEP-2243 mirrors (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`) are part of the same
-  surface, including the values a conforming client cannot transmit: a byte outside the HTTP token
-  set — a control character, or a bare CR/LF used to smuggle a second header — is refused by Node's
-  HTTP parser before any handler runs, and `src/http/malformed-headers.ts` turns that refusal into
-  the `-32020` the revision asks for without letting the offending bytes into anything the server
-  says back. A mirrored value that reaches a log, a response header or a result is in scope.
 - **Quantitative limits instead of a session table.** With sessions gone, `AVITO_MCP_HTTP_MAX_SESSIONS`
   and `AVITO_MCP_HTTP_SESSION_IDLE_SEC` bound nothing on this leg; `AVITO_MCP_HTTP_MAX_INFLIGHT`
   (default 64) bounds concurrent `/mcp` exchanges and `AVITO_MCP_HTTP_MAX_STREAMS` (default 32)

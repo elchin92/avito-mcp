@@ -38,9 +38,10 @@
  * Attaching a `'clientError'` listener suppresses Node's own answer for EVERY
  * client error on that server, not just this one — `server.emit('clientError')`
  * returning true is what the default path checks. So the handler answers this
- * one fault and reproduces Node's own bytes for all the others (400 / 431 for
- * `HPE_HEADER_OVERFLOW` / 408 for `ERR_HTTP_REQUEST_TIMEOUT`, all measured, all
- * guarded by `test/conformance/errors.test.ts`).
+ * one fault and reproduces Node's own bytes for all the others: 400 by default,
+ * 431 for `HPE_HEADER_OVERFLOW`, 408 for `ERR_HTTP_REQUEST_TIMEOUT`. Which of
+ * those are actually measured, and which is transcribed, is stated where they
+ * are declared below rather than rounded up to "all of them".
  *
  * It claims a fault only when ALL of these hold, and answers Node's own bytes
  * otherwise:
@@ -57,8 +58,8 @@
  *     frozen to what 1.3.3 answered, and no listener is attached — Node's
  *     default stands, byte for byte, as it did in 1.3.3.
  *
- * The socket is destroyed either way: the message did not parse, so there is no
- * request to keep the connection for.
+ * The connection is closed either way: the message did not parse, so there is
+ * no request to keep it for.
  */
 import type { Server as HttpServer } from 'node:http';
 import type { Socket } from 'node:net';
@@ -66,10 +67,17 @@ import type { Socket } from 'node:net';
 /**
  * Node's own `'clientError'` answers, reproduced byte for byte.
  *
- * Measured against an unmodified `http.createServer()` on Node v22.23.1 rather
- * than copied from memory; `test/conformance/errors.test.ts` re-measures the
- * two that a socket can provoke, so a Node upgrade that changes them fails here
- * instead of silently making this server the odd one out.
+ * The 431 is MEASURED: `test/conformance/errors.test.ts` drives an unmodified
+ * `http.createServer()` into `HPE_HEADER_OVERFLOW` on every run and compares,
+ * so a Node release that rewords it fails there rather than quietly making this
+ * server the only one on the network saying something else. The 400 is measured
+ * the same way, by every fault that falls through to it.
+ *
+ * The 408 is TRANSCRIBED from Node's `_http_server.js`, not measured: provoking
+ * `ERR_HTTP_REQUEST_TIMEOUT` needs `requestTimeout` to win a race against
+ * `headersTimeout`, which closes a merely-slow socket in silence — 34 of 40
+ * attempts produced no answer at all. A probe that answers sometimes is worse
+ * than none, so this one is stated instead of pretended.
  */
 const NODE_DEFAULT_ANSWERS: ReadonlyMap<string, string> = new Map([
   ['HPE_HEADER_OVERFLOW', 'HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n'],

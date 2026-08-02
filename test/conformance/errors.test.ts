@@ -25,6 +25,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { connect } from 'node:net';
+import { createServer } from 'node:http';
 
 import {
   LEGACY_REVISION,
@@ -39,6 +40,7 @@ import {
   type Rig,
 } from '../support/modern-rig.js';
 import { APP_ERROR_CODES, isLegacySubRangeCode } from '../../src/core/rpc-codes.js';
+import { answerForClientError } from '../../src/http/malformed-headers.js';
 
 afterEach(closeRigs);
 
@@ -147,6 +149,10 @@ describe('mirrored headers that a conforming client cannot even send', () => {
   /** Node's own answer when it refuses a message and nothing claims the fault. */
   const NODE_BARE_400 = 'HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n';
 
+  /** An llhttp fault of the shape `'clientError'` hands over. */
+  const fault = (code: string): Error & { code: string } =>
+    Object.assign(new Error(code), { code });
+
   /** The JSON-RPC frame of a raw answer, or `undefined` when it carries none. */
   function frameOf(answer: string): { error?: { code: number; data?: unknown } } | undefined {
     const separator = answer.indexOf('\r\n\r\n');
@@ -218,15 +224,60 @@ describe('mirrored headers that a conforming client cannot even send', () => {
   it('still answers the client errors it did not claim with Node’s own bytes', async () => {
     // Attaching a `clientError` listener suppresses Node's default answer for
     // EVERY fault on that server, so the faults this server does not claim have
-    // to be reproduced byte for byte. This is the measurement that keeps the
-    // reproduction honest: a header block past the 80 KiB limit is `431`, and a
-    // Node release that reworded these answers has to fail here rather than
-    // quietly make this server the only one answering something else.
+    // to be reproduced byte for byte. A header block over `maxHeaderSize` is
+    // `431`, and it has to stay `431` rather than decay into a generic 400.
     const rig = await startRig('dual');
-    const oversized = await rawPost(rig, `X-Big: ${'a'.repeat(90_000)}`);
+    const oversized = await rawPost(rig, `X-Big: ${'a'.repeat(17_000)}`);
     expect(oversized).toBe(
       'HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n',
     );
+  });
+
+  it('reproduces those bytes from Node itself, not from memory', async () => {
+    // The control for the assertion above: an unmodified `http.createServer()`,
+    // driven with the same fault, is asked what it answers — so a Node release
+    // that rewords or renumbers these answers fails here instead of quietly
+    // making this server the only one on the network saying something else.
+    //
+    // `maxHeaderSize` is lowered rather than the request enlarged, so the bytes
+    // the parser leaves unread are a couple of hundred and the measurement does
+    // not depend on how the kernel segmented a 90 KB write. That detail is the
+    // one this pair was rebuilt around: with the previous shape — a 90 KB
+    // request and a socket destroyed on the spot — the probe answered
+    // `ECONNRESET` on a CI runner and `431` locally.
+    const bare = createServer({ maxHeaderSize: 2048 }, (_req, res) => res.end('ok'));
+    await new Promise<void>((resolve) => bare.listen(0, '127.0.0.1', resolve));
+    const port = (bare.address() as { port: number }).port;
+    try {
+      const measured = await new Promise<string>((resolve) => {
+        const socket = connect(port, '127.0.0.1', () =>
+          socket.write(`GET / HTTP/1.1\r\nHost: h\r\nX-Big: ${'a'.repeat(2_200)}\r\n\r\n`),
+        );
+        let out = '';
+        socket.on('data', (chunk: Buffer) => (out += chunk.toString('utf8')));
+        socket.on('close', () => resolve(out));
+        socket.on('error', (err: Error) => resolve(`ERROR ${err.message}`));
+        setTimeout(() => {
+          socket.destroy();
+          resolve(out || 'TIMEOUT');
+        }, 5_000);
+      });
+      expect(measured).toBe(answerForClientError(fault('HPE_HEADER_OVERFLOW'), '/mcp'));
+    } finally {
+      await new Promise<void>((resolve) => bare.close(() => resolve()));
+    }
+
+    // The two other answers, stated for what they are. The 400 is measured on
+    // every run by the three cases above that fall through to it. The 408 is
+    // NOT measured here and is transcribed from Node's `_http_server.js`: the
+    // fault needs `requestTimeout` to fire, and a socket that is merely slow is
+    // closed silently by `headersTimeout` first — 34 of 40 attempts produced no
+    // answer at all. A probe that answers only sometimes is worse than an
+    // absence, so this is the absence, named.
+    expect(answerForClientError(fault('ERR_HTTP_REQUEST_TIMEOUT'), '/mcp')).toBe(
+      'HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n',
+    );
+    expect(answerForClientError(fault('ECONNRESET'), '/mcp')).toBe(NODE_BARE_400);
   });
 
   it('serves the same frame when the value is clean (the control group)', async () => {
