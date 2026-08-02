@@ -377,3 +377,63 @@ describe('the two legs are the same server, not two servers', () => {
     ).toBe(true);
   });
 });
+
+describe('caller identity, on one process serving both legs with no credential', () => {
+  /**
+   * The claim `SECURITY.md` makes about `callerPrincipal()`, executed instead of
+   * described.
+   *
+   * The document used to say there were three principal forms and that the
+   * third, `session:local-stdio`, was "the fallback when the request carries no
+   * credential at all: stdio, and HTTP under AVITO_MCP_HTTP_AUTH=none". On a
+   * live connection that is false for half of a `dual` process: the 2025-11-25
+   * leg still has sessions, so an anonymous caller there is
+   * `session:<Mcp-Session-Id>` — a fourth form, and a DIFFERENT one for every
+   * `initialize`.
+   *
+   * It matters beyond tidiness, which is why it is asserted here rather than
+   * only in the prose guard. Everything keyed by principal — the per-principal
+   * hard-confirmation budget, and `AVITO_MCP_APPROVAL_MODE=external`, which
+   * refuses a confirmation from the identity that minted the action — behaves
+   * differently on the two legs of one process, and the difference is invisible
+   * unless both legs are driven at once.
+   *
+   * The pending store is read directly rather than through a tool, because
+   * `initiator` is the value under test and `meta_list_pending_actions`
+   * deliberately does not publish it.
+   */
+  it('gives every anonymous legacy session its own principal, and the modern leg one', async () => {
+    stubAvitoFetch();
+    const rig = await startRig('dual');
+    const first = await openEraSessionOn(rig, 'legacy');
+    const second = await openEraSessionOn(rig, 'legacy');
+    const modern = await openEraSessionOn(rig, 'modern');
+
+    await first.callTool('items_put_item_vas', { item_id: 123, vas_id: 'highlight' });
+    await second.callTool('items_put_item_vas', { item_id: 124, vas_id: 'highlight' });
+    await modern.callTool('items_put_item_vas', { item_id: 125, vas_id: 'highlight' });
+
+    const initiators = (await rig.ctx.pendingStore.listPersistent()).map(
+      (action) => action.initiator,
+    );
+    expect(initiators).toHaveLength(3);
+
+    // The legacy leg: the session id, and therefore a different principal per
+    // connection even though the credential — none — is identical.
+    expect(initiators).toContain(`session:${first.sessionId!}`);
+    expect(initiators).toContain(`session:${second.sessionId!}`);
+    expect(first.sessionId).not.toEqual(second.sessionId);
+
+    // The modern leg: one principal for every anonymous caller, because there
+    // is no session id to fall back to.
+    expect(initiators).toContain('session:local-stdio');
+
+    // And no fifth shape sneaks in: every principal is one of the forms the
+    // policy enumerates.
+    for (const initiator of initiators) {
+      expect(initiator, `${initiator} is not a documented principal form`).toMatch(
+        /^(oauth:|bearer:|session:)/,
+      );
+    }
+  });
+});

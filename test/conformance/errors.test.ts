@@ -25,6 +25,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { connect } from 'node:net';
+import { createServer } from 'node:http';
 
 import {
   LEGACY_REVISION,
@@ -39,6 +40,7 @@ import {
   type Rig,
 } from '../support/modern-rig.js';
 import { APP_ERROR_CODES, isLegacySubRangeCode } from '../../src/core/rpc-codes.js';
+import { answerForClientError } from '../../src/http/malformed-headers.js';
 
 afterEach(closeRigs);
 
@@ -91,12 +93,28 @@ describe('mirrored headers that a conforming client cannot even send', () => {
    * `fetch` refuses to transmit a header value containing a control character,
    * so the "invalid characters" cell of the SEP-2243 matrix is unreachable
    * through any normal client and can only be produced by writing bytes onto
-   * the socket. It is worth producing: the interesting question is not whether
-   * we answer `-32020` (we never see the request) but whether such a value can
-   * be smuggled past the validator into the mirror — header injection through a
-   * mirrored value is exactly the attack the SEP's security section is about.
+   * the socket. It is worth producing twice over: whether such a value can be
+   * smuggled past the validator into the mirror (header injection through a
+   * mirrored value is exactly the attack the SEP's security section is about),
+   * and whether the answer carries `-32020` at all.
+   *
+   * The second half is what the first version of this block did not ask, and
+   * its own comment said why: "we never see the request". That is true of
+   * Express — Node's HTTP parser refuses the message at the offending byte and
+   * writes `HTTP/1.1 400 Bad Request` with an EMPTY body, so nothing
+   * downstream of the parser is ever called. But §1.2.A item 6 asks for
+   * `-32020` + HTTP 400, and "the framework cannot" is not the same claim as
+   * "the platform cannot": `server.on('clientError')` receives the fault, the
+   * raw bytes and `bytesParsed` BEFORE that default answer is written, which is
+   * enough to name the offending header and answer properly.
+   * `src/http/malformed-headers.ts` does exactly that, and asserting only the
+   * status here is what let row A6j claim a criterion it did not check.
    */
-  function rawPost(rig: Rig, extraHeaderLine: string): Promise<string> {
+  function rawPost(
+    rig: Rig,
+    extraHeaderLine: string,
+    options: { target?: string } = {},
+  ): Promise<string> {
     const body = JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
@@ -106,7 +124,7 @@ describe('mirrored headers that a conforming client cannot even send', () => {
       },
     });
     const request =
-      'POST /mcp HTTP/1.1\r\n' +
+      `POST ${options.target ?? '/mcp'} HTTP/1.1\r\n` +
       `Host: ${rig.host}\r\n` +
       'Content-Type: application/json\r\n' +
       'Accept: application/json, text/event-stream\r\n' +
@@ -128,20 +146,138 @@ describe('mirrored headers that a conforming client cannot even send', () => {
     });
   }
 
-  it('refuses a control character in a mirrored value at the transport, serving nothing', async () => {
+  /** Node's own answer when it refuses a message and nothing claims the fault. */
+  const NODE_BARE_400 = 'HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n';
+
+  /** An llhttp fault of the shape `'clientError'` hands over. */
+  const fault = (code: string): Error & { code: string } =>
+    Object.assign(new Error(code), { code });
+
+  /** The JSON-RPC frame of a raw answer, or `undefined` when it carries none. */
+  function frameOf(answer: string): { error?: { code: number; data?: unknown } } | undefined {
+    const separator = answer.indexOf('\r\n\r\n');
+    if (separator < 0) return undefined;
+    const payload = answer.slice(separator + 4).trim();
+    if (!payload.startsWith('{')) return undefined;
+    return JSON.parse(payload) as { error?: { code: number; data?: unknown } };
+  }
+
+  /**
+   * The three llhttp faults a bad byte in a field value produces, one case per
+   * fault: `HPE_INVALID_HEADER_TOKEN` for a control byte, NUL or DEL,
+   * `HPE_CR_EXPECTED` for a bare LF, `HPE_LF_EXPECTED` for a bare CR. The cases
+   * are listed by the BYTE rather than by the code on purpose — the byte is
+   * what an attacker sends, and a Node release that reclassifies one of them
+   * has to be noticed here.
+   */
+  it.each([
+    ['a control character', 'Mcp-Method: tools/\u0001list', 'Mcp-Method'],
+    ['a NUL byte', 'Mcp-Name: meta\u0000_health', 'Mcp-Name'],
+    ['a DEL byte', 'Mcp-Name: meta\u007f_health', 'Mcp-Name'],
+    ['a bare LF smuggling a second header', 'Mcp-Method: tools/list\nX-Injected: 1', 'Mcp-Method'],
+    ['a bare CR smuggling a second header', 'Mcp-Method: tools/list\rX-Injected: 1', 'Mcp-Method'],
+    [
+      'a control character in the version mirror',
+      'MCP-Protocol-Version: 2026\u0001-07-28',
+      'MCP-Protocol-Version',
+    ],
+  ])('answers -32020 + HTTP 400 for %s in a mirrored value', async (_label, line, header) => {
     const rig = await startRig('dual');
-    const answer = await rawPost(rig, 'Mcp-Method: tools/\u0001list');
+    const answer = await rawPost(rig, line);
     expect(answer).toContain('400 Bad Request');
     // Not merely a 400: the request must not have been SERVED. If the parser
     // ever grew lenient, the tool catalogue would appear in this response.
     expect(answer).not.toContain('"tools"');
+    // And not merely unserved. `-32020` is `HeaderMismatch`, so the answer has
+    // to say WHICH header it is about, or it is not this answer.
+    const frame = frameOf(answer);
+    expect(frame?.error?.code, answer).toBe(-32020);
+    expect(frame?.error?.data).toMatchObject({ header });
+    // Nothing smuggled through the bad byte comes back out in what we say.
+    expect(answer).not.toContain('X-Injected');
   });
 
-  it('refuses a bare LF used to smuggle a second header', async () => {
+  it('claims no header mismatch for a bad byte in a header that mirrors nothing', async () => {
+    // `-32020` asserts that a header and the body disagree. A stray byte in a
+    // header the protocol never mirrors asserts nothing about MCP, and dressing
+    // it as a mismatch would make the code mean less everywhere it appears.
     const rig = await startRig('dual');
-    const answer = await rawPost(rig, 'Mcp-Method: tools/list\nX-Injected: 1');
-    expect(answer).toContain('400 Bad Request');
-    expect(answer).not.toContain('"tools"');
+    const answer = await rawPost(rig, 'Mcp-Method: tools/list\r\nX-Trace-Id: a\u0001b');
+    expect(answer).toBe(NODE_BARE_400);
+  });
+
+  it('claims no header mismatch for a request that was not aimed at /mcp', async () => {
+    const rig = await startRig('dual');
+    const answer = await rawPost(rig, 'Mcp-Method: tools/\u0001list', { target: '/healthz' });
+    expect(answer).toBe(NODE_BARE_400);
+  });
+
+  it('leaves the default posture answering exactly what 1.3.3 answered', async () => {
+    // On `legacy` the mirrors are not part of the protocol, §1.2.B freezes the
+    // 2025 wire, and no `clientError` listener is attached at all — so this is
+    // Node's untouched answer rather than a reproduction of it.
+    const rig = await startRig('legacy');
+    const answer = await rawPost(rig, 'Mcp-Method: tools/\u0001list');
+    expect(answer).toBe(NODE_BARE_400);
+  });
+
+  it('still answers the client errors it did not claim with Node’s own bytes', async () => {
+    // Attaching a `clientError` listener suppresses Node's default answer for
+    // EVERY fault on that server, so the faults this server does not claim have
+    // to be reproduced byte for byte. A header block over `maxHeaderSize` is
+    // `431`, and it has to stay `431` rather than decay into a generic 400.
+    const rig = await startRig('dual');
+    const oversized = await rawPost(rig, `X-Big: ${'a'.repeat(17_000)}`);
+    expect(oversized).toBe(
+      'HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n',
+    );
+  });
+
+  it('reproduces those bytes from Node itself, not from memory', async () => {
+    // The control for the assertion above: an unmodified `http.createServer()`,
+    // driven with the same fault, is asked what it answers — so a Node release
+    // that rewords or renumbers these answers fails here instead of quietly
+    // making this server the only one on the network saying something else.
+    //
+    // `maxHeaderSize` is lowered rather than the request enlarged, so the bytes
+    // the parser leaves unread are a couple of hundred and the measurement does
+    // not depend on how the kernel segmented a 90 KB write. That detail is the
+    // one this pair was rebuilt around: with the previous shape — a 90 KB
+    // request and a socket destroyed on the spot — the probe answered
+    // `ECONNRESET` on a CI runner and `431` locally.
+    const bare = createServer({ maxHeaderSize: 2048 }, (_req, res) => res.end('ok'));
+    await new Promise<void>((resolve) => bare.listen(0, '127.0.0.1', resolve));
+    const port = (bare.address() as { port: number }).port;
+    try {
+      const measured = await new Promise<string>((resolve) => {
+        const socket = connect(port, '127.0.0.1', () =>
+          socket.write(`GET / HTTP/1.1\r\nHost: h\r\nX-Big: ${'a'.repeat(2_200)}\r\n\r\n`),
+        );
+        let out = '';
+        socket.on('data', (chunk: Buffer) => (out += chunk.toString('utf8')));
+        socket.on('close', () => resolve(out));
+        socket.on('error', (err: Error) => resolve(`ERROR ${err.message}`));
+        setTimeout(() => {
+          socket.destroy();
+          resolve(out || 'TIMEOUT');
+        }, 5_000);
+      });
+      expect(measured).toBe(answerForClientError(fault('HPE_HEADER_OVERFLOW'), '/mcp'));
+    } finally {
+      await new Promise<void>((resolve) => bare.close(() => resolve()));
+    }
+
+    // The two other answers, stated for what they are. The 400 is measured on
+    // every run by the three cases above that fall through to it. The 408 is
+    // NOT measured here and is transcribed from Node's `_http_server.js`: the
+    // fault needs `requestTimeout` to fire, and a socket that is merely slow is
+    // closed silently by `headersTimeout` first — 34 of 40 attempts produced no
+    // answer at all. A probe that answers only sometimes is worse than an
+    // absence, so this is the absence, named.
+    expect(answerForClientError(fault('ERR_HTTP_REQUEST_TIMEOUT'), '/mcp')).toBe(
+      'HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n',
+    );
+    expect(answerForClientError(fault('ECONNRESET'), '/mcp')).toBe(NODE_BARE_400);
   });
 
   it('serves the same frame when the value is clean (the control group)', async () => {
