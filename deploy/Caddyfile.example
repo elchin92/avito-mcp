@@ -22,13 +22,38 @@ mcp.example.com {
 	#
 	# Credentials do not enter it: Caddy records `Authorization` and `Cookie` as
 	# REDACTED (verified by sending both) because `log_credentials` is off, and
-	# it must stay off. Request headers ARE recorded, which is what allows the
-	# log to be split by era on `Mcp-Protocol-Version` the same way the server's
-	# own classifier splits it.
+	# it must stay off. The webhook's only credential is not a header at all —
+	# Avito's protocol carries no signature, so the secret is the last segment of
+	# the URL PATH, and `request.uri` is recorded verbatim. Hence the log_skip.
+	#
+	# The matcher is a bare PREFIX on purpose. Measured on v2.11.3, one request
+	# per path, with `log_skip /avito/webhook/*`: `/avito/webhook/<secret>` is
+	# skipped, but a SECOND receiver mounted beside it —
+	# `/avito/webhook-mondigo/<secret>` — is logged in full, and so is the bare
+	# `/avito/webhook`. With `log_skip /avito/webhook*` all three are skipped
+	# while `/mcp` and `/healthz` are still recorded. `/avito/webhook*/*` is not
+	# a fix: it puts `/avito/webhook/nested/<secret>` back in the log.
+	#
+	# A host with several receivers needs EVERY receiver's path covered: this one
+	# runs avito-mcp.service (:3000) and avito-mcp-mondigo.service (:3001), and a
+	# single matcher covers both only because both mount under `/avito/webhook`.
+	# If AVITO_MCP_WEBHOOK_PATH moves a receiver off that prefix, add a matcher
+	# for the new path as well.
+	#
+	# log_skip suppresses the ACCESS log only. When the upstream is down — which
+	# is exactly what the restarts in docs/adr/0007-rollback-criteria.md §6.1/§6.2
+	# produce — Caddy writes an `http.log.error.*` entry that still carries the
+	# full URI, secret included, into journald. That is a pre-existing defect this
+	# matcher does not close; treat the secret as disclosed to anyone who can read
+	# the journal across a restart, and rotate it if that has happened.
+	#
+	# Request headers ARE recorded, which is what allows the log to be split by
+	# era on `Mcp-Protocol-Version` the same way the server's own classifier does.
 	log {
 		output stderr
 		format json
 	}
+	log_skip /avito/webhook*
 
 	reverse_proxy 127.0.0.1:3000
 }

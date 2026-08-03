@@ -309,6 +309,55 @@ describe('M6.8 — the rollback criteria are checkable, not merely written', () 
     expect(dropped).toContain('M1.15');
   });
 
+  it('excludes every path-authenticated webhook receiver from the access log', () => {
+    // Authorization/Cookie redaction cannot protect this credential: Avito's
+    // webhook protocol puts the only secret in the URL path and Caddy records
+    // request.uri verbatim, so a site-wide log without log_skip turns every
+    // legitimate delivery into a reusable credential disclosure.
+    //
+    // The matcher must stay the bare PREFIX. Measured on v2.11.3, one request
+    // per path: `log_skip /avito/webhook/*` still logs a receiver mounted
+    // beside the first one (`/avito/webhook-mondigo/<secret>`) and the bare
+    // `/avito/webhook`, and `log_skip /avito/webhook*/*` puts nested paths
+    // back in the log. Both narrower forms are pinned out here so neither can
+    // return as a "tightening".
+    const caddyfile = read(CADDYFILE);
+    expect(caddyfile).toMatch(/^\s*log_skip \/avito\/webhook\*\s*$/m);
+    expect(caddyfile).not.toMatch(/^\s*log_skip \/avito\/webhook\/\*\s*$/m);
+    expect(caddyfile).not.toMatch(/^\s*log_skip \/avito\/webhook\*\/\*\s*$/m);
+
+    // And it has to be inside the block the runbook SHOWS, not only in the
+    // prose beside it: §1.3 tells the operator to copy that block into
+    // /etc/caddy, and a block without the skip line produces a site that logs
+    // the secret while the document reads as though it does not.
+    const shown = fencedBlocks(runbook).filter((block) => /^\s*log\s*\{/m.test(block));
+    expect(shown.length, 'the runbook shows no caddyfile block to copy').toBeGreaterThan(0);
+    for (const block of shown) {
+      expect(block).toContain('log_skip /avito/webhook*');
+    }
+    expect(runbook).toContain('AVITO_MCP_WEBHOOK_PATH');
+  });
+
+  it('keeps the URI in the enablement check and states what log_skip does not cover', () => {
+    // §1.3 is the step that turns the instrument on, and three things about it
+    // rot in opposite directions:
+    //   • R1–R4 all select on `.request.uri`, so a check that stops printing it
+    //     verifies a field no criterion reads — and with log_skip in place, no
+    //     URI that survives into the log carries a secret anyway;
+    //   • one matcher per receiver: this host runs TWO webhook receivers, and
+    //     the second is the unit deploy/install-services.sh has never heard of,
+    //     the same omission §6.2 exists to correct;
+    //   • log_skip suppresses the ACCESS log only. When the upstream is down —
+    //     every restart in §6.1 and §6.2 — Caddy still writes the full URI in an
+    //     http.log.error entry. The document must not promise otherwise.
+    const precondition = /^### 1\.3 [\s\S]*?(?=\n## )/m.exec(runbook)?.[0] ?? '';
+    expect(precondition, 'the enablement precondition is gone').not.toBe('');
+    expect(precondition).toContain('.request.uri');
+    expect(precondition).toContain('avito-mcp-mondigo.service');
+    expect(precondition).toContain('http.log.error');
+    expect(runbook).toContain('http.log.error');
+  });
+
   it('does not present an observation window it has not run', () => {
     // The failure this pins: a runbook that quietly reads as complete because
     // the section meant to hold seven days of readings is a table nobody
