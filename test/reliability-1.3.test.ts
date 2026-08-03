@@ -1,7 +1,10 @@
 import { promises as fs } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { IdempotencyStore } from '../src/core/idempotency.js';
+import {
+  IdempotencyRecoveryRequiredError,
+  IdempotencyStore,
+} from '../src/core/idempotency.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import { RateLimiter } from '../src/core/rate-limiter.js';
 import { syncDirectory } from '../src/core/runtime-state.js';
@@ -50,6 +53,36 @@ describe('BBIP item-level outcome', () => {
 });
 
 describe('1.3 durable reliability state', () => {
+  it('leaves ambiguous failures fail-closed in the durable ledger', async () => {
+    const directory = await stateDir();
+    const options = { stateDir: directory, namespace: 'account-a' };
+    const first = new IdempotencyStore(60_000, 100, options);
+    const second = new IdempotencyStore(60_000, 100, options);
+    const cancellation = new Error('cancelled after upstream dispatch');
+    let executions = 0;
+
+    await expect(
+      first.runExclusive(
+        'business-key',
+        'money_tool',
+        'same-args',
+        async () => {
+          executions += 1;
+          throw cancellation;
+        },
+        { retainReservationOnError: (error) => error === cancellation },
+      ),
+    ).rejects.toBe(cancellation);
+
+    await expect(
+      second.runExclusive('business-key', 'money_tool', 'same-args', async () => {
+        executions += 1;
+        return { content: [{ type: 'text', text: 'charged twice' }] };
+      }),
+    ).rejects.toBeInstanceOf(IdempotencyRecoveryRequiredError);
+    expect(executions).toBe(1);
+  });
+
   it('tolerates platforms that do not support directory fsync', async () => {
     const open = vi.spyOn(fs, 'open');
     for (const code of ['EINVAL', 'ENOTSUP', 'EPERM', 'EISDIR']) {

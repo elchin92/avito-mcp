@@ -573,6 +573,12 @@ export function defineTool<I extends ZodRawShape>(
           spec.name,
           argsHash,
           () => execute(cleanArgs, signal),
+          {
+            // Once cancellation can race an outbound mutation, absence of a
+            // response is not proof that Avito did not commit it. Keep this key
+            // fail-closed until an operator reconciles the remote operation.
+            retainReservationOnError: () => signal?.aborted === true,
+          },
         );
         return replay ? annotateReplay(entry.result) : entry.result;
       } catch (err) {

@@ -7,6 +7,7 @@ import {
   IdempotencyStore,
   IdempotencyConflictError,
   IdempotencyLimitError,
+  IdempotencyRecoveryRequiredError,
   hashArgs,
 } from '../src/core/idempotency.js';
 
@@ -208,5 +209,33 @@ describe('idempotency', () => {
     expect(store.size()).toBe(1);
     release();
     await first;
+  });
+
+  it('keeps an ambiguous failed mutation reserved instead of executing a retry', async () => {
+    const store = new IdempotencyStore(60_000);
+    const hash = hashArgs({ amount: 100 });
+    const cancellation = new Error('response stream closed after dispatch');
+    let executions = 0;
+
+    await expect(
+      store.runExclusive(
+        'charge-key',
+        'charge',
+        hash,
+        async () => {
+          executions += 1;
+          throw cancellation;
+        },
+        { retainReservationOnError: (error) => error === cancellation },
+      ),
+    ).rejects.toBe(cancellation);
+
+    await expect(
+      store.runExclusive('charge-key', 'charge', hash, async () => {
+        executions += 1;
+        return resultOf('charged twice');
+      }),
+    ).rejects.toBeInstanceOf(IdempotencyRecoveryRequiredError);
+    expect(executions).toBe(1);
   });
 });

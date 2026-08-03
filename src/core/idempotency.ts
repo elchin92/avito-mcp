@@ -37,7 +37,8 @@ export interface IdempotencyEntry {
 
 interface IdempotencyReservation {
   argsHash: string;
-  promise: Promise<IdempotencyEntry>;
+  promise?: Promise<IdempotencyEntry>;
+  uncertain?: boolean;
 }
 
 interface PersistentRecord {
@@ -65,6 +66,8 @@ export interface IdempotencyRetentionOptions {
   retainExpiredPersistent?: (entry: IdempotencyEntry) => boolean | Promise<boolean>;
   /** Fail closed unless a cached result is still safe and useful to replay. */
   replayAllowed?: (entry: IdempotencyEntry) => boolean | Promise<boolean>;
+  /** Keep the slot fail-closed when a rejected execution may have reached upstream. */
+  retainReservationOnError?: (error: unknown) => boolean;
 }
 
 export class IdempotencyConflictError extends Error {
@@ -241,9 +244,11 @@ export class IdempotencyStore {
             await writeJsonAtomic(persistentPath, this.toPersistent(entry));
             return { entry, replay: false };
           } catch (error) {
-            // A caught application failure means no usable result was produced. A hard
-            // process stop never reaches this branch, leaving the reservation fail-closed.
-            await fs.rm(persistentPath, { force: true });
+            // Cancellation after dispatch is ambiguous: upstream may have committed the
+            // mutation. Keep the durable in-flight marker until it is reconciled.
+            if (!options.retainReservationOnError?.(error)) {
+              await fs.rm(persistentPath, { force: true });
+            }
             throw error;
           }
         },
@@ -267,6 +272,9 @@ export class IdempotencyStore {
     const existing = this.reservations.get(composed);
     if (existing) {
       if (existing.argsHash !== argsHash) throw new IdempotencyConflictError(key, toolName);
+      if (existing.uncertain || !existing.promise) {
+        throw new IdempotencyRecoveryRequiredError(key, toolName);
+      }
       return { entry: await existing.promise, replay: true };
     }
 
@@ -285,7 +293,11 @@ export class IdempotencyStore {
         const result = await execute();
         resolveReservation(this.remember(key, toolName, argsHash, result, options));
       } catch (err) {
-        this.reservations.delete(composed);
+        if (options.retainReservationOnError?.(err)) {
+          this.reservations.set(composed, { argsHash, uncertain: true });
+        } else {
+          this.reservations.delete(composed);
+        }
         rejectReservation(err);
       }
     })();

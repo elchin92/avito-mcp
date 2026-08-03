@@ -425,7 +425,7 @@ describe('A10 — request-scoped notifications/message', () => {
 // ───────────────────── 11. stream close is a cancellation ───────────────────
 
 describe('A11 — closing the response stream cancels the work', () => {
-  it('aborts the outgoing Avito call and frees the idempotency lease', async () => {
+  it('aborts the outgoing Avito call and keeps its idempotency lease fail-closed', async () => {
     // The fixture is a real HTTP exchange with a hung upstream: the token call
     // succeeds, the API call never answers. Nothing about the cancellation is
     // simulated — the client end of a real SSE response is closed, and the
@@ -490,9 +490,9 @@ describe('A11 — closing the response stream cancels the work', () => {
       stream.abort();
 
       await vi.waitFor(() => expect(apiSignal?.aborted).toBe(true), { timeout: 5_000 });
-      // Freed, not merely finished: a retry with the same key must be able to
-      // run rather than meet a wedged reservation.
-      await vi.waitFor(() => expect(rig.ctx.idempotencyStore!.size()).toBe(0), { timeout: 5_000 });
+      // Avito may have committed before its response was lost. The key must
+      // remain reserved so a retry cannot duplicate the mutation.
+      await vi.waitFor(() => expect(rig.ctx.idempotencyStore!.size()).toBe(1), { timeout: 5_000 });
     } finally {
       vi.unstubAllGlobals();
     }

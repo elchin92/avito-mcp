@@ -16,9 +16,9 @@ export interface RateSnapshot {
  * The outcome of {@link RateLimiter.waitIfNeeded}: the caller's claim on one
  * slot of the shared budget, and the way to give it back.
  *
- * M3 item 11 — "closing the response stream is a cancellation: the outgoing
- * Avito call is aborted, the idempotency lease and the rate-limiter slot are
- * released". The slot needs an explicit handle because the reservation is a
+ * A cancelled wait, or cancellation before an outbound request is dispatched,
+ * releases its rate-limiter slot. Once dispatch begins the slot remains spent,
+ * because Avito may already have accepted the request. The explicit handle is a
  * DURABLE side effect: `waitIfNeeded` decrements `remaining` in the shared
  * state file BEFORE the HTTP call, so that concurrent processes cannot both
  * spend the last unit. A caller that then never makes the call has burned a

@@ -49,10 +49,9 @@ export interface RequestOptions {
    * stream is closed by the peer (revision 2026-07-28 defines exactly that as a
    * cancellation) or when a 2025 client sends `notifications/cancelled`.
    *
-   * Honouring it does three things the deadline timer cannot: it stops an
-   * in-flight Avito call the answer to which nobody can receive any more, it
-   * releases the rate-limiter slot this call reserved, and it unwedges the
-   * idempotency reservation (the ledger frees a lease on a thrown execute).
+   * Honouring it stops an in-flight Avito call whose answer nobody can receive.
+   * Once dispatch starts, rate and idempotency reservations remain consumed:
+   * Avito may already have accepted the request even if its response is lost.
    */
   signal?: AbortSignal;
 }
@@ -135,13 +134,15 @@ export class AvitoClient {
       reqInfo,
     );
 
+    let dispatched = false;
     try {
-      return await this.doRequest<T>(opts, url, reqInfo, deadline, rateKey);
+      return await this.doRequest<T>(opts, url, reqInfo, deadline, rateKey, () => {
+        dispatched = true;
+      });
     } catch (err) {
-      // Give the slot back ONLY on cancellation. Every other failure — a 4xx, a
-      // timeout, a transport error — still consumed a unit of the upstream
-      // budget, because the request did reach Avito.
-      if (opts.signal?.aborted === true) await slot.release();
+      // A cancellation before dispatch cannot have consumed upstream budget.
+      // After dispatch, fail closed because Avito may have received the request.
+      if (opts.signal?.aborted === true && !dispatched) await slot.release();
       throw err;
     }
   }
@@ -152,6 +153,7 @@ export class AvitoClient {
     reqInfo: RequestInfo,
     deadline: number,
     rateKey: string,
+    onDispatch: () => void,
   ): Promise<RequestResponse<T>> {
     let allowRefresh = true;
     let retries429 = 0;
@@ -176,6 +178,7 @@ export class AvitoClient {
           body: body as FetchBody | null,
           signal: fetchSignal,
         };
+        onDispatch();
         const resp =
           opts.method === 'GET' && body !== null
             ? await fetchGetWithBody(url, requestInit, opts.allowGetBody === true)
