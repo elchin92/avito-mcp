@@ -1,5 +1,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
 
+import { IdempotencyReconcileRequiredError } from './idempotency.js';
+
 export interface RequestInfo {
   method: string;
   url: string;
@@ -82,6 +84,13 @@ export type ErrorType =
   | 'AVITO_API_ERROR'
   | 'NETWORK_ERROR'
   | 'TIMEOUT'
+  /**
+   * The server refuses to run this idempotency key because an upstream mutation
+   * under it may already have happened. A deliberate answer, not a malfunction —
+   * reporting it as INTERNAL_ERROR would tell the agent to file a bug when what
+   * it actually has to do is check the operation on the Avito side.
+   */
+  | 'IDEMPOTENCY_HELD'
   | 'INTERNAL_ERROR';
 
 export interface ErrorEnvelope {
@@ -155,6 +164,17 @@ export function errorToMcpContent(err: unknown): CallToolResult {
       retryable: true,
       request: err.request,
     };
+  } else if (err instanceof IdempotencyReconcileRequiredError) {
+    // Not "unexpected": the server decided this, and the agent can act on it.
+    // `retryable: false` is literal — repeating the same key is exactly what is
+    // being refused, and a different key is only correct after reconciliation.
+    text = err.message;
+    envelope = {
+      code: `IDEMPOTENCY_HELD/${err.reason}`,
+      type: 'IDEMPOTENCY_HELD',
+      message: err.message,
+      retryable: false,
+    };
   } else if (err instanceof Error) {
     text = `Unexpected error: ${err.name}: ${err.message}`;
     envelope = { type: 'INTERNAL_ERROR', message: err.message, retryable: false };
@@ -182,6 +202,11 @@ export function errorToMcpContent(err: unknown): CallToolResult {
 
 function legacyKindFromType(t: ErrorType): string {
   if (t === 'NETWORK_ERROR' || t === 'TIMEOUT') return 'transport_error';
-  if (t === 'INTERNAL_ERROR' || t === 'CONFIG_ERROR') return 'internal_error';
+  // IDEMPOTENCY_HELD is server-side by origin, so it joins the internal bucket in
+  // the v0.6.0 vocabulary. The three legacy kinds have no room for a fourth without
+  // breaking the readers that field exists for; `error.type`/`error.code` carry the
+  // real answer.
+  if (t === 'INTERNAL_ERROR' || t === 'CONFIG_ERROR' || t === 'IDEMPOTENCY_HELD')
+    return 'internal_error';
   return 'avito_api_error';
 }

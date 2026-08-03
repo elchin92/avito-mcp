@@ -425,7 +425,7 @@ describe('A10 — request-scoped notifications/message', () => {
 // ───────────────────── 11. stream close is a cancellation ───────────────────
 
 describe('A11 — closing the response stream cancels the work', () => {
-  it('aborts the outgoing Avito call and frees the idempotency lease', async () => {
+  it('aborts the outgoing Avito call and holds the idempotency lease', async () => {
     // The fixture is a real HTTP exchange with a hung upstream: the token call
     // succeeds, the API call never answers. Nothing about the cancellation is
     // simulated — the client end of a real SSE response is closed, and the
@@ -490,9 +490,19 @@ describe('A11 — closing the response stream cancels the work', () => {
       stream.abort();
 
       await vi.waitFor(() => expect(apiSignal?.aborted).toBe(true), { timeout: 5_000 });
-      // Freed, not merely finished: a retry with the same key must be able to
-      // run rather than meet a wedged reservation.
-      await vi.waitFor(() => expect(rig.ctx.idempotencyStore!.size()).toBe(0), { timeout: 5_000 });
+      // The outgoing call stops — that is the cancellation, and it is what this
+      // item requires. The KEY, however, is not freed: this request had already
+      // been dispatched, so whether it applied is unknowable from here, and a
+      // freed key would let the next retry apply it a second time. The slot the
+      // ledger keeps is a bounded refusal, swept when it expires; the whole
+      // rule, its normative backing and its cost are in
+      // `docs/adr/0008-idempotency-hold-on-cancelled-dispatch.md`, and
+      // `test/idempotency-cancel-race.test.ts` counts the mutations at the far
+      // end of a real socket to show it is one and not two.
+      await vi.waitFor(() => expect(rig.ctx.idempotencyStore!.size()).toBe(1), { timeout: 5_000 });
+      // Stays held rather than draining a moment later.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(rig.ctx.idempotencyStore!.size()).toBe(1);
     } finally {
       vi.unstubAllGlobals();
     }

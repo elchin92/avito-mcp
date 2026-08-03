@@ -334,9 +334,10 @@ describe('release and deployment hardening', () => {
     // The positive cases are read out of the baseline instead of being written
     // here: a literal `<auth-named key>": "<32 hex>"` in this file would be a
     // finding in its own right, because this file is deliberately outside the
-    // exemption. Every pinned per-tool value must be a digest of that shape, so
-    // the config covers the whole map and nothing besides it. gitleaks hands
-    // the allowlist the match without its opening quote.
+    // exemption. Only pinned entries whose names trigger generic-api-key need
+    // coverage. Pinning the key/value pair ensures another 32-hex value cannot
+    // borrow that exemption. gitleaks hands it the match without its opening
+    // quote.
     const baseline = JSON.parse(read(LEGACY_WIRE_BASELINE)) as {
       steps: Record<string, { body?: { perTool?: Record<string, string> } }>;
     };
@@ -344,20 +345,31 @@ describe('release and deployment hardening', () => {
     expect(perTool).toBeDefined();
     const digests = Object.entries(perTool!);
     expect(digests.length).toBeGreaterThan(100);
-    for (const [tool, value] of digests) {
+    const falsePositives = digests.filter(([tool]) => /auth|api/.test(tool));
+    for (const [tool, value] of falsePositives) {
       expect(allowedMatch.test(`${tool}": "${value}"`), `${tool} is not a 32-hex digest`).toBe(
         true,
       );
     }
     // The entries that actually trip the rule are the ones whose names carry a
     // generic-api-key keyword, so those must be among the covered ones.
-    expect(digests.filter(([tool]) => /auth|api/.test(tool)).length).toBeGreaterThan(0);
+    expect(falsePositives.length).toBeGreaterThan(0);
+    for (const [tool, value] of digests.filter(([tool]) => !/auth|api/.test(tool))) {
+      expect(allowedMatch.test(`${tool}": "${value}"`), `${tool} was unnecessarily exempted`).toBe(
+        false,
+      );
+    }
 
     // Anything that is not exactly a 32-hex digest is still a finding. The
     // counter-examples are derived rather than pasted, for the same reason: a
     // realistic credential literal in a test fixture is itself a leak, and the
     // property under test is the shape, not any particular vendor.
     const sample = digests[0]![1];
+    // An exact 32-lowercase-hex value is a common credential shape. Credential
+    // keys must remain findings even when the value happens to equal a digest.
+    expect(allowedMatch.test(`api_key": "${sample}"`)).toBe(false);
+    expect(allowedMatch.test(`meta_auth_token": "${sample}"`)).toBe(false);
+    expect(allowedMatch.test(`client_secret": "${sample}"`)).toBe(false);
     const notDigests = [
       `${sample}0123456789abcdef`, // longer than a digest
       sample.slice(1), // shorter than a digest

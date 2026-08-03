@@ -20,9 +20,9 @@ useDefault = true
 # keyword next to a high-entropy value.
 #
 # The exemption below is three conditions ANDed together: the generic-api-key
-# rule only, that one file only, and a match shaped exactly like a digest-map
-# entry whose value is exactly 32 lowercase hex characters. A real credential
-# placed anywhere else in that same file is still reported.
+# rule only, that one file only, and the exact key/value pairs that are known
+# false positives. Pinning both halves is intentional: allowing the general
+# 32-hex shape would also hide credentials of that shape in the baseline.
 [[rules]]
 id = "generic-api-key"
 
@@ -31,4 +31,4 @@ id = "generic-api-key"
   condition = "AND"
   paths = ['''^test/baselines/legacy-1\.3\.3-wire\.json$''']
   regexTarget = "match"
-  regexes = ['''^[a-z0-9_]+": "[0-9a-f]{32}"$''']
+  regexes = ['''^(meta_auth_status": "c99c926dfd444f1f6ca9735ba9d5b182|msg_discounts_open_api_available": "a0e68506646b8df3bf14f2989a1fa170|msg_discounts_open_api_multi_confirm": "bb9777111674319969c2e3393ee6721f|msg_discounts_open_api_multi_create": "d93d26ff4291e99d4beb6aedc1179c7e|msg_discounts_open_api_stats": "b3dc669aba27fb97f46b3fbf707b0ee9|msg_discounts_open_api_tariff_info": "f47527781be79324e2f4895ecd77df47)"$''']

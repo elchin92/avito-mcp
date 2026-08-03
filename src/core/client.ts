@@ -49,12 +49,31 @@ export interface RequestOptions {
    * stream is closed by the peer (revision 2026-07-28 defines exactly that as a
    * cancellation) or when a 2025 client sends `notifications/cancelled`.
    *
-   * Honouring it does three things the deadline timer cannot: it stops an
-   * in-flight Avito call the answer to which nobody can receive any more, it
-   * releases the rate-limiter slot this call reserved, and it unwedges the
-   * idempotency reservation (the ledger frees a lease on a thrown execute).
+   * Honouring it does two things the deadline timer cannot: it stops an
+   * in-flight Avito call the answer to which nobody can receive any more, and
+   * it releases the rate-limiter slot this call reserved.
+   *
+   * What it deliberately does NOT decide on its own is whether the caller's
+   * idempotency key may be reused — see {@link RequestOptions.onDispatch}.
    */
   signal?: AbortSignal;
+  /**
+   * Called at the instant this request is handed to the network, and never
+   * before. After it fires, the upstream may have applied the mutation no
+   * matter what happens next — a cancellation from here on leaves the outcome
+   * UNKNOWN, not "did not happen".
+   *
+   * This exists because `signal.aborted` alone cannot tell those apart. A call
+   * cancelled while it is still queueing for a rate-limiter slot or waiting on
+   * a token refresh has changed nothing upstream and its idempotency key must
+   * be freed; a call cancelled one millisecond after `fetch()` took the request
+   * may already have spent money. Only the caller of `request()` knows what to
+   * do with that distinction, so the client just reports the fact.
+   *
+   * Fired once per network attempt, so a retry loop (401 refresh, 429, 5xx)
+   * reports every attempt. Callers treat it as a latch.
+   */
+  onDispatch?: () => void;
 }
 
 export interface RequestResponse<T = unknown> {
@@ -176,6 +195,11 @@ export class AvitoClient {
           body: body as FetchBody | null,
           signal: fetchSignal,
         };
+        // The dispatch latch fires HERE and nowhere earlier: everything above —
+        // the rate-limiter slot, the token, the deadline arithmetic — is local
+        // preparation that Avito never sees. From the next statement on, the
+        // request is on the wire and its effect is no longer ours to predict.
+        opts.onDispatch?.();
         const resp =
           opts.method === 'GET' && body !== null
             ? await fetchGetWithBody(url, requestInit, opts.allowGetBody === true)
