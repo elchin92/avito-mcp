@@ -1,3 +1,5 @@
+import type { CallToolResult } from '@modelcontextprotocol/server';
+
 export interface RequestInfo {
   method: string;
   url: string;
@@ -21,7 +23,9 @@ export class AvitoApiError extends Error {
     message?: string;
     retryAfter?: number;
   }) {
-    super(args.message ?? `Avito API ${args.status} for ${args.request.method} ${args.request.url}`);
+    super(
+      args.message ?? `Avito API ${args.status} for ${args.request.method} ${args.request.url}`,
+    );
     this.name = 'AvitoApiError';
     this.status = args.status;
     this.body = args.body;
@@ -61,8 +65,6 @@ export class AvitoTransportError extends Error {
   }
 }
 
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-
 /**
  * Structured error taxonomy (v0.7.0).
  * type is a machine-readable category; retryable + retryAfter are hints for the agent
@@ -96,12 +98,30 @@ export interface ErrorEnvelope {
 
 function classifyApiError(err: AvitoApiError): ErrorEnvelope {
   const s = err.status;
-  if (s === 400) return { type: 'AVITO_BAD_REQUEST', message: err.message, retryable: false, httpStatus: s };
-  if (s === 401) return { type: 'AVITO_UNAUTHORIZED', message: err.message, retryable: false, httpStatus: s };
-  if (s === 403) return { type: 'AVITO_FORBIDDEN', message: err.message, retryable: false, httpStatus: s };
-  if (s === 404) return { type: 'AVITO_NOT_FOUND', message: err.message, retryable: false, httpStatus: s };
-  if (s === 429) return { type: 'AVITO_RATE_LIMIT', message: err.message, retryable: true, retryAfter: err.retryAfter, httpStatus: s };
-  if (s >= 500 && s < 600) return { type: 'AVITO_SERVER_ERROR', message: err.message, retryable: true, retryAfter: err.retryAfter, httpStatus: s };
+  if (s === 400)
+    return { type: 'AVITO_BAD_REQUEST', message: err.message, retryable: false, httpStatus: s };
+  if (s === 401)
+    return { type: 'AVITO_UNAUTHORIZED', message: err.message, retryable: false, httpStatus: s };
+  if (s === 403)
+    return { type: 'AVITO_FORBIDDEN', message: err.message, retryable: false, httpStatus: s };
+  if (s === 404)
+    return { type: 'AVITO_NOT_FOUND', message: err.message, retryable: false, httpStatus: s };
+  if (s === 429)
+    return {
+      type: 'AVITO_RATE_LIMIT',
+      message: err.message,
+      retryable: true,
+      retryAfter: err.retryAfter,
+      httpStatus: s,
+    };
+  if (s >= 500 && s < 600)
+    return {
+      type: 'AVITO_SERVER_ERROR',
+      message: err.message,
+      retryable: true,
+      retryAfter: err.retryAfter,
+      httpStatus: s,
+    };
   return { type: 'AVITO_API_ERROR', message: err.message, retryable: false, httpStatus: s };
 }
 
@@ -148,7 +168,7 @@ export function errorToMcpContent(err: unknown): CallToolResult {
     // v0.7.0: new structure — `error: { type, message, retryable, ... }`.
     // The old error_kind field is kept for backwards-compat: code that read
     // structuredContent.error_kind in v0.6.0 will keep working.
-  structuredContent: {
+    structuredContent: {
       error: {
         ...envelope,
         code: envelope.code ?? envelope.type,

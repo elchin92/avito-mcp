@@ -5,7 +5,7 @@
  *   - DNS-rebinding protection defaults (resolveRebindingProtection): derived
  *     allowlists, validated explicit lists and fail-closed wildcard binds.
  *   - Streamable HTTP session contract: 400 for a missing Mcp-Session-Id,
- *     404 (-32001) for an unknown one (spec-mandated so clients re-initialize),
+ *     404 for an unknown one (spec-mandated so clients re-initialize),
  *     503 above the session cap.
  *   - /healthz exposes only { ok, name, version } without auth.
  *   - Uniform webhook responses for valid and invalid secret candidates.
@@ -23,6 +23,7 @@ import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 
 import { AvitoClient } from '../src/core/client.js';
+import { LEGACY_WIRE_ERROR_CODES } from '../src/core/rpc-codes.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import { IdempotencyStore } from '../src/core/idempotency.js';
 import { WebhookStore } from '../src/core/webhook-store.js';
@@ -30,6 +31,12 @@ import { startHttpServer, type HttpServerHandle } from '../src/http/app.js';
 import { resolveRebindingProtection } from '../src/http/mcp-http.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config, HttpConfig, WebhookConfig } from '../src/config.js';
+import {
+  makeConfig as makeBaseConfig,
+  makeHttpConfig as makeBaseHttpConfig,
+  makeWebhookConfig as makeBaseWebhookConfig,
+  type ConfigOverrides,
+} from './support/config-fixture.js';
 
 const WEBHOOK_SECRET = 'hardening-webhook-secret-0123456789abcdef';
 const SPECIAL_WEBHOOK_SECRET = 'base64-secret-0123456789abcdef/+=';
@@ -103,60 +110,32 @@ function rawSlowWebhook(
 }
 
 function makeHttpConfig(overrides: Partial<HttpConfig> = {}): HttpConfig {
-  return {
+  return makeBaseHttpConfig({
     transport: 'http',
-    host: '127.0.0.1',
     port: 0, // ephemeral — the handle reports the real port
     publicUrl: 'https://mcp.example.com',
     auth: 'none',
-    authTokens: [],
     allowNoAuth: true,
-    allowedHosts: [],
-    allowedOrigins: [],
-    maxSessions: 100,
-    sessionIdleSec: 1800,
-    oauthTokenTtlSec: 3600,
     ...overrides,
-  };
+  });
 }
 
 function makeWebhookConfig(overrides: Partial<WebhookConfig> = {}): WebhookConfig {
-  return {
+  return makeBaseWebhookConfig({
     enabled: true,
     secret: WEBHOOK_SECRET,
     publicUrl: 'https://mcp.example.com',
-    path: '/avito/webhook',
-    bufferSize: 100,
     ...overrides,
-  };
+  });
 }
 
-function makeConfig(overrides: Partial<Config> = {}): Config {
-  return {
-    clientId: 'cid',
-    clientSecret: 'sec',
+function makeConfig(overrides: ConfigOverrides = {}): Config {
+  return makeBaseConfig({
     profileId: 12345678,
-    baseUrl: 'https://api.test.example',
-    cpaSource: 'avito-mcp-test',
-    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
-    logLevel: 'fatal',
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
-    exposeAuthTools: false,
-    allowedUploadDirs: [],
-    maxUploadMb: 15,
-    confirmationMode: 'money_public',
-    confirmationTtlSec: 900,
-    confirmationSecret: undefined,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
     http: makeHttpConfig(),
     webhook: makeWebhookConfig(),
     ...overrides,
-  } as Config;
+  });
 }
 
 async function startRig(overrides: Partial<Config> = {}): Promise<{
@@ -290,11 +269,17 @@ describe('Streamable HTTP session contract + app surface', () => {
     });
     expect(r.status).toBe(400);
     const body = (await r.json()) as { error: { code: number; message: string } };
-    expect(body.error.code).toBe(-32000);
+    // -32000, as in 1.3.x, and as the v2 SDK's own legacy transport still
+    // answers. M3 briefly moved this to -32602 under the 2026-07-28 allocation
+    // policy; that policy governs answers a 2026 client can RECEIVE, and this
+    // branch is reachable only from the sessionful 2025 leg — a distinction
+    // test/legacy-wire-regression.test.ts made visible by diffing against a
+    // live 1.3.3. See LEGACY_WIRE_ERROR_CODES in src/core/rpc-codes.ts.
+    expect(body.error.code).toBe(LEGACY_WIRE_ERROR_CODES.missingSessionId);
     expect(body.error.message).toContain('Mcp-Session-Id');
   });
 
-  it('POST /mcp with an UNKNOWN session id → 404 -32001 (client must re-initialize)', async () => {
+  it('POST /mcp with an UNKNOWN session id → 404 (client must re-initialize)', async () => {
     const rig = await startRig();
     handle = rig.handle;
 
@@ -306,9 +291,12 @@ describe('Streamable HTTP session contract + app surface', () => {
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     });
+    // The 404 is the contract clients react to (re-initialize with a fresh
+    // session), and the number beside it is 1.3.3's -32001 — the value the v2
+    // SDK's own legacy transport still answers for this case.
     expect(r.status).toBe(404);
     const body = (await r.json()) as { error: { code: number; message: string } };
-    expect(body.error.code).toBe(-32001);
+    expect(body.error.code).toBe(LEGACY_WIRE_ERROR_CODES.sessionNotFound);
     expect(body.error.message).toContain('Session not found');
   });
 

@@ -12,6 +12,13 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { DEFAULT_PROTOCOL_ERA } from '../src/config.js';
+import {
+  LEGACY_PROTOCOL_VERSION,
+  MODERN_PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from '../src/version.js';
+
 const root = resolve(import.meta.dirname, '..');
 const read = (path: string): string => readFileSync(resolve(root, path), 'utf8');
 
@@ -25,6 +32,8 @@ const RESEARCH_DIR = 'docs/mcp-2026-07-28';
 const RESEARCH_ONLY_ROOT_FILES = ['MIGRATION_PLAN.md', 'MIGRATION_PROGRESS.md'];
 /** Everything under docs/ that is allowed to ship (docs/safety.md backs avito://docs/safety). */
 const PACKABLE_DOCS = new Set(['docs/safety.md']);
+/** The one file the secret scan is allowed to hold schema digests in. */
+const LEGACY_WIRE_BASELINE = 'test/baselines/legacy-1.3.3-wire.json';
 
 /** Paths npm would put in the tarball, resolved without building or touching the network. */
 function packedFilePaths(cwd: string): string[] {
@@ -178,6 +187,20 @@ describe('release and deployment hardening', () => {
     expect(installer).toContain('systemctl restart avito-mcp.service');
   });
 
+  it('runs CI on every pull request, including a stacked one', () => {
+    // M6.4/M6.6. `pull_request: branches: [main]` matches no stacked PR (a
+    // feature branch targeting another feature branch), so an entire migration
+    // chain can be reviewed and merged with zero checks having run. The absence
+    // of the filter is the assertion; without this test it would be restored by
+    // the next person tidying the workflow.
+    const ci = read('.github/workflows/ci.yml');
+    expect(ci).toMatch(/^ {2}pull_request:\s*$/m);
+    expect(ci).not.toMatch(/pull_request:\s*\n\s*branches:/);
+    // The push trigger stays pinned to main: a branch push and its PR would
+    // otherwise run the whole matrix twice.
+    expect(ci).toMatch(/push:\s*\n\s*branches: \[main\]/);
+  });
+
   it('keeps dependency and secret scans blocking and actions SHA-pinned', () => {
     const ci = read('.github/workflows/ci.yml');
     expect(ci).not.toContain('continue-on-error');
@@ -266,6 +289,88 @@ describe('release and deployment hardening', () => {
     expect(dockerignore).toContain('.remote.env*');
     expect(dockerignore).toContain('.mcp.json*');
     expect(dockerignore).toContain('*.pem');
+  });
+
+  /**
+   * The secret scan has exactly one exemption, and it exists because the 1.3.3
+   * wire baseline stores a truncated sha256 of every tool definition — values
+   * the generic-api-key rule reads as credentials whenever the tool name
+   * contains "auth" or "api". An exemption is only tolerable while it stays too
+   * narrow to hide anything else, so this gate re-runs the two regexes the
+   * config actually ships against credentials a future commit might drop into
+   * the same file or the same directory.
+   */
+  it('keeps the gitleaks exemption too narrow to hide a real secret', () => {
+    const config = read('.gitleaks.toml');
+
+    // The upstream ruleset stays in force: this file only adds an exemption.
+    expect(config).toMatch(/\[extend\]\nuseDefault = true/);
+    expect(config).not.toContain('disabledRules');
+    // Scoped to the one rule that misfires, not to every rule in the scanner.
+    expect(config).not.toMatch(/^\[allowlist\]/m);
+    expect(config).not.toMatch(/^\[\[allowlists\]\]/m);
+    expect(config).toMatch(/\[\[rules\]\]\nid = "generic-api-key"/);
+    // Path and value shape must BOTH hold; either alone would exempt too much.
+    expect(config).toContain('condition = "AND"');
+    expect(config).toContain('regexTarget = "match"');
+
+    const literals = (key: string): string[] =>
+      [...config.matchAll(new RegExp(`${key} = \\['''(.+?)'''\\]`, 'g'))].map((m) => m[1]!);
+
+    const paths = literals('paths');
+    expect(paths).toHaveLength(1);
+    const allowedPath = new RegExp(paths[0]!);
+    expect(allowedPath.test(LEGACY_WIRE_BASELINE)).toBe(true);
+    // Not the directory, not a sibling, not a lookalike of the baseline itself.
+    expect(allowedPath.test('test/baselines/')).toBe(false);
+    expect(allowedPath.test('test/baselines/credentials.json')).toBe(false);
+    expect(allowedPath.test('test/baselines/legacy-1.3.3-wire.json.bak')).toBe(false);
+    expect(allowedPath.test('src/config.ts')).toBe(false);
+
+    const regexes = literals('regexes');
+    expect(regexes).toHaveLength(1);
+    const allowedMatch = new RegExp(regexes[0]!);
+
+    // The positive cases are read out of the baseline instead of being written
+    // here: a literal `<auth-named key>": "<32 hex>"` in this file would be a
+    // finding in its own right, because this file is deliberately outside the
+    // exemption. Every pinned per-tool value must be a digest of that shape, so
+    // the config covers the whole map and nothing besides it. gitleaks hands
+    // the allowlist the match without its opening quote.
+    const baseline = JSON.parse(read(LEGACY_WIRE_BASELINE)) as {
+      steps: Record<string, { body?: { perTool?: Record<string, string> } }>;
+    };
+    const perTool = baseline.steps['04-tools-list']?.body?.perTool;
+    expect(perTool).toBeDefined();
+    const digests = Object.entries(perTool!);
+    expect(digests.length).toBeGreaterThan(100);
+    for (const [tool, value] of digests) {
+      expect(allowedMatch.test(`${tool}": "${value}"`), `${tool} is not a 32-hex digest`).toBe(
+        true,
+      );
+    }
+    // The entries that actually trip the rule are the ones whose names carry a
+    // generic-api-key keyword, so those must be among the covered ones.
+    expect(digests.filter(([tool]) => /auth|api/.test(tool)).length).toBeGreaterThan(0);
+
+    // Anything that is not exactly a 32-hex digest is still a finding. The
+    // counter-examples are derived rather than pasted, for the same reason: a
+    // realistic credential literal in a test fixture is itself a leak, and the
+    // property under test is the shape, not any particular vendor.
+    const sample = digests[0]![1];
+    const notDigests = [
+      `${sample}0123456789abcdef`, // longer than a digest
+      sample.slice(1), // shorter than a digest
+      sample.toUpperCase(), // not lowercase
+      'Zm9vYmFyYmF6cXV1eDEyMzQ1Njc4OTBhYmNkZWZnaGlqaw', // base64url, not hex
+      `${sample} trailing`, // a digest plus a payload
+    ];
+    for (const value of notDigests) {
+      expect(allowedMatch.test(`api_key": "${value}"`), `${value} was exempted`).toBe(false);
+      expect(allowedMatch.test(`meta_auth_token": "${value}"`), `${value} was exempted`).toBe(
+        false,
+      );
+    }
   });
 
   it.skipIf(process.platform === 'win32')(
@@ -373,5 +478,246 @@ describe('release and deployment hardening', () => {
 
   it('keeps the service installer executable', () => {
     expect(statSync(resolve(root, 'deploy/install-services.sh')).mode & 0o111).not.toBe(0);
+  });
+});
+
+// ───────── E / M7.4 — one statement of supported revisions, on every surface ──
+
+/**
+ * The public contract says which protocol revisions this server speaks. It says
+ * it in seven places, and the only interesting failure is the one where the
+ * places disagree — a registry entry claiming a revision the build cannot serve
+ * is a checkably false claim, and it damages trust more than saying nothing.
+ *
+ * So the declaration is not asserted as a literal here. It is tied to
+ * `SUPPORTED_PROTOCOL_VERSIONS`, the constant the runtime itself advertises
+ * from, and to the `AVITO_MCP_PROTOCOL_ERA` default that decides which subset a
+ * default deployment actually answers.
+ */
+describe('public contract — supported protocol revisions', () => {
+  const REGISTRY_SCHEMA =
+    'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json';
+  const PUBLISHER_META = 'io.modelcontextprotocol.registry/publisher-provided';
+
+  interface ServerJson {
+    $schema?: string;
+    name?: string;
+    description?: string;
+    packages?: Array<{
+      identifier?: string;
+      environmentVariables?: Array<{
+        name?: string;
+        default?: string;
+        choices?: string[];
+        isRequired?: boolean;
+        description?: string;
+      }>;
+    }>;
+    _meta?: Record<string, { protocolRevisions?: Record<string, unknown> }>;
+  }
+
+  const serverJson = (): ServerJson => JSON.parse(read('server.json')) as ServerJson;
+
+  /** The `## [Unreleased]` section only — a released section is a different claim. */
+  function unreleasedSection(): string {
+    const changelog = read('CHANGELOG.md');
+    const start = changelog.indexOf('## [Unreleased]');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const next = changelog.indexOf('\n## [', start + 1);
+    return next === -1 ? changelog.slice(start) : changelog.slice(start, next);
+  }
+
+  it('declares in server.json exactly the revisions the code advertises', () => {
+    const server = serverJson();
+    const declared = server._meta?.[PUBLISHER_META]?.protocolRevisions as
+      | {
+          served?: string[];
+          servedByDefault?: string[];
+          selectedBy?: {
+            environmentVariable?: string;
+            default?: string;
+            values?: Record<string, string[]>;
+          };
+          documentation?: string;
+        }
+      | undefined;
+    expect(
+      declared,
+      `server.json._meta["${PUBLISHER_META}"].protocolRevisions is missing`,
+    ).toBeDefined();
+
+    // The claim and the constant the server advertises from are the same list.
+    expect(declared?.served).toEqual([...SUPPORTED_PROTOCOL_VERSIONS]);
+    expect(declared?.selectedBy?.environmentVariable).toBe('AVITO_MCP_PROTOCOL_ERA');
+    expect(declared?.selectedBy?.values).toEqual({
+      legacy: [LEGACY_PROTOCOL_VERSION],
+      dual: [...SUPPORTED_PROTOCOL_VERSIONS],
+      modern: [MODERN_PROTOCOL_VERSION],
+    });
+    // What a deployment that sets nothing actually answers. Getting this wrong
+    // is the difference between "we support 2026-07-28" and "we will, if asked".
+    const fallback = declared?.selectedBy?.default ?? '';
+    expect(declared?.servedByDefault).toEqual(declared?.selectedBy?.values?.[fallback]);
+    expect(fallback).toBe(DEFAULT_PROTOCOL_ERA);
+    expect(declared?.documentation).toContain('#protocol-revisions');
+  });
+
+  it('describes the era selector as a launch option the registry schema understands', () => {
+    const server = serverJson();
+    const era = server.packages?.[0]?.environmentVariables?.find(
+      (entry) => entry.name === 'AVITO_MCP_PROTOCOL_ERA',
+    );
+    expect(era, 'server.json does not declare AVITO_MCP_PROTOCOL_ERA').toBeDefined();
+    expect(era?.isRequired).toBe(false);
+    expect(era?.choices).toEqual(['legacy', 'dual', 'modern']);
+    expect(era?.default).toBe(DEFAULT_PROTOCOL_ERA);
+    for (const revision of SUPPORTED_PROTOCOL_VERSIONS) {
+      expect(era?.description).toContain(revision);
+    }
+  });
+
+  it('stays on the registry schema that exists, and inside its length limit', () => {
+    // WHAT THIS DOES AND DOES NOT CHECK, because the difference was overstated
+    // once already: the changelog entry for this work said both additions were
+    // "validated against the registry's published 2025-12-11 schema", and no
+    // test validates anything against that schema. Fetching it at test time
+    // would make the suite depend on a network; vendoring it would need a
+    // JSON-Schema validator this package does not depend on, and the document
+    // uses `not`, which the converter available here (`z.fromJSONSchema`)
+    // cannot express. So the schema was read by hand when the fields were
+    // written, and what is re-checked on every run is this: the pin, the one
+    // limit the schema imposes on a field we fill, and — in the two assertions
+    // above — that every revision claimed matches the code that serves it.
+    const server = serverJson();
+    // There is no revision-aligned successor to this schema: `/registry/*`
+    // carries no protocol-revision marker and no changelog, and the registry
+    // asks nothing of a 2026-07-28 server. Moving the pin to a date that looks
+    // newer would point at a document that does not exist.
+    expect(server.$schema).toBe(REGISTRY_SCHEMA);
+    // `description` is capped at 100 characters by that schema, which is why
+    // the revision statement lives in `_meta` and in the env-var entry instead.
+    expect(server.description?.length).toBeLessThanOrEqual(100);
+    // And the publisher block sits under the namespace the schema reserves for
+    // it, spelled exactly: `_meta` keys are namespaced strings, and a typo here
+    // is metadata no registry would ever read.
+    expect(Object.keys(server._meta ?? {})).toContain(PUBLISHER_META);
+  });
+
+  it('says in the changelog what is checked against the registry schema, and what is not', () => {
+    // The claim that was too strong, held to its correction. A future edit that
+    // restores "validated against the schema" has to make it true first.
+    const changelog = read('CHANGELOG.md');
+    expect(changelog).not.toMatch(/validated against the registry's published/);
+    expect(changelog).toContain('A full JSON-Schema validation is not run');
+  });
+
+  it('binds package.json and server.json to one identity', () => {
+    const pkg = JSON.parse(read('package.json')) as { name?: string; mcpName?: string };
+    const server = serverJson();
+    expect(pkg.mcpName).toBe(server.name);
+    expect(server.packages?.[0]?.identifier).toBe(pkg.name);
+    // The release gate has to enforce it too: this test is not in the publish path.
+    const gate = read('scripts/check-release-version.mjs');
+    expect(gate).toContain('package.json.mcpName');
+    expect(gate).toContain('server.json.packages[0].identifier');
+  });
+
+  it('names both revisions in the package.json description, and marks the default', () => {
+    // The surface this statement was missing from, and the one with the widest
+    // audience: `description` is what npm renders on the package page and in
+    // `npm search`, so it is where somebody decides whether this server speaks
+    // their revision before installing anything. It carried neither date.
+    //
+    // Why here and not in a new key. `mcpName` is in this file because the MCP
+    // registry reads it; no consumer reads an invented `protocolRevisions`
+    // field, and this branch already refused to add one to `glama.json` for
+    // exactly that reason (see the test below). The registry-facing,
+    // machine-readable form of this statement lives in `server.json._meta`,
+    // where the schema has a place for it.
+    //
+    // `version` is untouched: it is the release number, and it is owned by the
+    // release gate.
+    const pkg = JSON.parse(read('package.json')) as { description?: string; version?: string };
+    const description = pkg.description ?? '';
+    for (const revision of SUPPORTED_PROTOCOL_VERSIONS) {
+      expect(description, `package.json description never names ${revision}`).toContain(revision);
+    }
+    expect(description).toContain('AVITO_MCP_PROTOCOL_ERA');
+    // Which one a default install answers — the same claim `server.json` makes,
+    // and the one that would be publicly false rather than merely incomplete.
+    const byDefault =
+      DEFAULT_PROTOCOL_ERA === 'modern' ? MODERN_PROTOCOL_VERSION : LEGACY_PROTOCOL_VERSION;
+    expect(description).toContain(`${byDefault} (default)`);
+    // And it stays a statement about the protocol rather than about the
+    // release: a package version in here would have to be updated on every
+    // publish, from the one file whose version field the release gate owns.
+    expect(
+      description,
+      'the description names the package version; that belongs to the release gate',
+    ).not.toContain(String(pkg.version));
+  });
+
+  it('leaves glama.json at the one property its schema defines', () => {
+    // https://glama.ai/mcp/schemas/server.json declares `maintainers` and
+    // nothing else, so there is no field on that surface for a revision
+    // statement. Glama reads the README for everything else; inventing a key
+    // here would be metadata no consumer looks at. Recorded as a test so the
+    // absence stays a decision instead of turning into an oversight.
+    const glama = JSON.parse(read('glama.json')) as Record<string, unknown>;
+    expect(Object.keys(glama).sort()).toEqual(['$schema', 'maintainers']);
+    expect(glama.$schema).toBe('https://glama.ai/mcp/schemas/server.json');
+  });
+
+  it('states the compatibility promise the revisions come with', () => {
+    // Naming the two revisions is half of what block E asks the changelog for.
+    // The other half is the promise attached to them, and it is the half a
+    // reader acts on: whether the upgrade changes anything for the client they
+    // already run, and how to undo it if it does. Three parts, each checked
+    // against the code rather than against a remembered sentence.
+    const unreleased = unreleasedSection();
+    const byDefault =
+      DEFAULT_PROTOCOL_ERA === 'modern' ? MODERN_PROTOCOL_VERSION : LEGACY_PROTOCOL_VERSION;
+    // 1. Which revision an installation that sets nothing keeps answering.
+    expect(unreleased).toContain(DEFAULT_PROTOCOL_ERA);
+    expect(unreleased, `the changelog never says a default install answers ${byDefault}`).toMatch(
+      new RegExp(`${byDefault}[^.]*\\bonly\\b|\\bdefault\\b[^.]*${byDefault}`),
+    );
+    // 2. That the new revision is opt-in, not something an upgrade turns on.
+    expect(unreleased).toMatch(/[Nn]othing changes for an existing client until/);
+    // 3. And that the way back is the same one variable.
+    expect(unreleased).toMatch(/rollback|roll back/i);
+  });
+
+  it('says the same thing in the changelog and in both READMEs', () => {
+    const unreleased = unreleasedSection();
+    // Not pinned to a version section: the release that carries this is the
+    // owner's to cut, and a numbered heading here would date a claim twice.
+    expect(unreleased).not.toMatch(/^## \[\d/m);
+    for (const revision of SUPPORTED_PROTOCOL_VERSIONS) {
+      expect(unreleased, `CHANGELOG [Unreleased] never names ${revision}`).toContain(revision);
+    }
+    expect(unreleased).toContain('AVITO_MCP_PROTOCOL_ERA');
+
+    // Both locales carry the section, at the same line, in the same order —
+    // server.json points a registry consumer at the English anchor, and a
+    // Russian reader who follows the same link must land on the same table.
+    const headings: Record<string, string> = {
+      'README.md': '### Protocol revisions',
+      'README.ru.md': '### Ревизии протокола',
+    };
+    const lineOf: number[] = [];
+    for (const [locale, heading] of Object.entries(headings)) {
+      const lines = read(locale).split('\n');
+      const at = lines.indexOf(heading);
+      expect(at, `${locale} has no "${heading}" section`).toBeGreaterThanOrEqual(0);
+      lineOf.push(at);
+      const body = lines.slice(at, at + 40).join('\n');
+      for (const revision of SUPPORTED_PROTOCOL_VERSIONS) {
+        expect(body, `${locale} names ${revision} outside its era section`).toContain(revision);
+      }
+      expect(body).toContain('AVITO_MCP_PROTOCOL_ERA');
+    }
+    expect(new Set(lineOf).size, 'the era section sits on different lines per locale').toBe(1);
+    expect(read('README.md').split('\n').length).toBe(read('README.ru.md').split('\n').length);
   });
 });

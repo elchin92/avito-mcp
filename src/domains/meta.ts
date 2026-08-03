@@ -9,7 +9,7 @@
  * All meta_* tools run in the local environment, without calling the Avito API (except auth_status,
  * which optionally attempts a ping via a client_credentials refresh).
  */
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 
@@ -50,7 +50,7 @@ export const register: DomainRegister = (server, ctx) => {
           'Returns the most recently observed X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset values, ' +
           'grouped by logical API domain (core, messenger, items, etc.) across all processes in the current account namespace. ' +
           'Useful for diagnosing "why am I being throttled" — Avito enforces a per-minute limit.',
-        inputSchema: {},
+        inputSchema: z.object({}),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -87,14 +87,14 @@ export const register: DomainRegister = (server, ctx) => {
           'Universal health-check: package version, active capabilities, rate-limit ' +
           'status, idempotency ledger size, pending actions count, dryRun default. ' +
           'Does not call the Avito API. Safe to call as often as you like.',
-        inputSchema: {},
+        inputSchema: z.object({}),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
           openWorldHint: false,
         },
-        outputSchema: {
+        outputSchema: z.object({
           ok: z.boolean(),
           name: z.string(),
           version: z.string(),
@@ -118,7 +118,7 @@ export const register: DomainRegister = (server, ctx) => {
             rateLimitSnapshots: z.number().int(),
           }),
           timestamp: z.string(),
-        },
+        }),
         _meta: { risk: 'read', environment: 'local' },
       },
       async (): Promise<CallToolResult> => {
@@ -173,28 +173,28 @@ export const register: DomainRegister = (server, ctx) => {
           'error. The token itself is NEVER returned — for that use the auth_* tools under ' +
           'AVITO_MCP_EXPOSE_AUTH_TOOLS=1 (hidden by default). By default it does not force a refresh — ' +
           'if probe=true, it will attempt getToken() (which may trigger a refresh).',
-        inputSchema: {
+        inputSchema: z.object({
           probe: z
             .boolean()
             .optional()
             .describe(
               'If true, attempt getToken(), which may trigger a refresh when the token has expired. Default false.',
             ),
-        },
+        }),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: false,
           openWorldHint: false,
         },
-        outputSchema: {
+        outputSchema: z.object({
           configured: z.boolean(),
           tokenPresent: z.boolean(),
           expiresInSec: z.number().int().nullable(),
           probeOk: z.boolean().nullable(),
           lastError: z.string().nullable(),
           tokenFile: z.string(),
-        },
+        }),
         _meta: { risk: 'read', environment: 'local' },
       },
       async (args): Promise<CallToolResult> => {
@@ -250,14 +250,14 @@ export const register: DomainRegister = (server, ctx) => {
           'Returns a machine-readable description of the current configuration: mode, allow/deny lists, ' +
           'confirmation, dry-run, idempotency, local file access. Useful for an agent to ' +
           'understand which operations are fundamentally available before attempting to call tools.',
-        inputSchema: {},
+        inputSchema: z.object({}),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
           openWorldHint: false,
         },
-        outputSchema: {
+        outputSchema: z.object({
           name: z.string(),
           version: z.string(),
           schemaHash: z.string().nullable(),
@@ -291,7 +291,7 @@ export const register: DomainRegister = (server, ctx) => {
             }),
           ),
           moneyUnits: z.object({ default: z.string(), bbip: z.string(), wallet: z.string() }),
-        },
+        }),
         _meta: { risk: 'read', environment: 'local' },
       },
       async (): Promise<CallToolResult> => {
@@ -406,7 +406,7 @@ export const register: DomainRegister = (server, ctx) => {
               '— the secret is generated and kept by a human, and the agent cannot obtain it.'
             : 'AVITO_MCP_CONFIRMATION_SECRET is not set — soft-confirmation is in effect. ' +
               'Set the env variable to switch to hard-confirmation.'),
-        inputSchema: {
+        inputSchema: z.object({
           confirmation_id: z
             .string()
             .min(16)
@@ -421,7 +421,7 @@ export const register: DomainRegister = (server, ctx) => {
                 ? 'The required AVITO_MCP_CONFIRMATION_SECRET value (entered by a human).'
                 : 'Not used when AVITO_MCP_CONFIRMATION_SECRET is not set.',
             ),
-        },
+        }),
         annotations: {
           readOnlyHint: false,
           destructiveHint: true,
@@ -430,11 +430,15 @@ export const register: DomainRegister = (server, ctx) => {
         },
         _meta: { risk: 'write', environment: 'local' },
       },
-      async (args, extra): Promise<CallToolResult> => {
+      // The SDK's per-request context. v2 calls it `ctx`, a name already taken in
+      // this scope by the ToolContext closed over above, so it keeps a distinct
+      // one. What matters is the shape, not the name: callerPrincipal() reads
+      // `mcpCtx.http.authInfo` / `mcpCtx.http.req.headers`, the v2 locations.
+      async (args, mcpCtx): Promise<CallToolResult> => {
         const id = String(args.confirmation_id ?? '');
 
         if (requireSecret) {
-          const rate = ctx.pendingStore.checkConfirmationRateLimit(callerPrincipal(extra));
+          const rate = ctx.pendingStore.checkConfirmationRateLimit(callerPrincipal(mcpCtx));
           if (!rate.allowed) {
             logger.warn(
               { retryAfterMs: rate.retryAfterMs },
@@ -513,7 +517,7 @@ export const register: DomainRegister = (server, ctx) => {
           }
           ctx.pendingStore.resetConfirmationFailures(id);
         }
-        const confirmer = requireSecret ? 'external:secret-provider' : callerPrincipal(extra);
+        const confirmer = requireSecret ? 'external:secret-provider' : callerPrincipal(mcpCtx);
         if (ctx.config.approvalMode === 'external' && confirmer === pending.initiator) {
           return {
             isError: true,
@@ -600,9 +604,9 @@ export const register: DomainRegister = (server, ctx) => {
         title: '✗ Cancel a pending action',
         description:
           'Cancels a previously deferred action. After cancellation the confirmation_id is no longer valid.',
-        inputSchema: {
+        inputSchema: z.object({
           confirmation_id: z.string().min(16).describe('ID of the pending action to cancel.'),
-        },
+        }),
         annotations: {
           readOnlyHint: false,
           destructiveHint: true,
@@ -646,7 +650,7 @@ export const register: DomainRegister = (server, ctx) => {
           'Lists the current pending actions awaiting confirmation. Args are not shown — ' +
           'only tool name, risk, a brief summary, and the creation and expiration times. ' +
           'Use it to diagnose "what did I just ask to confirm".',
-        inputSchema: {},
+        inputSchema: z.object({}),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,

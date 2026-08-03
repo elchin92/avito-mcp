@@ -14,7 +14,7 @@
  *
  * The register function is NOT wired into domain-registry.ts here — the orchestrator does that.
  */
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 import type { WebhookConfig } from '../config.js';
@@ -168,7 +168,7 @@ export const register: DomainRegister = (server, ctx) => {
           'and Avito subscribed to the receiver URL (messenger_register_webhook). Supports filtering by chat_id, ' +
           'a `since` cutoff (ISO-8601 timestamp or epoch seconds/ms), and a `limit`. ' +
           'Check the receiver config and buffer stats with messenger_get_webhook_status.',
-        inputSchema: {
+        inputSchema: z.object({
           since: z
             .union([z.number(), z.string()])
             .optional()
@@ -191,7 +191,7 @@ export const register: DomainRegister = (server, ctx) => {
             .describe(
               'Maximum number of events to return (1–100). Omit to return all retained events.',
             ),
-        },
+        }),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -256,7 +256,7 @@ export const register: DomainRegister = (server, ctx) => {
           'the public URL, the subscribe URL (with the secret masked), and ring-buffer counters (retained / total / last received). ' +
           'Does NOT call the Avito API. Use it to verify the receiver is set up before messenger_register_webhook, ' +
           'then read collected events with messenger_get_webhook_events.',
-        inputSchema: {},
+        inputSchema: z.object({}),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,

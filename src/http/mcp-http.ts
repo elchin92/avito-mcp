@@ -1,5 +1,29 @@
 /**
  * v0.9.0: Streamable HTTP MCP session manager.
+ * M3.3: plus the modern (2026-07-28) leg, mounted only when
+ * `AVITO_MCP_PROTOCOL_ERA` asks for it.
+ *
+ * ── Era routing (M3.3) ──────────────────────────────────────────────────────
+ * `AVITO_MCP_PROTOCOL_ERA=legacy` (the default) returns EXACTLY the handler
+ * below and nothing else: no `createMcpHandler`, no classification step, no
+ * extra `await` on the hot path. That is deliberate — the acceptance criterion
+ * for M3 is that the flag-off process is indistinguishable from M2, and the
+ * cheapest way to guarantee that is for the second path not to exist.
+ *
+ * `dual` puts the SDK's own `classifyInboundRequest` in front: it is the very
+ * code `createMcpHandler` runs to make its routing decision (and the code the
+ * exported `isLegacyRequest` predicate delegates to), so a hand-wired split
+ * cannot disagree with the entry about what "legacy" means. Requests it calls
+ * legacy go to the sessionful manager below, unchanged; everything else —
+ * including the modern path's own validation-ladder rejections (`-32602`,
+ * `-32020`, unsupported-version) — goes to the modern handler, which owns those
+ * answers. `modern` mounts only the modern leg and lets it refuse 2025-era
+ * traffic (`legacy: 'reject'`).
+ *
+ * Two answers are OURS rather than the SDK's, because the SDK does not produce
+ * them: the `Allow` header on the modern era's `405` (`modernMethodNotAllowed`)
+ * and the `-32020` for a modern request that omits `MCP-Protocol-Version`
+ * (`missingProtocolVersionHeader`). Both are documented at their definitions.
  *
  * Mounted by the HTTP server on the /mcp route (POST/GET/DELETE). Maintains one
  * StreamableHTTPServerTransport + McpServer per MCP session, keyed by the session
@@ -22,34 +46,62 @@
  * Host and Origin allowlists cannot be derived.
  */
 import { createHash, randomUUID } from 'node:crypto';
-
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import {
+  classifyInboundRequest,
+  createMcpHandler,
+  isInitializeRequest,
+} from '@modelcontextprotocol/server';
+import type {
+  InboundClassificationOutcome,
+  McpHttpHandler,
+  McpServer,
+  AuthInfo,
+} from '@modelcontextprotocol/server';
+import { NodeStreamableHTTPServerTransport, toNodeHandler } from '@modelcontextprotocol/node';
 import type { RequestHandler } from 'express';
-import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-
-import type { HttpConfig } from '../config.js';
-import { buildMcpServer } from '../build-server.js';
+import type { HttpConfig, ProtocolEraMode } from '../config.js';
+import { buildMcpServer, createServerFactory } from '../build-server.js';
 import type { ToolContext } from '../core/tool-factory.js';
 import { bindMcpLogger, logger, runWithMcpLogger } from '../logger.js';
+import {
+  PENDING_ACTIONS_URI,
+  WEBHOOK_EVENTS_URI,
+  subscribableResourceUris,
+} from '../resources.js';
+import { APP_ERROR_CODES, LEGACY_WIRE_ERROR_CODES } from '../core/rpc-codes.js';
+import { droppedSubscriptionUris, narrowListenRequest } from '../core/subscriptions.js';
+import { MODERN_PROTOCOL_VERSION } from '../version.js';
 
 /** A live MCP session: the per-session server, its HTTP transport, last activity. */
 interface Session {
   server: McpServer;
-  transport: StreamableHTTPServerTransport;
+  transport: NodeStreamableHTTPServerTransport;
   lastSeenAt: number;
   activeRequests: number;
   principal: string;
   unbindLogger: () => void;
 }
 
-/** 400: request carries no session id where one is required. */
+/**
+ * 400: request carries no session id where one is required.
+ *
+ * Reachable only from `handleLegacyRequest`, i.e. only by a 2025-11-25 client:
+ * the modern leg has no sessions and answers every non-POST `405` without ever
+ * reading `Mcp-Session-Id`. So this is a 2025-wire answer, and it is frozen at
+ * the `-32000` 1.3.3 shipped — which is also what the v2 SDK's own legacy
+ * transport still answers. `LEGACY_WIRE_ERROR_CODES` in `src/core/rpc-codes.ts`
+ * carries the full argument, including the corpus quotes.
+ *
+ * M3 briefly moved this to `-32602` on the strength of the 2026-07-28
+ * allocation policy; `test/legacy-wire-regression.test.ts`, diffing against a
+ * live 1.3.3, is what showed that the policy was being applied to a wire it
+ * does not govern.
+ */
 function missingSessionError(res: Parameters<RequestHandler>[1]): void {
   res.status(400).json({
     jsonrpc: '2.0',
     error: {
-      code: -32000,
+      code: LEGACY_WIRE_ERROR_CODES.missingSessionId,
       message: 'Bad Request: Mcp-Session-Id header is required',
     },
     id: null,
@@ -60,15 +112,132 @@ function missingSessionError(res: Parameters<RequestHandler>[1]): void {
  * 404: session id present but unknown (terminated, reaped, or lost to a server
  * restart). The Streamable HTTP spec mandates 404 here — clients react to it by
  * re-initializing with a fresh session, so a 400 would leave them wedged.
+ *
+ * Legacy leg only, and frozen at 1.3.3's `-32001` for the same reason as
+ * {@link missingSessionError}. (The concern that `-32001` was the DRAFT number
+ * of `HeaderMismatch` does not survive contact with the final revision, which
+ * renumbered that code to `-32020` precisely so the two could not collide.)
  */
 function unknownSessionError(res: Parameters<RequestHandler>[1]): void {
   res.status(404).json({
     jsonrpc: '2.0',
     error: {
-      code: -32001,
+      code: LEGACY_WIRE_ERROR_CODES.sessionNotFound,
       message: 'Session not found',
     },
     id: null,
+  });
+}
+
+/**
+ * The JSON-RPC error code SEP-2243 assigns to "the mirrored headers and the
+ * body disagree". Declared here because the SDK keeps it internal: it is
+ * reachable only through `classifyInboundRequest`'s rejection objects, which
+ * is fine for the cells the SDK checks itself but not for the one it leaves to
+ * the server (see `missingProtocolVersionHeader`).
+ *
+ * `test/modern-conformance.test.ts` pins this number against a rejection the
+ * SDK produces, so the two can never drift apart.
+ */
+const HEADER_MISMATCH_ERROR_CODE = -32020;
+
+/** Single-valued header lookup; Node lowercases names, so field-name case is already handled. */
+function headerValue(req: Parameters<RequestHandler>[0], name: string): string | undefined {
+  const raw = req.headers[name];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value === undefined ? undefined : value;
+}
+
+/**
+ * Whether a body-less request identifies itself as modern-era traffic.
+ *
+ * Only consulted for GET/DELETE (and other non-POST methods), where there is no
+ * body for the SDK's body-primary classifier to read — it can only answer
+ * `legacy / http-method` for every one of them, which under `dual` would hand a
+ * 2026 client's GET to the 2025 session manager and answer it `400 Mcp-Session-Id
+ * header is required` instead of the `405` the revision asks for.
+ *
+ * Deliberately NOT used for POST: on POST the era comes from the body envelope
+ * (the SDK's rule), and `MCP-Protocol-Version` is not an era signal there — the
+ * header is mandatory on 2025-11-25 too, so branching on its presence would
+ * misroute every legacy POST.
+ */
+function namesModernRevision(value: string | undefined): boolean {
+  return value !== undefined && value.trim() === MODERN_PROTOCOL_VERSION;
+}
+
+/**
+ * `405` for the modern era, WITH the `Allow` header the spec's SHOULD asks for.
+ *
+ * The SDK's own modern-only refusal (`modernOnlyStrictRejection`, cell
+ * `modern-only-method-not-allowed`) produces the right status and the right
+ * JSON-RPC body but no `Allow` header — `rejectionResponse` builds a bare
+ * `Response.json(..., { status })`. So this answer is ours, and the modern
+ * branch never delegates a non-POST to the SDK.
+ *
+ * `Allow: POST` and not `GET, POST, DELETE`: the value states what the ERA this
+ * caller is speaking allows, and 2026-07-28 removed both the GET stream and the
+ * DELETE session teardown. Under `dual` the endpoint does still answer GET and
+ * DELETE — for 2025 callers, who reach the legacy branch and never see this.
+ *
+ * The BODY is no longer a byte-for-byte copy of the SDK's rejection. The SDK
+ * answers this cell with `-32000` (`modernOnlyStrictRejection`, cell
+ * `modern-only-method-not-allowed`), which is grandfathered SDK usage from
+ * before the revision partitioned the range; a new implementation may not
+ * allocate there ("new implementations SHOULD NOT use codes from this sub-range
+ * at all"). This branch is ours end to end — the modern era never delegates a
+ * non-POST to the SDK — so the code is ours to get right. `405` + `Allow` is
+ * what a client acts on either way.
+ */
+function modernMethodNotAllowed(res: Parameters<RequestHandler>[1]): void {
+  res
+    .status(405)
+    .set('Allow', 'POST')
+    .json({
+      jsonrpc: '2.0',
+      error: { code: APP_ERROR_CODES.methodNotAllowed, message: 'Method not allowed.' },
+      id: null,
+    });
+}
+
+/**
+ * `-32020` for a modern request that omits `MCP-Protocol-Version`.
+ *
+ * This is the ONE cell of the SEP-2243 header matrix the SDK does not cover.
+ * `validateStandardRequestHeaders` enforces `Mcp-Method` (presence) and
+ * `Mcp-Name` (presence, sentinel decoding, agreement with `params.name`/`.uri`),
+ * and `classifyInboundRequest` enforces header↔body agreement for
+ * `MCP-Protocol-Version` and `Mcp-Method` — but nothing rejects a request that
+ * simply omits the version header, because the classifier reads the era out of
+ * the body envelope and no longer needs it. The spec is explicit that it is
+ * still required: "Every POST request to the MCP endpoint MUST include an
+ * `MCP-Protocol-Version` header", and a server that does not serve pre-2025-06-18
+ * clients "MUST reject a request without the header per Server Validation".
+ *
+ * Shaped exactly like the SDK's own missing-header rejections (`crossCheckMismatch`,
+ * cell `method-header-missing`), so a client cannot tell which of the three
+ * headers it forgot apart by the error's structure.
+ */
+function missingProtocolVersionHeader(
+  res: Parameters<RequestHandler>[1],
+  id: string | number | null,
+  method: string,
+): void {
+  res.status(400).json({
+    jsonrpc: '2.0',
+    error: {
+      code: HEADER_MISMATCH_ERROR_CODE,
+      message:
+        'Bad Request: the request headers and body disagree: the body names method ' +
+        `${method} but the required MCP-Protocol-Version header is absent`,
+      data: {
+        mismatch: {
+          header: '(missing)',
+          body: `the body names method ${method} but the required MCP-Protocol-Version header is absent`,
+        },
+      },
+    },
+    id,
   });
 }
 
@@ -206,6 +375,7 @@ function requestPrincipal(req: Parameters<RequestHandler>[0]): string {
 export function createMcpHttpHandler(
   baseCtx: ToolContext,
   httpConfig: HttpConfig,
+  protocolEra: ProtocolEraMode = 'legacy',
 ): { handleRequest: RequestHandler; closeAll(): Promise<void> } {
   const sessions = new Map<string, Session>();
   const initializations = new Set<Promise<void>>();
@@ -261,7 +431,7 @@ export function createMcpHttpHandler(
     res: Parameters<RequestHandler>[1],
   ): Promise<void> {
     const principal = requestPrincipal(req);
-    const transport = new StreamableHTTPServerTransport({
+    const transport = new NodeStreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       enableDnsRebindingProtection: rebinding.enabled,
       allowedHosts: rebinding.allowedHosts,
@@ -319,7 +489,7 @@ export function createMcpHttpHandler(
     }
   }
 
-  const handleRequest: RequestHandler = (req, res, next) => {
+  const handleLegacyRequest: RequestHandler = (req, res, next) => {
     void (async () => {
       try {
         const sessionId = req.headers['mcp-session-id'];
@@ -363,9 +533,14 @@ export function createMcpHttpHandler(
               },
               'mcp http session limit reached',
             );
+            // Legacy leg only, like the two answers above: minting a session is
+            // a 2025-era operation. Frozen at 1.3.3's number.
             res.status(503).json({
               jsonrpc: '2.0',
-              error: { code: -32000, message: 'Too many concurrent sessions, try again later' },
+              error: {
+                code: LEGACY_WIRE_ERROR_CODES.sessionLimitReached,
+                message: 'Too many concurrent sessions, try again later',
+              },
               id: null,
             });
             return;
@@ -403,18 +578,298 @@ export function createMcpHttpHandler(
     })();
   };
 
+  // ── modern (2026-07-28) leg — M3.3 ─────────────────────────────────────────
+  // Constructed only when the operator asked for it. `legacy: 'reject'` because
+  // WE own the legacy routing (via isLegacyRequest) and hand this entry only the
+  // traffic it must answer; leaving the default `'stateless'` would give the SDK
+  // a second, session-less 2025 implementation running beside the real one.
+  let modern: McpHttpHandler | undefined;
+  let modernNodeHandler: ReturnType<typeof toNodeHandler> | undefined;
+  const modernPublishers: Array<() => void> = [];
+  /** The URIs `subscriptions/listen` may honour on this deployment. */
+  let publishableUris: ReadonlySet<string> = new Set<string>();
+  // ── M3.8: the modern leg's quantitative barrier ───────────────────────────
+  //
+  // Removing protocol sessions removed the only quantity `/mcp` ever counted.
+  // `AVITO_MCP_HTTP_MAX_SESSIONS` still guards the legacy leg — a session is a
+  // real, long-lived object there — but on the modern leg there is no session
+  // to cap, every request builds a fresh 148-tool `McpServer`, and a
+  // `subscriptions/listen` stream stays open indefinitely. Unbounded, one
+  // caller could hold arbitrarily many of each against a process holding live
+  // Avito credentials.
+  //
+  // Two counters, because they bound different failure modes:
+  //   • `modernInflight` — total concurrent modern exchanges (including open
+  //     streams). Bounds instantaneous memory and CPU.
+  //   • `modernStreams` — how many of those may be long-lived listen streams.
+  //     Without it, a caller that opens streams and never closes them would
+  //     consume the whole in-flight budget and lock out ordinary tool calls,
+  //     which is the worse outage of the two.
+  //
+  // Both release in a `finally`, and additionally on the response's `close`
+  // event, because a client that hangs up mid-stream never lets the handler
+  // promise settle through the normal path.
+  let modernInflight = 0;
+  let modernStreams = 0;
+  if (protocolEra !== 'legacy') {
+    modern = createMcpHandler(createServerFactory(baseCtx, { background: false }), {
+      legacy: 'reject',
+      onerror: (err) => logger.warn({ err, era: 'modern' }, 'mcp http modern handler error'),
+    });
+    modernNodeHandler = toNodeHandler(modern, {
+      onerror: (err) => logger.error({ err, era: 'modern' }, 'mcp http modern adapter error'),
+    });
+
+    // ── subscriptions/listen publisher side (M3 item 9) ──────────────────────
+    //
+    // The 2025 model attached one listener pair PER McpServer instance and
+    // filtered on a per-instance `Set<uri>` of subscribers. That model cannot
+    // survive here: the modern era builds a fresh instance for every HTTP
+    // request and throws it away again, whereas a `subscriptions/listen` stream
+    // outlives all of them — the SDK closes the instance that served the listen
+    // request immediately and keeps only the stream (`product.close()` right
+    // after `getCapabilities()`, in `createMcpHandler.serveModern`).
+    //
+    // The correct lifetime is therefore the HANDLER's, and the correct number
+    // of listeners is exactly one per store for the process. Everything downstream
+    // — ack-first, per-stream filtering, `io.modelcontextprotocol/subscriptionId`
+    // stamping, never delivering an unrequested type, and the graceful
+    // `{resultType:'complete'}` on shutdown — is the SDK's listen router,
+    // driven off the events published here.
+    //
+    // The URI set is `subscribableResourceUris`, not a literal pair: a resource
+    // hidden from `resources/list` by `AVITO_MCP_MODE` or by
+    // `AVITO_MCP_CONFIRMATION_MODE=off` must not announce its changes either.
+    const publishable = new Set(subscribableResourceUris(baseCtx.config));
+    publishableUris = publishable;
+    const notifier = modern.notify;
+    if (publishable.has(PENDING_ACTIONS_URI)) {
+      modernPublishers.push(
+        baseCtx.pendingStore.onChange(() => notifier.resourceUpdated(PENDING_ACTIONS_URI)),
+      );
+    }
+    if (baseCtx.webhookStore && publishable.has(WEBHOOK_EVENTS_URI)) {
+      modernPublishers.push(
+        baseCtx.webhookStore.onChange(() => notifier.resourceUpdated(WEBHOOK_EVENTS_URI)),
+      );
+    }
+  }
+
+  /** Whether a parsed body is a `subscriptions/listen` request (a long-lived stream). */
+  function isListenRequest(body: unknown): boolean {
+    return (
+      body !== null &&
+      typeof body === 'object' &&
+      !Array.isArray(body) &&
+      (body as { method?: unknown }).method === 'subscriptions/listen'
+    );
+  }
+
+  /**
+   * Reserves an in-flight slot, or names the limit that refused it.
+   *
+   * Reserves SYNCHRONOUSLY, before the first `await` on the request path:
+   * checking and then reserving across a suspension point is how concurrent
+   * arrivals all observe the same count and all get admitted.
+   */
+  function admitModernExchange(
+    isStream: boolean,
+  ): { code: number; message: string } | undefined {
+    if (closing) {
+      return {
+        code: APP_ERROR_CODES.inflightLimitReached,
+        message: 'Server is shutting down, try again later',
+      };
+    }
+    if (isStream && modernStreams >= httpConfig.maxStreams) {
+      logger.warn(
+        { era: 'modern', openStreams: modernStreams, max: httpConfig.maxStreams },
+        'mcp http modern stream limit reached',
+      );
+      return {
+        code: APP_ERROR_CODES.streamLimitReached,
+        message: 'Too many concurrent subscription streams, try again later',
+      };
+    }
+    if (modernInflight >= httpConfig.maxInflight) {
+      logger.warn(
+        { era: 'modern', inflight: modernInflight, max: httpConfig.maxInflight },
+        'mcp http modern in-flight limit reached',
+      );
+      return {
+        code: APP_ERROR_CODES.inflightLimitReached,
+        message: 'Too many concurrent requests, try again later',
+      };
+    }
+    modernInflight += 1;
+    if (isStream) modernStreams += 1;
+    return undefined;
+  }
+
+  /** 503 + `Retry-After`, shaped like every other refusal on this endpoint. */
+  function refuseModernExchange(
+    res: Parameters<RequestHandler>[1],
+    refusal: { code: number; message: string },
+  ): void {
+    res.status(503).set('Retry-After', '1').json({
+      jsonrpc: '2.0',
+      error: refusal,
+      id: null,
+    });
+  }
+
+  /**
+   * Era dispatcher. Only reachable when `protocolEra !== 'legacy'` — the legacy
+   * default returns `handleLegacyRequest` itself, so the default deployment does
+   * not even execute this function.
+   *
+   * The era decision comes from `classifyInboundRequest`, the SDK's own routing
+   * step exported as a building block ("Power users composing transport-neutral
+   * routing can also use the exported building blocks directly:
+   * `classifyInboundRequest` for the era decision"). It is the same function the
+   * `isLegacyRequest` predicate delegates to — `isLegacyRequest` is literally
+   * `classifyEntryRequest(...).outcome.kind === 'legacy'` — so our split still
+   * cannot disagree with what `createMcpHandler` would decide. Calling the
+   * classifier directly buys three things the predicate cannot give:
+   *
+   *   • the routed message, so a rejection can echo the request `id`;
+   *   • `messageKind`, so the version-header rule applies to requests only
+   *     (the revision explicitly leaves notification-POST header requirements
+   *     undefined);
+   *   • no `toWebRequest` clone and no extra `await` on the hot path.
+   *
+   * `test/modern-conformance.test.ts` asserts the two agree across a matrix, so
+   * the substitution is checked rather than assumed.
+   */
+  const dispatchByEra: RequestHandler = (req, res, next) => {
+    void (async () => {
+      try {
+        const httpMethod = req.method.toUpperCase();
+        const protocolVersionHeader = headerValue(req, 'mcp-protocol-version');
+
+        // Body-less methods: the classifier has nothing to read, so the era can
+        // only come from the version header. `modern` has no 2025 session
+        // operations at all, hence the unconditional 405 there.
+        if (httpMethod !== 'POST') {
+          if (protocolEra === 'modern' || namesModernRevision(protocolVersionHeader)) {
+            modernMethodNotAllowed(res);
+            return;
+          }
+          handleLegacyRequest(req, res, next);
+          return;
+        }
+
+        const mcpMethodHeader = headerValue(req, 'mcp-method');
+        const mcpNameHeader = headerValue(req, 'mcp-name');
+        const route: InboundClassificationOutcome = classifyInboundRequest({
+          httpMethod,
+          ...(protocolVersionHeader !== undefined ? { protocolVersionHeader } : {}),
+          ...(mcpMethodHeader !== undefined ? { mcpMethodHeader } : {}),
+          ...(mcpNameHeader !== undefined ? { mcpNameHeader } : {}),
+          ...(req.body !== undefined ? { body: req.body as unknown } : {}),
+        });
+
+        // `reject` outcomes belong to the modern leg: they ARE its answers
+        // (-32602 for a malformed envelope, -32020 for a header/body mismatch),
+        // and the SDK re-derives the identical rejection when the request
+        // reaches it. Only `legacy` goes to the 2025 manager — and only in
+        // `dual`; under `modern` the SDK owns the refusal (-32022 naming what
+        // we do serve), which is not something to reimplement here.
+        if (route.kind === 'legacy') {
+          if (protocolEra === 'dual') {
+            handleLegacyRequest(req, res, next);
+            return;
+          }
+          await modernNodeHandler!(req, res, req.body);
+          return;
+        }
+
+        if (
+          route.kind === 'modern' &&
+          route.messageKind === 'request' &&
+          protocolVersionHeader === undefined
+        ) {
+          missingProtocolVersionHeader(res, route.message.id, route.message.method);
+          return;
+        }
+
+        // A9: honour only the URIs this deployment actually publishes for. Done
+        // on the REQUEST, before the SDK's listen router builds its ack from it
+        // — see `src/core/subscriptions.ts` for why the ack cannot be patched
+        // afterwards and why `[]` becomes an absent key.
+        const dropped = droppedSubscriptionUris(req.body, publishableUris);
+        if (dropped.length > 0) {
+          logger.info(
+            { era: 'modern', dropped },
+            'subscriptions/listen filter narrowed to publishable resources',
+          );
+        }
+        const body = narrowListenRequest(req.body, publishableUris);
+
+        // M3.8: admit or refuse, then run with the slot held.
+        const isStream = isListenRequest(req.body);
+        const admission = admitModernExchange(isStream);
+        if (admission !== undefined) {
+          refuseModernExchange(res, admission);
+          return;
+        }
+        let released = false;
+        const release = (): void => {
+          if (released) return;
+          released = true;
+          modernInflight = Math.max(0, modernInflight - 1);
+          if (isStream) modernStreams = Math.max(0, modernStreams - 1);
+        };
+        // A client that hangs up mid-stream does not always let the handler
+        // promise settle, so the socket's own end-of-life is the backstop.
+        res.once('close', release);
+        try {
+          await modernNodeHandler!(req, res, body);
+        } finally {
+          release();
+        }
+      } catch (err) {
+        logger.error({ err }, 'mcp http era dispatch failed');
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: '2.0',
+            error: { code: -32603, message: 'Internal server error' },
+            id: null,
+          });
+        } else {
+          next(err);
+        }
+      }
+    })();
+  };
+
+  // The legacy default is the ORIGINAL handler by identity, not a wrapper around
+  // it: no added await, no added branch, nothing that could behave differently
+  // under load than the M2 build did.
+  const handleRequest: RequestHandler =
+    protocolEra === 'legacy' ? handleLegacyRequest : dispatchByEra;
+
   function closeAll(): Promise<void> {
     if (shutdownPromise) return shutdownPromise;
     closing = true;
     shutdownPromise = (async () => {
       clearInterval(reaper);
+      // Stop feeding the bus before tearing the streams down, so a change that
+      // lands during shutdown cannot race the graceful-close frame.
+      for (const unsubscribe of modernPublishers) unsubscribe();
+      modernPublishers.length = 0;
       await Promise.allSettled([...initializations]);
       // Snapshot BEFORE clearing: dropSession no-ops once the map is empty, so
       // both halves must be closed explicitly here.
       const snapshot = [...sessions.values()];
       sessions.clear();
       for (const session of snapshot) session.unbindLogger();
-      await Promise.allSettled(snapshot.flatMap((s) => [s.transport.close(), s.server.close()]));
+      await Promise.allSettled([
+        ...snapshot.flatMap((s) => [s.transport.close(), s.server.close()]),
+        // Aborts in-flight modern exchanges and closes their per-request
+        // instances; a no-op when the modern leg was never mounted.
+        ...(modern ? [modern.close()] : []),
+      ]);
     })();
     return shutdownPromise;
   }

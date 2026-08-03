@@ -19,29 +19,36 @@
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
-
+import type {
+  AuthInfo,
+  OAuthClientInformationFull,
+  OAuthTokenRevocationRequest,
+  OAuthTokens,
+} from '@modelcontextprotocol/server';
+import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server';
+// Authorization-Server-side errors. mcpAuthRouter (server-legacy) maps these to
+// their OAuth status codes by `instanceof` against its own class hierarchy, so
+// the AS endpoints must keep throwing THESE classes.
+//
+// The Resource-Server side is the other brand: see verifyAccessToken, which must
+// throw the v2 `OAuthError` above — @modelcontextprotocol/express does not
+// recognise the legacy classes and turns them into 500 instead of 401. The two
+// hierarchies do not overlap (`new InvalidTokenError() instanceof OAuthError` is
+// false in both directions), so the split has to be maintained by hand.
 import {
   InvalidClientMetadataError,
   InvalidGrantError,
   InvalidRequestError,
   InvalidScopeError,
-  InvalidTokenError,
   ServerError,
-} from '@modelcontextprotocol/sdk/server/auth/errors.js';
-import { redirectUriMatches } from '@modelcontextprotocol/sdk/server/auth/handlers/authorize.js';
+  redirectUriMatches,
+} from '@modelcontextprotocol/server-legacy/auth';
 import type {
   AuthorizationParams,
   OAuthServerProvider,
-} from '@modelcontextprotocol/sdk/server/auth/provider.js';
-import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
-import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import type {
-  OAuthClientInformationFull,
-  OAuthTokenRevocationRequest,
-  OAuthTokens,
-} from '@modelcontextprotocol/sdk/shared/auth.js';
-
-import type { HttpConfig } from '../../config.js';
+  OAuthRegisteredClientsStore,
+} from '@modelcontextprotocol/server-legacy/auth';
+import { isLoopbackHostname, type HttpConfig } from '../../config.js';
 import { logger } from '../../logger.js';
 import { OAuthStore } from './store.js';
 
@@ -76,6 +83,79 @@ function esc(v: string): string {
 const REQUIRED_SCOPE = 'avito:mcp';
 const MAX_DCR_BYTES = 32 * 1024;
 
+/**
+ * M5.3 — the `redirect_uri` MUST that open registration made load-bearing.
+ *
+ * Registration is unauthenticated, so the redirect target of any client is
+ * chosen by a stranger, and until now the only checks on it were "there are
+ * between 1 and 10 of them" and "each is under 2 KiB". That accepted
+ * `http://evil.example.com/cb`: a cleartext callback the owner is then invited
+ * to approve on a consent screen, after which the authorization code travels
+ * over the network in the clear to a host the deployment never heard of.
+ *
+ * So: `https:` anywhere, or `http:` restricted to loopback (RFC 8252 §7.3, the
+ * native-app case where no network hop exists to intercept). A fragment is
+ * rejected outright — OAuth 2.1 forbids one in a redirect URI, and a client that
+ * registers one is telling us something is wrong with its URI construction.
+ *
+ * Private-use URI schemes (`com.example.app:/cb`) are NOT accepted, which is a
+ * deliberate narrowing: honouring them safely means enforcing the reverse-domain
+ * ownership rule of RFC 8252 §7.1, and an unauthenticated registration endpoint
+ * cannot establish that. Native clients use the loopback redirect instead, which
+ * this deployment has supported since v0.9.1.
+ */
+function assertRegistrableRedirectUri(uri: string, applicationType?: ApplicationType): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    throw new InvalidClientMetadataError(`redirect_uri must be an absolute URI: ${uri}`);
+  }
+  if (parsed.hash) {
+    throw new InvalidClientMetadataError(`redirect_uri must not contain a fragment: ${uri}`);
+  }
+  const loopback = isLoopbackHostname(parsed.hostname);
+  if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && loopback)) {
+    // A `web` client, by definition, runs on a server the user reaches over the
+    // network; a loopback callback there means the redirect resolves on whatever
+    // machine the browser happens to be, which is not the client that registered.
+    if (applicationType === 'web' && (loopback || parsed.protocol !== 'https:')) {
+      throw new InvalidClientMetadataError(
+        `application_type "web" requires an https redirect_uri on a non-loopback host: ${uri}`,
+      );
+    }
+    return parsed;
+  }
+  throw new InvalidClientMetadataError(
+    `redirect_uri must use https, or http on a loopback address (localhost / 127.0.0.1 / [::1]): ${uri}`,
+  );
+}
+
+/**
+ * M5.4 — `application_type`, read rather than ignored.
+ *
+ * The MUST in the spec is addressed to clients, so registration WITHOUT the
+ * field stays acceptable and is the common case. What the AS owes is to honour
+ * it when it is there, because it changes two things that matter: a `web` client
+ * cannot have a loopback callback (see above), and a `native` client is a public
+ * client by construction — it ships to end-user devices and cannot hold a
+ * secret, so handing it a `client_secret` would manufacture a credential that is
+ * guaranteed to leak while making it look like a confidential client to
+ * everything downstream.
+ */
+type ApplicationType = 'native' | 'web';
+
+function readApplicationType(
+  client: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>,
+): ApplicationType | undefined {
+  const value = (client as { application_type?: unknown }).application_type;
+  if (value === undefined) return undefined;
+  if (value !== 'native' && value !== 'web') {
+    throw new InvalidClientMetadataError('application_type must be "native" or "web"');
+  }
+  return value;
+}
+
 function assertStringLimit(label: string, value: string | undefined, max: number): void {
   if (value !== undefined && Buffer.byteLength(value, 'utf8') > max) {
     throw new InvalidClientMetadataError(`${label} exceeds ${max} bytes`);
@@ -86,10 +166,20 @@ function assertStringLimit(label: string, value: string | undefined, max: number
 function sanitizeClientMetadata(
   client: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>,
 ): Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'> {
-  const tokenAuthMethod = client.token_endpoint_auth_method ?? 'client_secret_post';
+  const applicationType = readApplicationType(client);
+  // A native client defaults to `none` instead of `client_secret_post`: it runs
+  // on an end-user device, so a secret minted for it is a secret that leaks.
+  const tokenAuthMethod =
+    client.token_endpoint_auth_method ??
+    (applicationType === 'native' ? 'none' : 'client_secret_post');
   if (tokenAuthMethod !== 'client_secret_post' && tokenAuthMethod !== 'none') {
     throw new InvalidClientMetadataError(
       'token_endpoint_auth_method must be client_secret_post or none',
+    );
+  }
+  if (applicationType === 'native' && tokenAuthMethod !== 'none') {
+    throw new InvalidClientMetadataError(
+      'application_type "native" is a public client: token_endpoint_auth_method must be none',
     );
   }
   let encoded: string;
@@ -104,7 +194,10 @@ function sanitizeClientMetadata(
   if (client.redirect_uris.length === 0 || client.redirect_uris.length > 10) {
     throw new InvalidClientMetadataError('redirect_uris must contain between 1 and 10 entries');
   }
-  for (const uri of client.redirect_uris) assertStringLimit('redirect_uri', uri, 2048);
+  for (const uri of client.redirect_uris) {
+    assertStringLimit('redirect_uri', uri, 2048);
+    assertRegistrableRedirectUri(uri, applicationType);
+  }
   assertStringLimit('client_name', client.client_name, 128);
   assertStringLimit('client_uri', client.client_uri, 2048);
   assertStringLimit('logo_uri', client.logo_uri, 2048);
@@ -147,6 +240,32 @@ function sanitizeClientMetadata(
 }
 
 /**
+ * M5.4 — the one line on the consent screen the spec makes mandatory.
+ *
+ * Registration is open, so `client_name` is attacker-supplied text and proves
+ * nothing; the hostname of the redirect URI is the only field on this page that
+ * says where the authorization code will actually go. It therefore gets its own
+ * row, in its own right, and is not folded into the full URI where a long path
+ * can push it out of view.
+ */
+function describeRegistration(client: {
+  application_type?: unknown;
+  client_secret?: string;
+  client_id_issued_at?: number;
+}): string {
+  const kind =
+    client.application_type === 'native' || client.application_type === 'web'
+      ? `application_type ${client.application_type}`
+      : 'application_type not declared';
+  const confidentiality = client.client_secret ? 'confidential' : 'public';
+  const issued =
+    typeof client.client_id_issued_at === 'number' && client.client_id_issued_at > 0
+      ? new Date(client.client_id_issued_at * 1000).toISOString().slice(0, 10)
+      : 'unknown date';
+  return `Self-registered ${confidentiality} client, ${kind}, registered ${issued}`;
+}
+
+/**
  * Renders the self-submitting consent/login page. A single password field plus
  * hidden inputs carry the authorization request to POST /authorize/approve.
  */
@@ -157,6 +276,7 @@ function renderConsentPage(
     scopes: string[];
     resource: string;
     clientName?: string;
+    registration: string;
     consentToken: string;
   },
   errorMessage?: string,
@@ -164,6 +284,15 @@ function renderConsentPage(
   const who = params.clientName ? esc(params.clientName) : esc(params.clientId);
   const redirect = new URL(params.redirectUri);
   const errorBlock = errorMessage ? `<p class="error" role="alert">${esc(errorMessage)}</p>` : '';
+  // SHOULD: a loopback callback means the code is handed to whatever process is
+  // listening on that port on the machine running the browser. That is the
+  // normal shape for a native client and an unverifiable one for everything
+  // else, so the owner is told rather than left to infer it from "127.0.0.1".
+  const loopbackNote = isLoopbackHostname(redirect.hostname)
+    ? `<p class="warn" role="note">This client asks for the code to be delivered to <strong>${esc(
+        redirect.hostname,
+      )}</strong> — a program running on the machine you are approving from. Nothing here can verify which program that is. Approve only if you started this login yourself.</p>`
+    : '';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -187,6 +316,8 @@ function renderConsentPage(
   dd { margin: 0; overflow-wrap: anywhere; }
   code { background: #8881; padding: .1rem .3rem; border-radius: .25rem; }
   .error { color: #c62828; font-weight: 600; }
+  .warn { background: #f9a82522; border-left: .25rem solid #f9a825; padding: .6rem .75rem;
+          border-radius: .25rem; font-size: .9rem; }
   .muted { color: #8a8a8a; font-size: .8rem; margin-top: 1.5rem; }
 </style>
 </head>
@@ -194,13 +325,15 @@ function renderConsentPage(
 <h1>Authorize access to Avito MCP</h1>
 <p>The client <span class="client">${who}</span> is requesting access to this Avito MCP server.</p>
 <dl>
-  <dt>Registration</dt><dd>Dynamically registered client</dd>
+  <dt>Redirect host</dt><dd><strong>${esc(redirect.hostname)}</strong></dd>
+  <dt>Client name</dt><dd>${params.clientName ? esc(params.clientName) : '<em>not supplied</em>'}</dd>
+  <dt>Registration</dt><dd>${esc(params.registration)}</dd>
   <dt>Client ID</dt><dd><code>${esc(params.clientId)}</code></dd>
-  <dt>Redirect host</dt><dd><strong>${esc(redirect.origin)}</strong></dd>
   <dt>Redirect URI</dt><dd><code>${esc(params.redirectUri)}</code></dd>
   <dt>Resource</dt><dd><code>${esc(params.resource)}</code></dd>
   <dt>Scopes</dt><dd><code>${esc(params.scopes.join(' '))}</code></dd>
 </dl>
+${loopbackNote}
 ${errorBlock}
 <form method="POST" action="/authorize/approve" autocomplete="off">
   <label for="owner_password">Owner password</label>
@@ -227,9 +360,20 @@ class ClientsStore implements OAuthRegisteredClientsStore {
     client: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>,
   ): OAuthClientInformationFull {
     const nowSec = Math.floor(Date.now() / 1000);
+    const declaredAuthMethod = client.token_endpoint_auth_method;
     const sanitized = sanitizeClientMetadata(client);
     if (sanitized.token_endpoint_auth_method === 'none' && sanitized.client_secret) {
-      throw new InvalidClientMetadataError('Public clients must not include client_secret');
+      if (declaredAuthMethod === 'none') {
+        throw new InvalidClientMetadataError('Public clients must not include client_secret');
+      }
+      // The SDK's registration handler mints a `client_secret` for anything that
+      // did not declare `none` itself, and that happens BEFORE we get to see the
+      // metadata. A `native` client declares its public-ness through
+      // `application_type` instead, so the secret exists by the time we can
+      // decide it must not — dropping it is the correct answer, refusing the
+      // registration would make `application_type: native` unusable.
+      delete sanitized.client_secret;
+      delete sanitized.client_secret_expires_at;
     }
     if (sanitized.token_endpoint_auth_method === 'client_secret_post' && !sanitized.client_secret) {
       sanitized.client_secret = OAuthStore.newSecret();
@@ -263,6 +407,23 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
   private readonly ttlSec: number;
   private readonly ownerPassword?: string;
   private readonly expectedResource: string;
+  /**
+   * M5.1 (RFC 9207 §2) — the issuer identifier that goes into `iss` on every
+   * authorization response.
+   *
+   * It is deliberately `new URL(publicUrl).href` and NOT `publicUrl`: that is the
+   * exact expression `mcpAuthRouter` evaluates for the `issuer` field of
+   * `/.well-known/oauth-authorization-server` (see `createOAuthMetadata`, which
+   * does `issuer: issuerUrl.href` on the very `new URL(httpConfig.publicUrl)`
+   * built in ./index.ts). The two differ by one byte — `publicUrl` is documented
+   * WITHOUT a trailing slash, `href` always has one — and a conformant client
+   * compares `iss` to the recorded issuer by simple string comparison, forbidden
+   * from folding case, eliding a default port or normalising a trailing slash
+   * (spec-authorization requirement 26, RFC 3986 §6.2.2–6.2.3). Deriving `iss`
+   * from `publicUrl` would therefore make every correct authorization response
+   * look like a mix-up attack.
+   */
+  private readonly issuer: string;
   /** Scopes this AS supports; tokens default to these when a client asks none. */
   private readonly supportedScopes = [REQUIRED_SCOPE];
 
@@ -270,14 +431,38 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     // Validate URL-derived state before acquiring the durable store lease. A bad
     // public URL must not leave the next corrected startup locked out.
     this.expectedResource = new URL(`${httpConfig.publicUrl}/mcp`).href;
+    this.issuer = new URL(httpConfig.publicUrl).href;
     this.ttlSec = httpConfig.oauthTokenTtlSec;
     this.ownerPassword = httpConfig.oauthOwnerPassword;
-    this.store = new OAuthStore(httpConfig.oauthStoreFile);
+    // M5.4: credentials are keyed by the issuer that minted them, so a changed
+    // publicUrl cannot resurrect clients and tokens belonging to what is, from
+    // any client's point of view, a different authorization server.
+    this.store = new OAuthStore(httpConfig.oauthStoreFile, this.issuer);
     this.clients = new ClientsStore(this.store);
   }
 
   // Local PKCE validation stays ON (SDK verifies via challengeForAuthorizationCode).
   // Leaving this undefined === false.
+
+  /**
+   * M5.2 — what `/.well-known/oauth-authorization-server` claims about `iss`.
+   *
+   * Pinned here rather than left to the SDK's default so the claim lives next to
+   * the code that has to back it. The value is readable in exactly one
+   * direction:
+   *
+   *   `true` MEANS `approveConsent()` stamps `iss` on the callback redirect.
+   *
+   * ⚠️ ORDER IS NOT NEGOTIABLE. Emission ships and reaches production first; the
+   * claim follows. Never the reverse and never together in a rollback. By the
+   * validation table in the authorization spec, a client that recorded
+   * `authorization_response_iss_parameter_supported: true` MUST REJECT an
+   * authorization response with no `iss` — so advertising ahead of (or rolling
+   * back behind) the emission does not degrade authorization, it stops it
+   * outright for every conformant client. If `iss` ever has to be withdrawn,
+   * set this to `false`, ship that, and only then remove the emission.
+   */
+  readonly authorizationResponseIssParameterSupported = true;
 
   get clientsStore(): OAuthRegisteredClientsStore {
     return this.clients;
@@ -295,6 +480,12 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
+    // The router hands us its own issuer identifier. It has to be byte-identical
+    // to ours, because ours is what approveConsent() will put in `iss` while the
+    // router's is what the metadata document advertises — a divergence here is a
+    // wiring bug that would make every authorization response fail RFC 9207
+    // validation at the client, and it must not reach a browser silently.
+    this.assertRouterIssuerMatches(params.issuer);
     const scopes = this.normalizeScopes(params.scopes);
     const resource = this.requireExpectedResource(params.resource?.href);
     const consentToken = this.store.createConsent({
@@ -308,6 +499,7 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     const html = renderConsentPage({
       clientId: client.client_id,
       clientName: client.client_name,
+      registration: describeRegistration(client),
       redirectUri: params.redirectUri,
       scopes,
       resource,
@@ -383,6 +575,7 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
         {
           clientId: consent.clientId,
           clientName: client.client_name,
+          registration: describeRegistration(client),
           redirectUri: consent.redirectUri,
           scopes: consent.scopes,
           resource: consent.resource,
@@ -413,6 +606,12 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     const target = new URL(approved.redirectUri);
     target.searchParams.set('code', code);
     if (approved.state !== undefined) target.searchParams.set('state', approved.state);
+    // M5.1 / RFC 9207 §2. The SDK appends `iss` for us only on redirects issued
+    // from the response object it handed to authorize(); this final callback
+    // redirect comes out of a SEPARATE consent POST, so it is ours to stamp.
+    // Without it the metadata claim `authorization_response_iss_parameter_supported`
+    // would be a lie and a conformant client would reject the successful response.
+    target.searchParams.set('iss', this.issuer);
     logger.info(
       { clientId: approved.clientId },
       'oauth: owner approved, authorization code issued',
@@ -499,16 +698,35 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
   async verifyAccessToken(token: string): Promise<AuthInfo> {
     const rec = this.store.getAccessToken(token);
     if (!rec) {
-      // The bearerAuth middleware maps InvalidTokenError → 401 + WWW-Authenticate
-      // (so MCP clients re-run the OAuth flow); a generic OAuthError would map to
-      // 400 and a plain Error to 500 — both wrong for an unknown bearer token.
-      throw new InvalidTokenError('Invalid or expired access token');
+      // requireBearerAuth maps OAuthErrorCode.InvalidToken → 401 + WWW-Authenticate
+      // (so MCP clients re-run the OAuth flow); any other OAuth code maps to 400
+      // and a non-OAuthError to 500 — both wrong for an unknown bearer token.
+      // The server-legacy InvalidTokenError class is NOT interchangeable here: it
+      // is a different brand and would land on the 500 branch.
+      throw new OAuthError(OAuthErrorCode.InvalidToken, 'Invalid or expired access token');
     }
+    // ⚠️ M5.7 — this is SET EQUALITY, not "has the scope it needs", and that is
+    // a migration hazard, not a style choice.
+    //
+    // The spec says servers MUST honour scope hierarchies; this deployment has
+    // exactly one scope, so there is no hierarchy to honour and equality and
+    // containment coincide. The moment a second scope exists they stop
+    // coinciding, and this line rejects every token that does not carry the new
+    // set EXACTLY — including every token already in the field. Splitting
+    // `avito:mcp` into `avito:read` / `avito:write` therefore logs out the
+    // entire installed base at the instant of deployment, silently, with an
+    // `invalid_token` that looks to each client like an expiry it should have
+    // been able to refresh through.
+    //
+    // The decision to keep one scope for this major is recorded in
+    // docs/adr/0005-scopes.md. Whoever revisits it: relax this to containment
+    // and accept `avito:mcp` as a super-scope FIRST, ship that, and only then
+    // start issuing the narrower scopes. See M8.7.
     if (
       !rec.scopes.includes(REQUIRED_SCOPE) ||
       rec.scopes.some((scope) => scope !== REQUIRED_SCOPE)
     ) {
-      throw new InvalidTokenError('Access token has invalid scope');
+      throw new OAuthError(OAuthErrorCode.InvalidToken, 'Access token has invalid scope');
     }
     const resource = this.requireExpectedResource(rec.resource, true);
     const info: AuthInfo = {
@@ -544,6 +762,22 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
   }
 
   // ───────────────────────────────── internals ───────────────────────────────
+
+  /**
+   * Fails closed when the router's issuer identifier is not the one this provider
+   * stamps into `iss`. Both are `new URL(publicUrl).href` today, so the only way
+   * to reach this is a future refactor that starts feeding the two halves from
+   * different expressions — precisely the change that would silently break RFC
+   * 9207 validation for every client.
+   */
+  private assertRouterIssuerMatches(routerIssuer: string | undefined): void {
+    if (routerIssuer === undefined || routerIssuer === this.issuer) return;
+    logger.error(
+      { routerIssuer, providerIssuer: this.issuer },
+      'oauth: issuer identifier mismatch between the auth router and the provider',
+    );
+    throw new ServerError('Authorization server issuer is misconfigured');
+  }
 
   /** Mints + stores an access/refresh token pair and shapes the OAuthTokens. */
   private issueTokens(clientId: string, scopes: string[], resource?: string): OAuthTokens {
@@ -581,6 +815,12 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
     return unique;
   }
 
+  /**
+   * `tokenValidation` selects the error BRAND, not just the wording: on the
+   * resource-server path (called from verifyAccessToken) it must be the v2
+   * OAuthError so requireBearerAuth answers 401; on the authorization-server
+   * path it must be the server-legacy class so mcpAuthRouter answers 400.
+   */
   private requireExpectedResource(value: string | undefined, tokenValidation = false): string {
     let normalized: string | undefined;
     try {
@@ -590,12 +830,16 @@ export class AvitoOAuthProvider implements OAuthServerProvider {
         normalized = parsed.href;
       }
     } catch {
-      if (tokenValidation) throw new InvalidTokenError('Access token has invalid resource');
+      if (tokenValidation)
+        throw new OAuthError(OAuthErrorCode.InvalidToken, 'Access token has invalid resource');
       throw new InvalidRequestError('Invalid resource indicator');
     }
     if (normalized !== this.expectedResource) {
       if (tokenValidation)
-        throw new InvalidTokenError('Access token was issued for a different resource');
+        throw new OAuthError(
+          OAuthErrorCode.InvalidToken,
+          'Access token was issued for a different resource',
+        );
       throw new InvalidRequestError(`resource must be ${this.expectedResource}`);
     }
     return normalized;

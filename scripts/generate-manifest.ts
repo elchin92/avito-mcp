@@ -7,10 +7,22 @@
  *   - Tests that assert invariants on the registry as a whole
  *
  * Run: `npm run generate:manifest`
+ *
+ * This is the SECOND place a server gets constructed (the first is
+ * `createServerFactory()` in src/build-server.ts), so a change to the shape of a
+ * tool's schema has to be checked in both.
+ *
+ * One shape is refused on purpose: no input-schema property carries an
+ * `x-mcp-header` annotation. See docs/safety.md — there is no routing
+ * intermediary in front of this server to consume one, and these arguments hold
+ * phone numbers, chat ids and sums of money, which is the class of value the
+ * specification says must not be moved into a header. The refusal is enforced
+ * by test/openapi-contract.test.ts rather than left to a reviewer, because an
+ * invalid annotation makes a conformant client drop the tool from `tools/list`
+ * silently.
  */
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client } from '@modelcontextprotocol/client';
+import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,10 +36,26 @@ import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config } from '../src/config.js';
 import { PACKAGE_NAME, VERSION } from '../src/version.js';
 import { domainOfToolName } from '../src/meta/tool-naming.js';
+import { applyLegacyWireDefaults } from '../src/core/wire-compat.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = join(here, '..', 'dist', 'manifest.json');
 
+/**
+ * Deliberately NOT `test/support/config-fixture.ts`, even though the literal below
+ * is the one that fixture replaced everywhere else.
+ *
+ * This script runs inside the Docker build stage, which copies only `src/`,
+ * `scripts/`, `tsconfig.json` and `tsconfig.scripts.json` — there is no `test/`
+ * in that layer, so importing from it turns `npm run generate:manifest` into a
+ * build failure. `tsconfig.scripts.json` excludes `test` for the same reason, and
+ * `files` in package.json never ships `test/`. The manifest is a release artefact;
+ * it must not depend on the test tree.
+ *
+ * Drift between the two is harmless: this config exists only to force every tool
+ * into existence (full_access + confirmation on + auth tools exposed), and
+ * `test/registry.test.ts` mounts the same registry and asserts its shape.
+ */
 function makeFakeConfig(): Config {
   return {
     clientId: 'manifest-only',
@@ -65,6 +93,8 @@ function makeFakeConfig(): Config {
       allowedOrigins: [],
       maxSessions: 100,
       sessionIdleSec: 1800,
+      maxInflight: 64,
+      maxStreams: 32,
       oauthTokenTtlSec: 3600,
     },
     webhook: {
@@ -77,7 +107,11 @@ function makeFakeConfig(): Config {
 }
 
 async function main(): Promise<void> {
-  const server = new McpServer({ name: PACKAGE_NAME, version: VERSION });
+  // This script builds its own bare McpServer instead of going through
+  // buildMcpServer(), so it has to install the M2 legacy-wire pins itself —
+  // otherwise `schema_hash` would be computed over draft-2020-12 schemas while
+  // the running server advertises draft-07.
+  const server = applyLegacyWireDefaults(new McpServer({ name: PACKAGE_NAME, version: VERSION }));
   const cfg = makeFakeConfig();
   const pendingStore = new PendingActionStore(cfg.confirmationTtlSec * 1000);
   const ctx: ToolContext = { client: new AvitoClient(cfg), config: cfg, pendingStore };
@@ -163,7 +197,16 @@ async function main(): Promise<void> {
     tools: flat,
   };
   const schemaHash = createHash('sha256')
-    .update(JSON.stringify(flat.map(({ name, risk, environment, inputSchema }) => ({ name, risk, environment, inputSchema }))))
+    .update(
+      JSON.stringify(
+        flat.map(({ name, risk, environment, inputSchema }) => ({
+          name,
+          risk,
+          environment,
+          inputSchema,
+        })),
+      ),
+    )
     .digest('hex');
   const manifest = { ...manifestBase, schema_hash: schemaHash };
 

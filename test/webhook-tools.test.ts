@@ -11,12 +11,8 @@
  * clear failure here rather than a load crash.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
+import { Client } from '@modelcontextprotocol/client';
+import { McpServer, InMemoryTransport } from '@modelcontextprotocol/server';
 import { promises as fs } from 'node:fs';
 
 import { AvitoClient } from '../src/core/client.js';
@@ -24,65 +20,43 @@ import { PendingActionStore } from '../src/core/pending-actions.js';
 import { WebhookStore } from '../src/core/webhook-store.js';
 import type { ToolContext } from '../src/core/tool-factory.js';
 import type { Config, HttpConfig, WebhookConfig } from '../src/config.js';
+import {
+  makeConfig as makeBaseConfig,
+  makeHttpConfig as makeBaseHttpConfig,
+  makeWebhookConfig as makeBaseWebhookConfig,
+  type ConfigOverrides,
+} from './support/config-fixture.js';
 import { configuredWebhookReceiverUrl } from '../src/domains/webhook.js';
 
 const WEBHOOK_SECRET = 'super-secret-token-abcd';
 const SPECIAL_WEBHOOK_SECRET = 'base64-secret-0123456789abcdef/+=';
 
-function makeHttpConfig(): HttpConfig {
-  return {
-    transport: 'stdio',
-    host: '127.0.0.1',
+function makeHttpConfig(overrides: Partial<HttpConfig> = {}): HttpConfig {
+  return makeBaseHttpConfig({
     port: 8080,
     publicUrl: 'https://mcp.example.com',
     auth: 'none',
-    authTokens: [],
     allowNoAuth: true,
-    allowedHosts: [],
-    allowedOrigins: [],
-    maxSessions: 100,
-    sessionIdleSec: 1800,
-    oauthTokenTtlSec: 3600,
-  };
+    ...overrides,
+  });
 }
 
 function makeWebhookConfig(overrides: Partial<WebhookConfig> = {}): WebhookConfig {
-  return {
+  return makeBaseWebhookConfig({
     enabled: true,
     secret: WEBHOOK_SECRET,
     publicUrl: 'https://mcp.example.com',
-    path: '/avito/webhook',
-    bufferSize: 100,
     ...overrides,
-  };
+  });
 }
 
-function makeConfig(overrides: Partial<Config> = {}): Config {
-  return {
-    clientId: 'cid',
-    clientSecret: 'sec',
+function makeConfig(overrides: ConfigOverrides = {}): Config {
+  return makeBaseConfig({
     profileId: 12345678,
-    baseUrl: 'https://api.test.example',
-    cpaSource: 'avito-mcp-test',
-    tokenFile: join(tmpdir(), `avito-token-${randomBytes(6).toString('hex')}.json`),
-    logLevel: 'fatal',
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
-    exposeAuthTools: false,
-    allowedUploadDirs: [],
-    maxUploadMb: 15,
-    confirmationMode: 'money_public',
-    confirmationTtlSec: 900,
-    confirmationSecret: undefined,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
     http: makeHttpConfig(),
     webhook: makeWebhookConfig(),
     ...overrides,
-  } as Config;
+  });
 }
 
 /** A realistic Avito messenger envelope (postWebhookV3 shape). */

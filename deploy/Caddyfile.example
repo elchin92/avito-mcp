@@ -7,5 +7,28 @@
 
 mcp.example.com {
 	encode gzip
+
+	# Access log — the ONLY place a request's status, duration and protocol era
+	# are recorded. The Node process writes no per-request line at any log level,
+	# so every quantitative rollback criterion in docs/adr/0007-rollback-criteria.md
+	# is computed from these entries via `journalctl -u caddy -o cat | jq`.
+	#
+	# `output stderr` and `format json` are spelled out rather than left to the
+	# defaults, and that is not style. A bare `log` inherits Caddy's shared
+	# default logger, which drops entries under even light load — measured on
+	# v2.11.3: 30 requests produced 3 log lines. With both directives given, 30
+	# of 30 were recorded. A sampled access log turns every ratio and percentile
+	# in that document into a fiction.
+	#
+	# Credentials do not enter it: Caddy records `Authorization` and `Cookie` as
+	# REDACTED (verified by sending both) because `log_credentials` is off, and
+	# it must stay off. Request headers ARE recorded, which is what allows the
+	# log to be split by era on `Mcp-Protocol-Version` the same way the server's
+	# own classifier splits it.
+	log {
+		output stderr
+		format json
+	}
+
 	reverse_proxy 127.0.0.1:3000
 }

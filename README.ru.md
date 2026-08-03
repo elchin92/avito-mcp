@@ -261,7 +261,34 @@ stdio-транспорт оставляет credentials и ответы API на
 
 ### MCP-logging
 
-Избранные pino-события (смена режима, скрытые tools, lifecycle confirmation, warning-и rate-limit) дублируются клиенту как `notifications/message` с `logger: "avito-mcp"`, чувствительные поля вырезаются. Клиенты, регулирующие уровень через `logging/setLevel`, работают как ожидается. Pino → stderr сохраняется.
+Избранные pino-события (смена режима, скрытые tools, lifecycle confirmation, warning-и rate-limit) дублируются клиенту как `notifications/message` с `logger: "avito-mcp"`, чувствительные поля вырезаются. Pino → stderr сохраняется.
+
+Как клиент их запрашивает — зависит от ревизии протокола, на которой говорит соединение:
+
+- **2025-11-25** — `logging/setLevel` задаёт порог на всё соединение, как и раньше.
+- **2026-07-28** — `logging/setLevel` больше не существует. Уровень объявляется на каждый запрос в `_meta["io.modelcontextprotocol/logLevel"]`; уведомления приходят по потоку ответа именно этого запроса, запрос без объявленного уровня не получает ни одного, а нераспознанный уровень отвергается кодом `-32602`.
+
+### Ревизии протокола
+
+`AVITO_MCP_PROTOCOL_ERA` выбирает, какие ревизии обслуживает процесс: `legacy` (по умолчанию — только 2025-11-25, побайтово поведение 1.3.x), `dual` (обе), `modern` (только 2026-07-28). Для существующего клиента ничего не меняется, пока переменная не выставлена.
+
+|                                                   | 2025-11-25                                                | 2026-07-28                                                                                                                                                                                   |
+| ------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Рукопожатие                                       | `initialize`                                              | нет — `server/discover` плюс пер-запросный `_meta`-конверт                                                                                                                                   |
+| Слежение за ресурсом                              | `resources/subscribe` → `notifications/resources/updated` | `subscriptions/listen` с `resourceSubscriptions: [...]`; поток открывается уведомлением `notifications/subscriptions/acknowledged`, где перечислено то, что действительно будет доставляться |
+| Подписываемые URI                                 | `avito://state/pending-actions`, `avito://webhook/events` | те же два                                                                                                                                                                                    |
+| `listChanged` у `tools` / `prompts` / `resources` | объявлен `true`                                           | объявлен **`false`**                                                                                                                                                                         |
+| `tools/list` и остальные списочные запросы        | один ответ (≈225 КБ); `cursor` игнорируется               | **страницами** — до 48 КиБ дескрипторов на страницу плюс `nextCursor`; конец списка — ОТСУТСТВИЕ этого поля, а курсор, которого сервер не выдавал, даёт `-32602 Invalid cursor` |
+| Аргументы промптов (`prompts/get`)                | любая строка; пустой обязательный аргумент рендерит заглушку «…is required» как УСПЕШНЫЙ результат, а `days`/`limit` проходят через `parseInt(...) || default` | **валидируются** — `tool_name` и `item_id` по allowlist, `days`/`limit` в границах, а каждое значение перед подстановкой в текст промпта проверяется на управляющие символы и bidi/zero-width; всё остальное — `-32602` |
+| Отмена вызова                                     | `notifications/cancelled`                                 | закрытие потока ответа — исходящий вызов к Avito прерывается, лиза идемпотентности и слот rate-limiter освобождаются                                                                         |
+
+> **stdio: эра выбирается один раз на соединение.** На stdio нет слоя заголовков, поэтому ревизия соединения читается из ПЕРВОГО классифицируемого сообщения и держится всю его жизнь — правило и код принадлежат SDK (`serveStdio`, `classifyOpeningMessage`). Клиент 2026, у которого первый кадр пришёл без `_meta`-конверта, будет обслуживаться как клиент 2025 до переподключения, даже если все следующие кадры конверт несут. При `AVITO_MCP_PROTOCOL_ERA=dual` сервер пишет в **stderr** одну строку `protocol era pinned to legacy` с именем метода, который закрепил эру; её и надо грепать при выкате `dual`. Чинится на стороне клиента: слать `io.modelcontextprotocol/protocolVersion` в `params._meta` уже в первом сообщении. HTTP это не затрагивает — там классифицируется каждый запрос. Обоснование и причина, по которой мы не форкаем входную точку SDK, — в [`docs/adr/0001-protocol-era-limitations.md`](docs/adr/0001-protocol-era-limitations.md).
+
+Различие по `listChanged` сделано осознанно. Наборы инструментов, промптов и ресурсов у этого сервера фиксированы на всё время жизни процесса (состав определяется один раз, при регистрации, действующей safety-политикой), поэтому уведомление `list_changed` не отправляется ни на одной ревизии. На 2025-11-25 объявленное `true` ни на что не влияет и сохранено ради совместимости провода с 1.3.x. На 2026-07-28 оно влияет: `subscriptions/listen` сужает запрошенный клиентом фильтр ровно по этим битам, поэтому `true` означало бы подтверждение подписки на уведомления, которые никогда не придут, — и клиент ждал бы их вместо опроса. `false` сообщает правду сразу.
+
+### Схемы входных параметров инструментов
+
+`inputSchema` и `outputSchema` отдаются в диалекте **JSON Schema draft-07** (`$schema: "http://json-schema.org/draft-07/schema#"`) на обеих ревизиях. Ревизия 2026-07-28 ослабляет ограничение до полного JSON Schema 2020-12, но не требует его, а для этого каталога оба диалекта дают идентичные тела с точностью до этой строки — при этом `meta_capabilities.schemaHash` считается по схемам в том виде, в каком они отдаются, так что смена диалекта сломала бы всех потребителей, следящих за этим хэшем. Ни одна схема не содержит `$ref` на сетевой URI.
 
 ---
 
@@ -384,36 +411,39 @@ AVITO_MCP_OAUTH_OWNER_PASSWORD=…    # REQUIRED, случайный, миним
 
 Токен принимается только с точным scope `avito:mcp` и точным resource URL этого deployment; каждая MCP-сессия привязана к OAuth principal, который её инициализировал. Consent-транзакции и authorization codes короткоживущие и одноразовые.
 
-| Endpoint                                    | Назначение                                                        |
-| ------------------------------------------- | ----------------------------------------------------------------- |
-| `/mcp`                                      | Streamable HTTP MCP-транспорт (сами tools)                        |
-| `/.well-known/oauth-authorization-server`   | Метаданные OAuth 2.1 AS                                           |
-| `/.well-known/oauth-protected-resource/mcp` | Метаданные resource-server для `/mcp` (path-suffixed, RFC 9728)   |
-| `/authorize`                                | Экран согласия — человек вводит owner-пароль (с rate-limit)       |
-| `/token`                                    | Обмен authorization-code → bearer-токен                           |
-| `/register`                                 | Dynamic Client Registration (DCR)                                 |
-| `/revoke`                                   | Отзыв токенов (RFC 7009)                                          |
-| `/healthz`                                  | Liveness-проба (без auth — отвечает только `{ok, name, version}`) |
-| `/readyz`                                   | Readiness-проба (без auth — отвечает только `{ok}`)               |
+| Endpoint                                    | Назначение                                                                                                |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `/mcp`                                      | Streamable HTTP MCP-транспорт (сами tools)                                                                |
+| `/.well-known/oauth-authorization-server`   | Метаданные OAuth 2.1 AS                                                                                   |
+| `/.well-known/oauth-protected-resource/mcp` | Метаданные resource-server для `/mcp` (path-suffixed, RFC 9728)                                           |
+| `/authorize`                                | Экран согласия — человек вводит owner-пароль (с rate-limit)                                               |
+| `/token`                                    | Обмен authorization-code → bearer-токен                                                                   |
+| `/register`                                 | Dynamic Client Registration (DCR) — `redirect_uris` только `https` либо `http` на loopback, без фрагмента |
+| `/revoke`                                   | Отзыв токенов (RFC 7009)                                                                                  |
+| `/healthz`                                  | Liveness-проба (без auth — отвечает только `{ok, name, version}`)                                         |
+| `/readyz`                                   | Readiness-проба (без auth — отвечает только `{ok}`)                                                       |
 
 ### Все env-переменные HTTP / OAuth
 
-| Переменная                        | Default     | Смысл                                                                                                               |
-| --------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------- |
-| `AVITO_MCP_TRANSPORT`             | `stdio`     | `stdio` \| `http` \| `both` (CLI-флаг `--http`)                                                                     |
-| `AVITO_MCP_HTTP_HOST`             | `127.0.0.1` | Bind-адрес — держите loopback за прокси                                                                             |
-| `AVITO_MCP_HTTP_PORT`             | `3000`      | Порт прослушивания                                                                                                  |
-| `AVITO_MCP_HTTP_PUBLIC_URL`       | —           | Публичный TLS-базис для построения OAuth issuer / resource metadata. **Без завершающего слэша.**                    |
-| `AVITO_MCP_HTTP_AUTH`             | `oauth`     | `oauth` \| `bearer` \| `none`                                                                                       |
-| `AVITO_MCP_OAUTH_OWNER_PASSWORD`  | —           | **Обязательно в `oauth`, минимум 32 байта.** Закрывает `/authorize` — единственный секрет, выпускающий токен.       |
-| `AVITO_MCP_OAUTH_TOKEN_TTL_SEC`   | `3600`      | Время жизни выпущенного bearer-токена                                                                               |
-| `AVITO_MCP_OAUTH_STORE_FILE`      | —           | Опциональный durable store токенов/клиентов. Exclusive process lease: один запущенный сервер на файл                |
-| `AVITO_MCP_HTTP_AUTH_TOKEN`       | —           | Режим `bearer`: общий секрет(ы), через запятую; каждый минимум 32 байта                                             |
-| `AVITO_MCP_HTTP_ALLOW_NO_AUTH`    | `0`         | Разрешить `auth=none` на не-loopback хосте (**не рекомендуется**)                                                   |
-| `AVITO_MCP_HTTP_ALLOWED_HOSTS`    | derived     | CSV допустимых `Host`. Выводится из public URL + bind; недостаточно настроенный wildcard bind останавливает startup |
-| `AVITO_MCP_HTTP_ALLOWED_ORIGINS`  | derived     | CSV допустимых `Origin`. Та же fail-closed деривация                                                                |
-| `AVITO_MCP_HTTP_MAX_SESSIONS`     | `100`       | Максимум одновременных Streamable HTTP сессий — `initialize` сверх лимита → 503                                     |
-| `AVITO_MCP_HTTP_SESSION_IDLE_SEC` | `1800`      | Сессии, простаивающие дольше, закрываются (клиент исчез без `DELETE`)                                               |
+| Переменная                                 | Default     | Смысл                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AVITO_MCP_TRANSPORT`                      | `stdio`     | `stdio` \| `http` \| `both` (CLI-флаг `--http`)                                                                                                                                                                                                                                                                                          |
+| `AVITO_MCP_HTTP_HOST`                      | `127.0.0.1` | Bind-адрес — держите loopback за прокси                                                                                                                                                                                                                                                                                                  |
+| `AVITO_MCP_HTTP_PORT`                      | `3000`      | Порт прослушивания                                                                                                                                                                                                                                                                                                                       |
+| `AVITO_MCP_HTTP_PUBLIC_URL`                | —           | Публичный TLS-базис для построения OAuth issuer / resource metadata. **Без завершающего слэша.** В режиме `oauth` обязателен `https` (кроме loopback). Смена значения меняет OAuth **issuer identifier** — это другой authorization server: зарегистрированные клиенты и выданные токены сбрасываются, все клиенты регистрируются заново |
+| `AVITO_MCP_HTTP_AUTH`                      | `oauth`     | `oauth` \| `bearer` \| `none`                                                                                                                                                                                                                                                                                                            |
+| `AVITO_MCP_OAUTH_OWNER_PASSWORD`           | —           | **Обязательно в `oauth`, минимум 32 байта.** Закрывает `/authorize` — единственный секрет, выпускающий токен.                                                                                                                                                                                                                            |
+| `AVITO_MCP_OAUTH_TOKEN_TTL_SEC`            | `3600`      | Время жизни выпущенного bearer-токена                                                                                                                                                                                                                                                                                                    |
+| `AVITO_MCP_OAUTH_STORE_FILE`               | —           | Опциональный durable store токенов/клиентов. Exclusive process lease: один запущенный сервер на файл                                                                                                                                                                                                                                     |
+| `AVITO_MCP_HTTP_AUTH_TOKEN`                | —           | Режим `bearer`: общий секрет(ы), через запятую; каждый минимум 32 байта                                                                                                                                                                                                                                                                  |
+| `AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL` | `0`         | **Только для разработки.** Разрешить открытый `http:` в публичном URL на маршрутизируемом хосте в режиме `oauth`. SDK дополнительно требует `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=true`                                                                                                                                             |
+| `AVITO_MCP_HTTP_ALLOW_NO_AUTH`             | `0`         | Разрешить `auth=none` на не-loopback хосте (**не рекомендуется**)                                                                                                                                                                                                                                                                        |
+| `AVITO_MCP_HTTP_ALLOWED_HOSTS`             | derived     | CSV допустимых `Host`. Выводится из public URL + bind; недостаточно настроенный wildcard bind останавливает startup                                                                                                                                                                                                                      |
+| `AVITO_MCP_HTTP_ALLOWED_ORIGINS`           | derived     | CSV допустимых `Origin`. Та же fail-closed деривация                                                                                                                                                                                                                                                                                     |
+| `AVITO_MCP_HTTP_MAX_SESSIONS`              | `100`       | **Только эра legacy.** Максимум одновременных Streamable HTTP сессий — `initialize` сверх лимита → 503                                                                                                                                                                                                                                   |
+| `AVITO_MCP_HTTP_SESSION_IDLE_SEC`          | `1800`      | **Только эра legacy.** Сессии, простаивающие дольше, закрываются (клиент исчез без `DELETE`)                                                                                                                                                                                                                                             |
+| `AVITO_MCP_HTTP_MAX_INFLIGHT`              | `64`        | **Эра 2026.** Одновременных обменов на `/mcp`, включая открытые потоки подписок; сверх лимита → `503` + `Retry-After`                                                                                                                                                                                                                    |
+| `AVITO_MCP_HTTP_MAX_STREAMS`               | `32`        | **Эра 2026.** Сколько из них могут быть долгоживущими потоками `subscriptions/listen`                                                                                                                                                                                                                                                    |
 
 > **Модель безопасности.** Node по умолчанию слушает `127.0.0.1` и говорит по обычному HTTP. **TLS терминирует reverse-proxy** (nginx / Caddy) на вашем домене, проксируя на `http://127.0.0.1:3000`. Никогда не выставляйте порт 3000 напрямую в интернет. Host/Origin validation защищает MCP и OAuth routes. `auth=none` на публичном хосте отклоняется, пока не задано `AVITO_MCP_HTTP_ALLOW_NO_AUTH=1`.
 
@@ -487,6 +517,8 @@ AVITO_MCP_HTTP_AUTH_TOKEN=long-random-secret,another-secret   # one or more, com
 
 Клиенты тогда шлют `Authorization: Bearer long-random-secret` на `/mcp`. Та же конфигурация reverse-proxy применима.
 
+> **Режимы `bearer` и `none` не заявляют соответствия спецификации авторизации MCP.** Это дверь с общим секретом и открытая дверь — для развёртываний, где вы контролируете оба конца. Ни один из них не публикует protected-resource metadata (RFC 9728), не поднимает authorization server, а 401 отдаётся голым `Bearer realm="avito-mcp"` без `resource_metadata` — то есть MCP-клиент ревизии 2026-07-28 не сможет обнаружить, где авторизоваться, и не пройдёт flow, который обязан начать сам. **Для MCP-клиентов используйте `oauth`.** `bearer` — для вызывающего, которого вы настраиваете руками секретом, который сгенерировали сами.
+
 ---
 
 ## Приёмник webhook Avito
@@ -525,14 +557,14 @@ POST {AVITO_MCP_WEBHOOK_PUBLIC_URL}{AVITO_MCP_WEBHOOK_PATH}/{AVITO_MCP_WEBHOOK_S
 
 ### Чтение событий
 
-| Поверхность                                           | Что даёт                                                                           |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `messenger_get_webhook_events` (tool, read)           | Забрать буфер событий — фильтры `chat_id`, `since`, `limit`                        |
-| `messenger_get_webhook_status` (tool, read)           | Статистика приёмника: хранится / всего принято / последнее событие / размер буфера |
-| `messenger_register_webhook` (tool, ⚠️ public)        | Подписать только настроенный оператором URL; по умолчанию требует confirmation     |
-| `avito://webhook/events` (resource, **subscribable**) | Те же события как MCP-resource; `resources/subscribe` для live-пуша в клиент       |
+| Поверхность                                           | Что даёт                                                                                                                          |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `messenger_get_webhook_events` (tool, read)           | Забрать буфер событий — фильтры `chat_id`, `since`, `limit`                                                                       |
+| `messenger_get_webhook_status` (tool, read)           | Статистика приёмника: хранится / всего принято / последнее событие / размер буфера                                                |
+| `messenger_register_webhook` (tool, ⚠️ public)        | Подписать только настроенный оператором URL; по умолчанию требует confirmation                                                    |
+| `avito://webhook/events` (resource, **subscribable**) | Те же события как MCP-resource; `resources/subscribe` (2025-11-25) или `subscriptions/listen` (2026-07-28) для live-пуша в клиент |
 
-Типичный цикл: подписаться на `avito://webhook/events`, на каждый `notifications/resources/updated` прочитать новое событие, составить ответ и (после подтверждения) отправить через `messenger_post_send_message`.
+Типичный цикл: подписаться на `avito://webhook/events` (`resources/subscribe` на 2025-11-25, `subscriptions/listen` на 2026-07-28), на каждый `notifications/resources/updated` прочитать новое событие, составить ответ и (после подтверждения) отправить через `messenger_post_send_message`.
 
 ---
 

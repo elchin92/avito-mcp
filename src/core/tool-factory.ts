@@ -1,9 +1,14 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import type {
+  McpServer,
+  CallToolResult,
+  ProtocolEra,
+  ToolAnnotations,
+  ServerContext,
+} from '@modelcontextprotocol/server';
 import { z, type ZodRawShape } from 'zod';
 
 import type { Config } from '../config.js';
-import { logger } from '../logger.js';
+import { logger, type RequestLogSink } from '../logger.js';
 import type {
   AvitoClient,
   BodyContentType,
@@ -24,6 +29,35 @@ import { callerPrincipal, type CallerExtra, type PendingActionStore } from './pe
 import { evaluatePolicy, requiresConfirmation } from './policy.js';
 import type { Primitive, QueryValue } from './url.js';
 import type { WebhookStore } from './webhook-store.js';
+
+type Assert<T extends true> = T;
+type ServerContextHttp = NonNullable<ServerContext['http']>;
+
+/**
+ * Compile-time contract between the SDK's handler context and {@link CallerExtra},
+ * the subset `callerPrincipal()` reads to decide WHO is calling.
+ *
+ * This exists because the v1→v2 move of `authInfo`/`requestInfo` from the top of
+ * the context down into `ctx.http` is otherwise invisible: `CallerExtra` is a weak
+ * type (every field optional), so the old v1 shape stayed assignable to the new
+ * context and every principal silently degraded to `session:<id>` — no compiler
+ * error, no test failure. These assertions fail the build if either side moves
+ * again; `test/oauth-bearer-http.test.ts` covers the runtime half over a live
+ * HTTP transport with a real OAuth token.
+ */
+export type CallerIdentityContract = [
+  // The verified token still hangs off ctx.http.authInfo, not the v1 top-level ctx.authInfo.
+  Assert<NonNullable<ServerContextHttp['authInfo']>['clientId'] extends string ? true : false>,
+  // The raw request still hangs off ctx.http.req, with web-standard Headers access.
+  Assert<
+    NonNullable<ServerContextHttp['req']>['headers'] extends { get(name: string): string | null }
+      ? true
+      : false
+  >,
+  // What callerPrincipal() reads is exactly what the SDK hands the handler.
+  Assert<ServerContextHttp extends NonNullable<CallerExtra['http']> ? true : false>,
+  Assert<ServerContext extends CallerExtra ? true : false>,
+];
 
 /** Names of internal fields automatically added to destructive tools. */
 const META_PARAMS = ['dryRun', 'idempotencyKey'] as const;
@@ -68,7 +102,43 @@ export interface ToolContext {
    * the receiver as disabled rather than failing.
    */
   webhookStore?: WebhookStore;
+  /**
+   * M3 — the protocol era the owning server instance serves. Absent means
+   * `legacy`: every context built before M3, and every test fixture, is a 2025
+   * context, and defaulting the other way would move their behaviour.
+   *
+   * Read it through {@link toolContextEra}. It changes two things and only two:
+   * which subscription surface `registerResources` installs, and where the MCP
+   * log mirror delivers (connection-level vs request-scoped).
+   */
+  era?: ProtocolEra;
 }
+
+/** The era of a {@link ToolContext}, with the "not stated means legacy" default applied. */
+export function toolContextEra(ctx: Pick<ToolContext, 'era'>): ProtocolEra {
+  return ctx.era ?? 'legacy';
+}
+
+/**
+ * The slice of the SDK's per-request context this module uses beyond
+ * {@link CallerExtra}.
+ *
+ * Declared as an intersection with everything optional rather than by importing
+ * `ServerContext` wholesale, for the same reason `CallerExtra` exists: the 148
+ * handlers are also driven directly by tests with hand-built contexts, and a
+ * required `mcpReq` would force every one of them to fabricate a full SDK
+ * context. `CallerIdentityContract` is what keeps the shape honest against the
+ * SDK — `ServerContext extends CallerExtra` is asserted at compile time there,
+ * and `ServerContext['mcpReq']` really does carry both members below.
+ */
+export type ToolCallExtra = CallerExtra & {
+  mcpReq?: {
+    /** Aborted when the peer closes this request's response stream (item 11). */
+    signal?: AbortSignal;
+    /** Request-scoped `notifications/message` (item 10). */
+    log?: RequestLogSink['log'];
+  };
+};
 
 export type ProfileIdKey = 'user_id' | 'userId';
 
@@ -264,11 +334,14 @@ export function defineTool<I extends ZodRawShape>(
   // on confirmation via meta_confirm_action.
   // IMPORTANT: it takes clean args (without dryRun/idempotencyKey) — the meta-parameters
   // are handled in the handler above.
-  const execute = async (cleanArgs: Record<string, unknown>): Promise<CallToolResult> => {
+  const execute = async (
+    cleanArgs: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<CallToolResult> => {
     try {
       const response = spec.customExecute
         ? await spec.customExecute(cleanArgs, ctx)
-        : await executeHttpRequest(cleanArgs, spec, ctx);
+        : await executeHttpRequest(cleanArgs, spec, ctx, signal);
       const result: CallToolResult = {
         content: [
           {
@@ -284,10 +357,27 @@ export function defineTool<I extends ZodRawShape>(
       if (structured !== undefined) result.structuredContent = structured;
       return result;
     } catch (err) {
+      // A cancellation must PROPAGATE, not become a result (M3 item 11).
+      //
+      // Every other failure is deliberately turned into an `isError` payload so
+      // the agent can read and react to it — but that same conversion, applied
+      // to a cancelled call, is what would defeat the requirement: the
+      // idempotency ledger releases its lease when `execute` REJECTS, and
+      // remembers the value when it resolves. Returning an error payload here
+      // would memoise "the client hung up" under the caller's idempotency key
+      // and wedge every retry that reuses it for the whole TTL. Nobody is left
+      // to read the payload anyway — the stream it would travel on is the one
+      // that just closed.
+      if (signal?.aborted === true) throw err;
       return errorToMcpContent(err);
     }
   };
 
+  // Deliberately signal-FREE. This closure is handed to the pending store and
+  // replayed later by `meta_confirm_action`, which is a different JSON-RPC
+  // request with a different lifetime; binding it to the signal of the request
+  // that merely CREATED the pending action would cancel a human-approved money
+  // operation the moment the requesting client disconnected.
   const executePending = async (
     pendingArgs: Record<string, unknown>,
     pendingIdempotencyKey?: string,
@@ -310,8 +400,9 @@ export function defineTool<I extends ZodRawShape>(
 
   const handler = async (
     rawArgs: Record<string, unknown>,
-    extra?: CallerExtra,
+    extra: ToolCallExtra,
   ): Promise<CallToolResult> => {
+    const signal = extra?.mcpReq?.signal;
     const args = rawArgs ?? {};
     const cleanArgs = destructive ? stripMeta(args) : args;
 
@@ -481,7 +572,7 @@ export function defineTool<I extends ZodRawShape>(
           idempotencyKey,
           spec.name,
           argsHash,
-          () => execute(cleanArgs),
+          () => execute(cleanArgs, signal),
         );
         return replay ? annotateReplay(entry.result) : entry.result;
       } catch (err) {
@@ -495,7 +586,7 @@ export function defineTool<I extends ZodRawShape>(
         throw err;
       }
     }
-    return execute(cleanArgs);
+    return execute(cleanArgs, signal);
   };
 
   // The SDK types the callback via an internal BaseToolCallback with its own inferred CallToolResult,
@@ -543,12 +634,13 @@ export function defineTool<I extends ZodRawShape>(
     {
       title: spec.title,
       description: spec.description,
-      inputSchema: finalInputSchema,
+      // SDK v2 takes a Standard Schema object, not a raw ZodRawShape; v1 wrapped
+      // the shape internally, so the emitted JSON Schema is unchanged.
+      inputSchema: z.object(finalInputSchema),
       annotations,
       _meta: metaRecord,
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    handler as any,
+    handler,
   );
 }
 
@@ -711,9 +803,11 @@ async function executeHttpRequest(
   cleanArgs: Record<string, unknown>,
   spec: ToolSpec,
   ctx: ToolContext,
+  signal?: AbortSignal,
 ): Promise<RequestResponse> {
   const { pathParams, query, body } = splitArgs(cleanArgs, spec, ctx);
   return ctx.client.request({
+    ...(signal !== undefined ? { signal } : {}),
     method: spec.method,
     path: spec.path,
     pathParams,

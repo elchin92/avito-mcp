@@ -261,7 +261,34 @@ Every tool returns `structuredContent` alongside the text block — clients can 
 
 ### MCP logging
 
-Selected pino events (mode changes, hidden-tool reports, confirmation lifecycle, rate-limit warnings) are forwarded to the client as `notifications/message` with `logger: "avito-mcp"`, with sensitive fields censored. Clients that adjust verbosity via `logging/setLevel` work as expected. Pino → stderr is preserved.
+Selected pino events (mode changes, hidden-tool reports, confirmation lifecycle, rate-limit warnings) are forwarded to the client as `notifications/message` with `logger: "avito-mcp"`, with sensitive fields censored. Pino → stderr is preserved.
+
+How a client asks for them depends on the protocol revision the connection speaks:
+
+- **2025-11-25** — `logging/setLevel` sets a threshold for the whole connection, as before.
+- **2026-07-28** — `logging/setLevel` no longer exists. The level is declared per request in `_meta["io.modelcontextprotocol/logLevel"]`; the notifications arrive on that request's own response stream, a request that declares no level receives none at all, and an unrecognised level is answered `-32602`.
+
+### Protocol revisions
+
+`AVITO_MCP_PROTOCOL_ERA` selects which revisions this process serves: `legacy` (the default — 2025-11-25 only, byte-for-byte the 1.3.x behaviour), `dual` (both), `modern` (2026-07-28 only). Nothing changes for an existing client unless you set it.
+
+|                                                 | 2025-11-25                                                | 2026-07-28                                                                                                                                                        |
+| ----------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Handshake                                       | `initialize`                                              | none — `server/discover`, plus a per-request `_meta` envelope                                                                                                     |
+| Watching a resource                             | `resources/subscribe` → `notifications/resources/updated` | `subscriptions/listen` with `resourceSubscriptions: [...]`; the stream opens with `notifications/subscriptions/acknowledged` naming what it will actually deliver |
+| Subscribable URIs                               | `avito://state/pending-actions`, `avito://webhook/events` | the same two                                                                                                                                                      |
+| `tools` / `prompts` / `resources` `listChanged` | advertised `true`                                         | advertised **`false`**                                                                                                                                            |
+| `tools/list` and the other list verbs           | one answer (≈225 KB); a `cursor` is ignored               | **paginated** — a page of at most 48 KiB of descriptors plus `nextCursor`; end of list is the ABSENCE of that field, and a cursor this server did not mint is `-32602 Invalid cursor` |
+| Prompt arguments (`prompts/get`)                | any string; a blank required one renders a "…is required" stub as a SUCCESSFUL result, and `days`/`limit` go through `parseInt(...) || default` | **validated** — `tool_name` and `item_id` are allowlists, `days`/`limit` are bounded integers, and every value is swept for control characters and bidi/zero-width formatting before it enters prompt text; anything else is `-32602` |
+| Cancelling a call                               | `notifications/cancelled`                                 | closing the response stream — the outgoing Avito call is aborted and its idempotency lease and rate-limiter slot are released                                     |
+
+> **stdio: the era is decided once per connection.** On stdio there is no header layer, so a connection's revision is read from its FIRST classifiable message and held for the life of that connection — the rule and the code are the SDK's (`serveStdio`, `classifyOpeningMessage`). A 2026 client whose first frame carries no `_meta` envelope is therefore served as a 2025 client until it reconnects, even if every later frame carries one. Under `AVITO_MCP_PROTOCOL_ERA=dual` the server writes one `protocol era pinned to legacy` line to **stderr** when this happens, naming the method that pinned it; grep for it while rolling `dual` out. The fix is on the client side: send `io.modelcontextprotocol/protocolVersion` in `params._meta` on the first message. HTTP is unaffected — there every request is classified on its own. Full rationale, and why we do not fork the SDK entry to change it, in [`docs/adr/0001-protocol-era-limitations.md`](docs/adr/0001-protocol-era-limitations.md).
+
+The `listChanged` difference is deliberate. This server's tool, prompt and resource sets are fixed for the life of the process (membership is decided once, at registration, by the active safety policy), so it never emits a `list_changed` notification on either revision. On 2025-11-25 the advertised `true` is inert, and it is kept for wire compatibility with 1.3.x. On 2026-07-28 it is not inert: `subscriptions/listen` narrows a client's requested filter against exactly these bits, so advertising `true` would acknowledge a subscription to updates that never come, and the client would wait instead of polling. `false` tells it the truth immediately.
+
+### Tool input schemas
+
+`inputSchema` and `outputSchema` are emitted in **JSON Schema draft-07** (`$schema: "http://json-schema.org/draft-07/schema#"`) on both revisions. 2026-07-28 relaxes the constraint to full JSON Schema 2020-12 but does not require it, and for this catalogue the two dialects render identical bodies apart from that one string — while `meta_capabilities.schemaHash` is computed over the schemas as emitted, so moving the dialect would break every consumer watching that hash for drift. No schema contains a `$ref` to a network URI.
 
 ---
 
@@ -384,36 +411,39 @@ AVITO_MCP_OAUTH_OWNER_PASSWORD=…    # REQUIRED, random, at least 32 bytes
 
 Tokens are accepted only with the exact `avito:mcp` scope and this deployment's exact resource URL; each MCP session is bound to the OAuth principal that initialized it. Consent transactions and authorization codes are one-time and short-lived.
 
-| Endpoint                                    | Purpose                                                         |
-| ------------------------------------------- | --------------------------------------------------------------- |
-| `/mcp`                                      | Streamable HTTP MCP transport (the tools)                       |
-| `/.well-known/oauth-authorization-server`   | OAuth 2.1 AS metadata                                           |
-| `/.well-known/oauth-protected-resource/mcp` | Resource-server metadata for `/mcp` (RFC 9728 path-suffixed)    |
-| `/authorize`                                | Consent screen — human enters the owner password (rate-limited) |
-| `/token`                                    | Authorization-code → bearer token exchange                      |
-| `/register`                                 | Dynamic Client Registration (DCR)                               |
-| `/revoke`                                   | Token revocation (RFC 7009)                                     |
-| `/healthz`                                  | Liveness probe (no auth — answers only `{ok, name, version}`)   |
-| `/readyz`                                   | Readiness probe (no auth — answers only `{ok}`)                 |
+| Endpoint                                    | Purpose                                                                                                                |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `/mcp`                                      | Streamable HTTP MCP transport (the tools)                                                                              |
+| `/.well-known/oauth-authorization-server`   | OAuth 2.1 AS metadata                                                                                                  |
+| `/.well-known/oauth-protected-resource/mcp` | Resource-server metadata for `/mcp` (RFC 9728 path-suffixed)                                                           |
+| `/authorize`                                | Consent screen — human enters the owner password (rate-limited)                                                        |
+| `/token`                                    | Authorization-code → bearer token exchange                                                                             |
+| `/register`                                 | Dynamic Client Registration (DCR) — `redirect_uris` must be `https`, or `http` on a loopback address, with no fragment |
+| `/revoke`                                   | Token revocation (RFC 7009)                                                                                            |
+| `/healthz`                                  | Liveness probe (no auth — answers only `{ok, name, version}`)                                                          |
+| `/readyz`                                   | Readiness probe (no auth — answers only `{ok}`)                                                                        |
 
 ### All HTTP / OAuth env vars
 
-| Variable                          | Default     | Meaning                                                                                                                                         |
-| --------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AVITO_MCP_TRANSPORT`             | `stdio`     | `stdio` \| `http` \| `both` (CLI flag `--http`)                                                                                                 |
-| `AVITO_MCP_HTTP_HOST`             | `127.0.0.1` | Bind address — keep it loopback behind a proxy                                                                                                  |
-| `AVITO_MCP_HTTP_PORT`             | `3000`      | Listen port                                                                                                                                     |
-| `AVITO_MCP_HTTP_PUBLIC_URL`       | —           | Public TLS base used to build OAuth issuer / resource metadata. **No trailing slash.**                                                          |
-| `AVITO_MCP_HTTP_AUTH`             | `oauth`     | `oauth` \| `bearer` \| `none`                                                                                                                   |
-| `AVITO_MCP_OAUTH_OWNER_PASSWORD`  | —           | **Required in `oauth` mode; at least 32 bytes.** Gates `/authorize` — the only secret that mints a token.                                       |
-| `AVITO_MCP_OAUTH_TOKEN_TTL_SEC`   | `3600`      | Issued bearer-token lifetime                                                                                                                    |
-| `AVITO_MCP_OAUTH_STORE_FILE`      | —           | Optional durable token/client store. It has an exclusive process lease: one running server per file                                             |
-| `AVITO_MCP_HTTP_AUTH_TOKEN`       | —           | `bearer` mode: shared secret(s), comma-separated; each at least 32 bytes                                                                        |
-| `AVITO_MCP_HTTP_ALLOW_NO_AUTH`    | `0`         | Allow `auth=none` on a non-loopback host (**discouraged**)                                                                                      |
-| `AVITO_MCP_HTTP_ALLOWED_HOSTS`    | derived     | CSV — DNS-rebinding protection (accepted `Host` values). Derived from public URL + bind address; an under-specified wildcard bind fails startup |
-| `AVITO_MCP_HTTP_ALLOWED_ORIGINS`  | derived     | CSV — accepted `Origin` values. Same fail-closed derivation as above                                                                            |
-| `AVITO_MCP_HTTP_MAX_SESSIONS`     | `100`       | Max concurrent Streamable HTTP sessions — `initialize` beyond it → 503                                                                          |
-| `AVITO_MCP_HTTP_SESSION_IDLE_SEC` | `1800`      | Sessions idle longer than this are reaped (clients that vanished without `DELETE`)                                                              |
+| Variable                                   | Default     | Meaning                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AVITO_MCP_TRANSPORT`                      | `stdio`     | `stdio` \| `http` \| `both` (CLI flag `--http`)                                                                                                                                                                                                                                                                              |
+| `AVITO_MCP_HTTP_HOST`                      | `127.0.0.1` | Bind address — keep it loopback behind a proxy                                                                                                                                                                                                                                                                               |
+| `AVITO_MCP_HTTP_PORT`                      | `3000`      | Listen port                                                                                                                                                                                                                                                                                                                  |
+| `AVITO_MCP_HTTP_PUBLIC_URL`                | —           | Public TLS base used to build OAuth issuer / resource metadata. **No trailing slash.** Must be `https` in `oauth` mode (loopback excepted). Changing it changes the OAuth **issuer identifier**, i.e. it is a different authorization server: registered clients and issued tokens are dropped and every client re-registers |
+| `AVITO_MCP_HTTP_AUTH`                      | `oauth`     | `oauth` \| `bearer` \| `none`                                                                                                                                                                                                                                                                                                |
+| `AVITO_MCP_OAUTH_OWNER_PASSWORD`           | —           | **Required in `oauth` mode; at least 32 bytes.** Gates `/authorize` — the only secret that mints a token.                                                                                                                                                                                                                    |
+| `AVITO_MCP_OAUTH_TOKEN_TTL_SEC`            | `3600`      | Issued bearer-token lifetime                                                                                                                                                                                                                                                                                                 |
+| `AVITO_MCP_OAUTH_STORE_FILE`               | —           | Optional durable token/client store. It has an exclusive process lease: one running server per file                                                                                                                                                                                                                          |
+| `AVITO_MCP_HTTP_AUTH_TOKEN`                | —           | `bearer` mode: shared secret(s), comma-separated; each at least 32 bytes                                                                                                                                                                                                                                                     |
+| `AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL` | `0`         | **Development only.** Allow a cleartext `http:` public URL on a routable host in `oauth` mode. The SDK additionally requires `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=true`                                                                                                                                                |
+| `AVITO_MCP_HTTP_ALLOW_NO_AUTH`             | `0`         | Allow `auth=none` on a non-loopback host (**discouraged**)                                                                                                                                                                                                                                                                   |
+| `AVITO_MCP_HTTP_ALLOWED_HOSTS`             | derived     | CSV — DNS-rebinding protection (accepted `Host` values). Derived from public URL + bind address; an under-specified wildcard bind fails startup                                                                                                                                                                              |
+| `AVITO_MCP_HTTP_ALLOWED_ORIGINS`           | derived     | CSV — accepted `Origin` values. Same fail-closed derivation as above                                                                                                                                                                                                                                                         |
+| `AVITO_MCP_HTTP_MAX_SESSIONS`              | `100`       | **Legacy era only.** Max concurrent Streamable HTTP sessions — `initialize` beyond it → 503                                                                                                                                                                                                                                  |
+| `AVITO_MCP_HTTP_SESSION_IDLE_SEC`          | `1800`      | **Legacy era only.** Sessions idle longer than this are reaped (clients that vanished without `DELETE`)                                                                                                                                                                                                                      |
+| `AVITO_MCP_HTTP_MAX_INFLIGHT`              | `64`        | **2026 era.** Concurrent `/mcp` exchanges, counting open subscription streams; beyond it → `503` + `Retry-After`                                                                                                                                                                                                             |
+| `AVITO_MCP_HTTP_MAX_STREAMS`               | `32`        | **2026 era.** How many of those may be long-lived `subscriptions/listen` streams, so streams cannot starve ordinary tool calls                                                                                                                                                                                               |
 
 > **Security model.** Node binds `127.0.0.1` by default and speaks plain HTTP. **TLS is terminated by a reverse proxy** (nginx / Caddy) on your domain, which forwards to `http://127.0.0.1:3000`. Never expose port 3000 directly to the internet. Host/Origin validation protects MCP and OAuth routes. `auth=none` on a public host is refused unless you set `AVITO_MCP_HTTP_ALLOW_NO_AUTH=1`.
 
@@ -487,6 +517,8 @@ AVITO_MCP_HTTP_AUTH_TOKEN=long-random-secret,another-secret   # one or more, com
 
 Clients then send `Authorization: Bearer long-random-secret` to `/mcp`. The same reverse-proxy config applies.
 
+> **`bearer` and `none` do not claim conformance with the MCP authorization specification.** They are a shared-secret door and an open door, for deployments that control both ends. Neither publishes RFC 9728 protected-resource metadata, neither runs an authorization server, and the 401 they return is a bare `Bearer realm="avito-mcp"` with no `resource_metadata` — so an MCP client built for revision 2026-07-28 cannot discover where to authorize and will not complete a flow it has to start itself. **Use `oauth` for MCP clients.** `bearer` is for a caller you configure by hand with a secret you generated.
+
 ---
 
 ## Avito webhook receiver
@@ -525,14 +557,14 @@ The secret is part of the path, so the URL is unguessable — that's the auth. G
 
 ### Consuming events
 
-| Surface                                               | What it gives you                                                                      |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `messenger_get_webhook_events` (tool, read)           | Drain buffered events — filter by `chat_id`, `since`, `limit`                          |
-| `messenger_get_webhook_status` (tool, read)           | Receiver stats: retained / total received / last received at / buffer size             |
-| `messenger_register_webhook` (tool, ⚠️ public)        | Subscribe only the operator-configured public URL with Avito; confirmed by default     |
-| `avito://webhook/events` (resource, **subscribable**) | The same events as an MCP resource; `resources/subscribe` for live push to your client |
+| Surface                                               | What it gives you                                                                                                                          |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `messenger_get_webhook_events` (tool, read)           | Drain buffered events — filter by `chat_id`, `since`, `limit`                                                                              |
+| `messenger_get_webhook_status` (tool, read)           | Receiver stats: retained / total received / last received at / buffer size                                                                 |
+| `messenger_register_webhook` (tool, ⚠️ public)        | Subscribe only the operator-configured public URL with Avito; confirmed by default                                                         |
+| `avito://webhook/events` (resource, **subscribable**) | The same events as an MCP resource; `resources/subscribe` (2025-11-25) or `subscriptions/listen` (2026-07-28) for live push to your client |
 
-A typical loop: subscribe to `avito://webhook/events`, and on each `notifications/resources/updated` read the new event, draft a reply, and (after confirmation) send it with `messenger_post_send_message`.
+A typical loop: subscribe to `avito://webhook/events` (`resources/subscribe` on 2025-11-25, `subscriptions/listen` on 2026-07-28), and on each `notifications/resources/updated` read the new event, draft a reply, and (after confirmation) send it with `messenger_post_send_message`.
 
 ---
 

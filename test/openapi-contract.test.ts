@@ -1,13 +1,14 @@
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
-import { z, type ZodRawShape } from 'zod';
+import { z, type ZodType } from 'zod';
 
 import type { Config } from '../src/config.js';
+import { makeConfig as makeBaseConfig } from './support/config-fixture.js';
 import { AvitoClient } from '../src/core/client.js';
 import { PendingActionStore } from '../src/core/pending-actions.js';
 import type { DomainRegister, ToolContext, ToolRisk } from '../src/core/tool-factory.js';
@@ -272,47 +273,13 @@ const CONTRACT_EXCEPTIONS: Record<string, Record<string, string>> = {
 };
 
 function makeConfig(): Config {
-  return {
-    clientId: 'cid',
+  return makeBaseConfig({
     clientSecret: 'secret',
-    profileId: 12345,
-    baseUrl: 'https://api.test.example',
     cpaSource: 'avito-mcp-contract-test',
-    tokenFile: '/tmp/avito-mcp-openapi-contract-token.json',
-    logLevel: 'fatal',
-    mode: 'full_access',
-    allowTools: [],
-    denyTools: [],
     exposeAuthTools: true,
     allowedUploadDirs: ['/tmp'],
-    maxUploadMb: 15,
     confirmationMode: 'off',
-    confirmationTtlSec: 900,
-    maxBinaryMb: 20,
-    dryRunDefault: false,
-    idempotencyTtlSec: 3600,
-    tokenLockTimeoutMs: 30_000,
-    http: {
-      transport: 'stdio',
-      host: '127.0.0.1',
-      port: 3000,
-      publicUrl: 'http://127.0.0.1:3000',
-      auth: 'oauth',
-      authTokens: [],
-      allowNoAuth: false,
-      allowedHosts: [],
-      allowedOrigins: [],
-      oauthTokenTtlSec: 3600,
-      maxSessions: 100,
-      sessionIdleSec: 1800,
-    },
-    webhook: {
-      enabled: false,
-      publicUrl: 'http://127.0.0.1:3000',
-      path: '/avito/webhook',
-      bufferSize: 100,
-    },
-  } as Config;
+  });
 }
 
 function propertyName(node: ts.PropertyName, source: ts.SourceFile): string {
@@ -526,15 +493,19 @@ function dereference(document: JsonObject, value: unknown): JsonObject {
 function runtimeTools(): Map<string, RuntimeTool> {
   const tools = new Map<string, RuntimeTool>();
   const server = {
+    // SDK v2 takes a Standard Schema object rather than a raw ZodRawShape, so
+    // defineTool now hands us a ZodObject that is already wrapped — wrapping it a
+    // second time here would make z.toJSONSchema choke on a nested schema used as
+    // a shape entry. Mirror the real signature instead of re-wrapping.
     registerTool(
       name: string,
       config: {
-        inputSchema?: ZodRawShape;
+        inputSchema?: ZodType;
         _meta?: { risk?: string; environment?: string };
       },
     ): void {
       tools.set(name, {
-        schema: z.toJSONSchema(z.object(config.inputSchema ?? {}), {
+        schema: z.toJSONSchema(config.inputSchema ?? z.object({}), {
           reused: 'inline',
         }) as JsonObject,
         risk: config._meta?.risk,
@@ -967,6 +938,58 @@ describe('OpenAPI to ToolSpec contract', () => {
     ] as const) {
       expect(unionTypes(schemaFor(tool, property))).toEqual(['integer', 'string']);
     }
+  });
+
+  /**
+   * M5.8 — `x-mcp-header` is not used here, and this guard is what keeps that
+   * true. The reasoning is in docs/safety.md; the reason it needs a TEST rather
+   * than a note is the failure mode. A client MUST drop from `tools/list` any
+   * tool whose annotation is invalid, so a mistake in one does not surface as
+   * an error — it surfaces as a tool that quietly stopped existing. Six
+   * separate MUSTs govern the annotation's shape and none of them is checked
+   * anywhere in this repository, because nothing here produces one.
+   *
+   * If this guard is ever removed, the validator it stands in for arrives in
+   * the same change. docs/safety.md lists the six conditions.
+   */
+  it('puts no x-mcp-header annotation on any tool input schema', () => {
+    const offenders: string[] = [];
+    const scan = (tool: string, node: unknown, path: string): void => {
+      if (Array.isArray(node)) {
+        node.forEach((item, index) => scan(tool, item, `${path}[${index}]`));
+        return;
+      }
+      if (node === null || typeof node !== 'object') return;
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (key.toLowerCase() === 'x-mcp-header') offenders.push(`${tool}${path}.${key}`);
+        scan(tool, value, `${path}.${key}`);
+      }
+    };
+    for (const [name, tool] of registeredTools) scan(name, tool.schema, '');
+    expect(offenders).toEqual([]);
+    // …and the scan really did cover a surface, not an empty map. This fixture
+    // registers the domain tools that survive the default policy; the handful
+    // it hides (auth, upload) are covered by the source scan below, which does
+    // not depend on a tool being registrable at all.
+    expect(registeredTools.size).toBeGreaterThanOrEqual(138);
+
+    // A tool the default policy hides is still a tool, and the manifest builder
+    // is a second place a schema can be shaped. Neither is reachable through
+    // `registeredTools`, so the KEY is also refused in the sources — matched
+    // only where it is quoted, i.e. written as a schema key, so that prose
+    // explaining why we do not use it does not trip its own guard.
+    // `git grep` exits 1 with empty output when nothing matches — the passing
+    // case — so the exit status is not an error signal here.
+    const search = spawnSync(
+      'git',
+      ['grep', '-lEi', '--untracked', '--', `["']x-mcp-header["']`, '--', 'src', 'scripts'],
+      {
+        cwd: ROOT,
+        encoding: 'utf8',
+      },
+    );
+    expect(search.error).toBeUndefined();
+    expect(search.stdout.trim().split('\n').filter(Boolean)).toEqual([]);
   });
 
   it('marks every delivery sandbox operation as sandbox metadata', () => {
