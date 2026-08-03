@@ -8,15 +8,44 @@ Amends: the written acceptance criterion of `MIGRATION_PLAN.md` §A.11 and §M1.
 
 ## Decision
 
-When a request is cancelled — on this revision, when the client closes the SSE
-response stream — the server keeps doing what item 11 requires: the outgoing
-Avito call is aborted and the rate-limiter slot is given back.
+When a request is cancelled, the server keeps doing what item 11 requires: the
+outgoing Avito call is aborted and the rate-limiter slot is given back.
 
 What it stops doing is releasing the caller's idempotency key **when the
 outgoing request had already been dispatched**. That key is instead put into a
 bounded *hold*: any later call with the same key is refused with
 `IDEMPOTENCY_HELD` until the hold expires, is swept, or is lifted by an
 operator.
+
+**This applies on both protocol revisions, not only on 2026-07-28.** Two
+cancellation channels feed the same `AbortSignal`, and the era gate sits on
+neither of them:
+
+- `notifications/cancelled` is defined on revision 2025-11-25 and on revision
+  2026-07-28 alike, and the handler that turns it into `abort()` is registered
+  in the SDK's base `Protocol` constructor, before any era is known —
+  `_oncancel` looks the request id up in `_requestHandlerAbortControllers` and
+  aborts, with no revision in the decision.
+- Revision 2026-07-28 additionally defines the peer closing the response stream
+  as a cancellation of the request on it.
+
+`src/core/tool-factory.ts` then reads `extra.mcpReq.signal` for every tool call,
+on every connection, without consulting `ToolContext.era` (which changes exactly
+two things, neither of them this). A client on the DEFAULT `legacy` posture that
+sends `notifications/cancelled` for a money tool therefore has its outgoing call
+interrupted and, if the request had already left, its key held. Version 1.3.3
+had no such behaviour on either wire — `git show 79ed1cb:src/core/tool-factory.ts`
+contains the word `signal` only inside a comment — so honouring the notification
+at all is new in this release, and it is new on both revisions simultaneously.
+
+Restricting the hold to the modern era was considered and rejected. The
+duplicate charge is reachable wherever the cancellation is, and the cancellation
+reaches both; a modern-only hold would buy an untouched-legacy-wire claim by
+leaving every existing client exposed to exactly the failure this ADR exists to
+prevent. The correct fix for the mismatch is therefore the documentation, which
+described the hold as a 2026-07-28 property — the wording in `CHANGELOG.md`,
+`docs/safety.md`, both READMEs and this section has been corrected rather than
+the behaviour.
 
 The distinction is decided by an explicit dispatch latch — `RequestOptions.onDispatch`,
 fired by `AvitoClient` in the statement immediately before `fetch()` — and never
@@ -162,6 +191,15 @@ considered and rejected:
   `9c52d4c3f39300d267fba9bdcfb9a7aef9cb9664d325484f2a3967327f5f505f` and the
   legacy 1.3.3 wire bench is untouched. The new refusal is an `isError` payload
   on an error path 1.3.3 could not reach, since 1.3.3 had no cancellation.
+- **The legacy wire bench cannot see this, structurally.** `test/support/legacy-wire-bench.ts`
+  replays recorded request/response PAIRS against a captured 1.3.3 process: a
+  cancellation is an unsolicited notification with no response, arriving while
+  another request is open, so there is no pair to record and nothing to replay.
+  An untouched legacy baseline is therefore evidence about the request/response
+  surface only, and says nothing either way about what a `notifications/cancelled`
+  does on that wire. The assertion that covers it is a live one —
+  `test/idempotency-cancel-race.test.ts`, "cancelled on the LEGACY wire", which
+  drives a real 2025-11-25 session against a counting upstream.
 
 ## Amendment to the plan
 

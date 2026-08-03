@@ -269,7 +269,15 @@ export class AvitoClient {
         // is the accurate diagnosis and "timeout" would send an operator
         // hunting a latency problem that never happened.
         const cause = opts.signal?.aborted
-          ? new Error('Request cancelled: the caller closed the response stream')
+          ? // Both revisions reach this line, so the text must not name only one
+            // of their channels: `notifications/cancelled` is defined on
+            // 2025-11-25 as well, and 2026-07-28 merely adds the closed response
+            // stream as a second way to say the same thing. This string is read
+            // by an operator (it is the `heldReason` of a held ledger record)
+            // and naming the stream alone pointed them at the wrong revision.
+            new Error(
+              'Request cancelled: the caller withdrew it (notifications/cancelled, or the response stream was closed)',
+            )
           : ctl.signal.aborted
             ? new Error('Request timeout: deadline exceeded while receiving response')
             : err;
