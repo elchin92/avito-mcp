@@ -150,6 +150,31 @@ function recordedLegacyStatuses(): number[] {
   );
 }
 
+/** A `### 6.0`-style section of the runbook, up to the next heading of any depth. */
+function section(heading: string): string {
+  return new RegExp(`^### ${heading} [\\s\\S]*?(?=\\n### |\\n## )`, 'm').exec(runbook)?.[0] ?? '';
+}
+
+/**
+ * The units §6.0 declares as executing the shared release symlink, read off the
+ * document rather than written down here.
+ *
+ * This used to be the literal pair, and the second literal was the name of the
+ * OTHER deployment sharing this host — which is a fact about the owner's box
+ * that a public repository has no reason to carry. §6.0 now writes that unit as
+ * the stand-in `avito-mcp-second.service` and says so; pinning the stand-in here
+ * would just move the hardcode. What the procedure has to satisfy is structural
+ * and is what is asserted: §6.0 declares MORE THAN ONE unit on the symlink, the
+ * installed one is among them, and §6.2 restarts every unit §6.0 declared. Add a
+ * third unit to §6.0 and this goes red until §6.2 restarts it too.
+ */
+const sharedSymlinkUnits = (): string[] => {
+  const facts = section('6\\.0');
+  const bullet =
+    facts.split(/\n- /).find((item) => item.includes('/opt/avito-mcp/current/dist/server.js')) ?? '';
+  return [...new Set([...bullet.matchAll(/`([a-z0-9.-]+\.service)`/g)].map((match) => match[1]!))];
+};
+
 const sections = criteria(runbook);
 const table = loggedLines(runbook);
 
@@ -250,17 +275,41 @@ describe('M6.8 — the rollback criteria are checkable, not merely written', () 
   });
 
   it('names both services that run from the shared release symlink', () => {
-    // `deploy/install-services.sh` manages avito-mcp.service and caddy.service
-    // and has never heard of avito-mcp-mondigo.service — which executes the
-    // same /opt/avito-mcp/current/dist/server.js. A release rollback that
-    // restarts only the unit the installer knows leaves the two halves of the
-    // deployment on different code.
+    // `deploy/install-services.sh` installs exactly two units and has never
+    // heard of the second unit that executes the same
+    // /opt/avito-mcp/current/dist/server.js. A release rollback that restarts
+    // only the unit the installer knows leaves the two halves of the deployment
+    // on different code.
+    //
+    // The installer's set is derived, not compared against a name: what makes
+    // §6.2 necessary is that the installer manages ONE server unit while §6.0
+    // declares more than one on the symlink, and that stays checkable without
+    // this file naming a unit that only exists on the owner's host.
     const installer = read('deploy/install-services.sh');
-    expect(installer).not.toContain('avito-mcp-mondigo');
+    const managed = new Set(
+      [...installer.matchAll(/\b([a-z0-9][a-z0-9.-]*\.service)\b/g)].map((match) => match[1]!),
+    );
+    expect([...managed].sort()).toEqual(['avito-mcp.service', 'caddy.service']);
 
-    const level2 = /^### 6\.2 [\s\S]*?(?=\n### |\n## )/m.exec(runbook)?.[0] ?? '';
+    const shared = sharedSymlinkUnits();
+    expect(
+      shared.length,
+      '§6.0 no longer declares more than one unit on /opt/avito-mcp/current',
+    ).toBeGreaterThan(1);
+    expect(shared, '§6.0 does not name the unit the installer installs').toContain(
+      'avito-mcp.service',
+    );
+    // The point of the whole section: at least one of them is beyond the
+    // installer's reach, so the installer's own rollback path cannot be the
+    // procedure.
+    expect(
+      shared.filter((unit) => !managed.has(unit)).length,
+      'every unit on the symlink is one the installer already restarts — §6.2 would be redundant',
+    ).toBeGreaterThan(0);
+
+    const level2 = section('6\\.2');
     expect(level2, 'the release rollback has no §6.2 section').not.toBe('');
-    for (const unit of ['avito-mcp.service', 'avito-mcp-mondigo.service']) {
+    for (const unit of shared) {
       expect(level2, `§6.2 never restarts ${unit}`).toContain(`systemctl restart ${unit}`);
     }
     expect(level2).toContain('/proc/$pid/cwd');
@@ -271,7 +320,7 @@ describe('M6.8 — the rollback criteria are checkable, not merely written', () 
     expect(config).toContain('AVITO_MCP_PROTOCOL_ERA');
     expect(config).toMatch(/z\.enum\(\['legacy', 'dual', 'modern'\]\)\.default\('legacy'\)/);
 
-    const level1 = /^### 6\.1 [\s\S]*?(?=\n### |\n## )/m.exec(runbook)?.[0] ?? '';
+    const level1 = section('6\\.1');
     expect(level1, 'the era rollback has no §6.1 section').not.toBe('');
     expect(level1).toContain('AVITO_MCP_PROTOCOL_ERA');
     expect(level1).toContain('/etc/avito-mcp/avito-mcp.env');
@@ -317,7 +366,7 @@ describe('M6.8 — the rollback criteria are checkable, not merely written', () 
     //
     // The matcher must stay the bare PREFIX. Measured on v2.11.3, one request
     // per path: `log_skip /avito/webhook/*` still logs a receiver mounted
-    // beside the first one (`/avito/webhook-mondigo/<secret>`) and the bare
+    // beside the first one (`/avito/webhook-second/<secret>`) and the bare
     // `/avito/webhook`, and `log_skip /avito/webhook*/*` puts nested paths
     // back in the log. Both narrower forms are pinned out here so neither can
     // return as a "tightening".
@@ -346,14 +395,17 @@ describe('M6.8 — the rollback criteria are checkable, not merely written', () 
     //     URI that survives into the log carries a secret anyway;
     //   • one matcher per receiver: this host runs TWO webhook receivers, and
     //     the second is the unit deploy/install-services.sh has never heard of,
-    //     the same omission §6.2 exists to correct;
+    //     the same omission §6.2 exists to correct — so §1.3 has to name every
+    //     unit §6.0 puts on the symlink, whatever those units are called;
     //   • log_skip suppresses the ACCESS log only. When the upstream is down —
     //     every restart in §6.1 and §6.2 — Caddy still writes the full URI in an
     //     http.log.error entry. The document must not promise otherwise.
     const precondition = /^### 1\.3 [\s\S]*?(?=\n## )/m.exec(runbook)?.[0] ?? '';
     expect(precondition, 'the enablement precondition is gone').not.toBe('');
     expect(precondition).toContain('.request.uri');
-    expect(precondition).toContain('avito-mcp-mondigo.service');
+    for (const unit of sharedSymlinkUnits()) {
+      expect(precondition, `§1.3 does not tell the operator to probe ${unit}`).toContain(unit);
+    }
     expect(precondition).toContain('http.log.error');
     expect(runbook).toContain('http.log.error');
   });
