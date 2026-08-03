@@ -220,6 +220,43 @@ rate-limiter". Both are amended by this ADR to read, in substance:
 операция не повторяется"; the measurement above shows the second half was not
 true, and this ADR is what makes it true.
 
+Neither file is in this repository — `MIGRATION_PLAN.md` and `MIGRATION_PROGRESS.md`
+are untracked by decision В2, recorded in
+[ADR 0001](0001-mcp-2026-07-28-migration.md#соглашение-о-ссылках-на-источники).
+The amendment therefore lives here, in the tracked document, and the two
+untracked files are brought into line in the maintainer's working checkout by
+the owner. As of this section's date the plan still carries the pre-amendment
+wording at §A.11 and §M1.4; the substance that governs is the block quoted
+above.
+
+## Owner acknowledgement of the criterion override
+
+This ADR overrides a *written acceptance criterion* — §A.11 item 11 and task
+M1.4 both required the idempotency lease to be released on cancellation
+unconditionally. Overriding a criterion the owner signed off on is not a
+maintainer's call to make silently, so the state of that acknowledgement is
+recorded rather than assumed.
+
+> **Сообщено владельцем 2026-08-03, интерактивный выбор в рабочей сессии,
+> формулировка: «Записать твоё согласие в ADR 0002 и 0008».**
+
+Provenance, stated plainly: the owner selected this item from an interactive
+list of four in a working session, and the report of that selection reached the
+author of this section **through an orchestrating agent** — not as the owner's
+own message in this context and not through the permission mechanism. It is
+recorded here as a received message, which is what it is, and not as a
+countersignature, which it is not.
+
+Unlike [ADR 0002](0002-canary-protocol.md), nothing here is gated on that
+acknowledgement: this ADR's status has been `accepted` since 2026-08-03 on the
+strength of the measurement above, the behaviour is merged, and the hold is what
+the code does today. The acknowledgement matters for the *plan*, not for the
+code — it is what lets §A.11 and §M1.4 be rewritten rather than merely
+contradicted. Until the owner confirms in his own hand (a commit, a PR approve
+referencing this section, or an issue entry), the honest reading is: the
+criterion is overridden by this ADR on technical grounds, and the owner's
+ratification of that override is reported but not yet formalised.
+
 ## References
 
 - `src/core/client.ts` — `RequestOptions.onDispatch`, fired immediately before `fetch()`
