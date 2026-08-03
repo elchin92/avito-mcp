@@ -16,9 +16,9 @@ schedule, or the moment a customer writes. The 148 tools over Avito's 18 officia
 it does that. The reason to install it is that the daily half hour of clicking stops being yours.
 
 The hard part of that promise is the "without you" half, so most of this server is machinery for
-leaving an agent alone with a production account. A price change or a paid promotion is refused
-until a second call confirms it. Any destructive tool will show you the exact HTTP request
-instead of sending it. A retry carrying the same idempotency key is a replay, not a second charge.
+leaving an agent alone with a production account. Spending money takes two calls, not one. Ask any
+destructive tool to rehearse and it prints the exact HTTP request instead of sending it. A retry
+carrying the same idempotency key replays the first result rather than charging you twice.
 
 **[Русская версия →](./README.ru.md)** · [Upgrading from 1.3.x](./MIGRATION.md) · [CHANGELOG](./CHANGELOG.md)
 
@@ -112,11 +112,11 @@ swaggers rather than hand-written, so the coverage is the API's rather than some
 
 The Avito API snapshot in `./swaggers/` is dated 25 May 2026. Avito revises endpoints without
 warning; a 404 on a documented method or a missing new one is worth an issue, and the snapshot
-gets bumped. The live catalogue with per-tool risk, domain and annotations is
-[`dist/manifest.json`](./dist/manifest.json) and the `avito://manifest` resource.
+gets bumped. The live catalogue with per-tool risk, domain and annotations is the
+`avito://manifest` resource, or `dist/manifest.json` after a build — it is generated, not committed.
 
-**How many tools you actually see** depends on configuration. Two of the 148 are opt-in, because
-one returns OAuth tokens and one reads files off your disk:
+**How many tools you actually see** depends on configuration. Four of the 148 are opt-in — three
+return OAuth tokens, one reads image files off your disk:
 
 | Configuration                                                      | Tools registered |
 | ------------------------------------------------------------------ | ---------------: |
