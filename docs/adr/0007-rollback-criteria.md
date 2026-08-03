@@ -109,9 +109,10 @@ log {
 	output stderr
 	format json
 }
+log_skip /avito/webhook*
 ```
 
-Three things about that block, all measured on the Caddy actually installed here
+Four things about that block, all measured on the Caddy actually installed here
 (v2.11.3):
 
 - **`output stderr` and `format json` are written out on purpose.** A bare `log`
@@ -119,12 +120,44 @@ Three things about that block, all measured on the Caddy actually installed here
   even light load: 30 requests produced **3** log lines. With both directives
   given, 30 of 30 were recorded. A sampled access log makes every ratio in §4
   a fiction, so the explicit form is not style.
-- **Credentials do not enter it.** `Authorization` and `Cookie` are recorded as
-  `REDACTED` — verified by sending both — because `log_credentials` is off and
-  stays off. The webhook credential is a URL path segment rather than a header,
-  so `log_skip /avito/webhook/*` excludes those requests entirely. If
-  `AVITO_MCP_WEBHOOK_PATH` is customized, the matcher must be changed to the
-  same path before logging is enabled.
+- **Header credentials do not enter it — and the webhook has none.**
+  `Authorization` and `Cookie` are recorded as `REDACTED`, verified by sending
+  both, because `log_credentials` is off and stays off. That redaction protects
+  nothing the receiver uses: Avito's webhook protocol carries no signature
+  header, so the only authentication is the secret in the URL path
+  (`src/http/webhook.ts`), and Caddy records `request.uri` verbatim.
+  `log_skip /avito/webhook*` is what keeps those requests out of the log, and
+  the bare-**prefix** form is the one that was measured. One request per path,
+  three matchers, same site:
+
+  | request | `/avito/webhook/*` | `/avito/webhook*/*` | `/avito/webhook*` |
+  | --- | --- | --- | --- |
+  | `/mcp` | logged | logged | logged |
+  | `/healthz` | logged | logged | logged |
+  | `/avito/webhook/<secret>` | skipped | skipped | skipped |
+  | `/avito/webhook-mondigo/<secret>` | **logged** | skipped | skipped |
+  | `/avito/webhook/nested/<secret>` | skipped | **logged** | skipped |
+  | `/avito/webhook` | **logged** | **logged** | skipped |
+
+  The trailing-slash form leaks a receiver mounted *beside* the first one, and
+  `*/*` leaks nested paths; only the bare prefix covers this host as deployed,
+  and it leaves `/mcp` and `/healthz` — everything §4 counts — logged.
+- **A host with more than one receiver must cover every one of them.** This host
+  runs two: `avito-mcp.service` on `:3000` and `avito-mcp-mondigo.service` on
+  `:3001`, the same pair §6.0 names for the shared release symlink, and the
+  second one is a webhook receiver too (§1.1). A single matcher covers both only
+  because both mount under `/avito/webhook`. If `AVITO_MCP_WEBHOOK_PATH` moves
+  either receiver off that prefix, add a matcher for the new path before logging
+  is enabled — the same way §6.2 restarts both services rather than assuming one
+  procedure reaches both.
+- **`log_skip` silences the access log and nothing else.** With the matcher
+  active and the upstream down, a request to `/avito/webhook/<secret>` produced
+  no access entry and one `http.log.error.*` entry carrying the full `uri`,
+  secret intact, into journald. The restarts in §6.1 and §6.2 are exactly when
+  the upstream is down. This is a defect that predates the matcher and is not
+  closed by it: do not read `log_skip` as a guarantee that the journal never
+  holds the secret. If the journal has been read across a restart, rotate
+  `AVITO_MCP_WEBHOOK_SECRET` and re-register the webhook.
 - **The request headers are recorded**, which is what makes era attribution
   possible at the edge: `Mcp-Protocol-Version` is the field the server's own
   classifier reads, so the log can be split the same way the process splits it.
@@ -149,20 +182,41 @@ Neither is optional, and neither is something this document can do for itself.
 
 1. **The access log must be enabled in `/etc/caddy/avito-mcp.Caddyfile`** — the
    file this repository ships is an example, not the running config. Add the
-   same `log { output stderr / format json }` block and webhook `log_skip`
-   matcher to the site, then:
+   same `log { output stderr / format json }` block **and** the
+   `log_skip /avito/webhook*` line to the site — the skip is part of the block,
+   not an optional addition to it — then:
 
    ```bash
    caddy validate --config /etc/caddy/avito-mcp.Caddyfile --adapter caddyfile \
      && systemctl reload caddy \
      && journalctl -u caddy --since "-1min" --no-pager -o cat \
-        | jq -Rc 'fromjson? | select(.msg == "handled request") | [.request.method, .status]' | head
+        | jq -Rc 'fromjson? | select(.msg == "handled request") | .request.uri' | head
    ```
 
-   Until that prints something, §4 is not computable and `dual` must not be
-   turned on. Also send a webhook probe and confirm its path does **not** appear
-   in the journal before registering the webhook with Avito; a logged webhook
-   URL discloses the receiver's only authentication credential.
+   `.request.uri` is what R1–R4 select on, so the check has to print it; with
+   `log_skip` in place no URI that reaches the log carries a secret. Until it
+   prints something, §4 is not computable and `dual` must not be turned on.
+
+   Then, before the webhook is registered with Avito, POST a probe to each
+   receiver's path and confirm neither path appears in the journal. **Each
+   receiver needs its own coverage**: this host runs `avito-mcp.service` on
+   `:3000` and `avito-mcp-mondigo.service` on `:3001`, both of them webhook
+   receivers, so probe both — the single prefix matcher covers them only while
+   both stay under `/avito/webhook`. A logged webhook URL discloses the
+   receiver's only authentication credential.
+
+   ```bash
+   # both receivers, wrong secrets on purpose — the point is the log, not the 200
+   curl -s -o /dev/null -X POST -d '{}' https://mcp.example.com/avito/webhook/probe-not-a-secret
+   curl -s -o /dev/null -X POST -d '{}' https://mcp.example.com/avito/webhook-<second>/probe-not-a-secret
+   journalctl -u caddy --since "-1min" --no-pager -o cat | grep -c probe-not-a-secret   # must print 0
+   ```
+
+   One caveat the matcher does not remove: `log_skip` suppresses the access log
+   only. An `http.log.error.*` entry — written whenever the upstream is down,
+   which is every restart in §6.1 and §6.2 — still records the full URI in
+   journald. Verify the probe with the upstream **up**, and read §1.2 for what
+   to do if the journal was read across a restart.
 
 2. **journald must keep the observation window.** `/etc/systemd/journald.conf`
    on this host is empty — defaults only — and the journal currently reaches
