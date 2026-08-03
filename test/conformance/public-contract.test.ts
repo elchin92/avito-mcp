@@ -174,6 +174,7 @@ describe('M7.3 — SECURITY.md describes the threat model this code actually has
   const security = read('SECURITY.md');
   const config = read('src/config.ts');
   const pending = read('src/core/pending-actions.ts');
+  const meta = read('src/domains/meta.ts');
   const provider = read('src/http/oauth/provider.ts');
 
   /** The default `parsePositiveInt` gives a variable, read from the parser. */
@@ -185,21 +186,150 @@ describe('M7.3 — SECURITY.md describes the threat model this code actually has
     return found![1]!.replace(/_/g, '');
   };
 
-  it('names every principal form callerPrincipal() can actually return', () => {
-    // The three branches are the whole of caller identity on a sessionless
-    // revision, and the document's claim is that it lists them. Extracted from
-    // the function rather than listed here, so adding a fourth branch — or
-    // renaming the stdio fallback — turns the document red instead of leaving
-    // it quietly incomplete.
+  /**
+   * The default `SECURITY.md` states for a variable, read out of the sentence
+   * that NAMES the variable rather than out of the document at large.
+   *
+   * The distinction is the whole point of the check. An earlier version asserted
+   * `expect(security).toContain(defaultOf(variable))` — a bare substring over
+   * eighteen kilobytes of prose — and the acceptance pass walked straight
+   * through it: changing `AVITO_MCP_HTTP_MAX_INFLIGHT` from 64 to 48 left the
+   * suite 19/19 green, because "48" occurs in "at most 2048 bytes" four
+   * sections away, in a paragraph about `redirect_uris`. A number is a claim
+   * about the variable standing next to it, so that is where it is looked for.
+   */
+  const documentedDefaultOf = (variable: string): string | undefined => {
+    const flat = security.replace(/\s+/g, ' ');
+    const found = new RegExp(`\`${variable}\`[^\`]{0,120}?\\(?default ([\\d_]+)\\)?`).exec(flat);
+    return found?.[1]?.replace(/_/g, '');
+  };
+
+  /**
+   * Every principal `callerPrincipal()` can return, in the form a document has
+   * to spell it: `prefix:<` when the tail is interpolated, `prefix:literal`
+   * when a branch pins it.
+   *
+   * Derived from the function body, never listed here. The version this
+   * replaces matched `/`(oauth|bearer|session):/` — an alternation of the three
+   * names it already expected — and then asserted that it had found three of
+   * them and that `SECURITY.md` contained each `prefix:`. Both halves were
+   * satisfiable without the document being right, and the acceptance pass
+   * showed it twice: a fourth branch returning `apikey:<sha256>` never matched
+   * the alternation, so the count stayed 3 and the suite stayed green with a
+   * principal form the policy did not mention; and renaming the stdio fallback
+   * from `local-stdio` to anything else changed nothing, because only the text
+   * BEFORE the colon was ever compared, and `session:` on its own is what the
+   * document was asked for.
+   */
+  const principalForms = (): Set<string> => {
     const body = /export function callerPrincipal\([\s\S]*?\n}/.exec(pending)?.[0];
     expect(body, 'callerPrincipal() is no longer where this claim was checked').toBeDefined();
-    const forms = [...body!.matchAll(/`(oauth|bearer|session):/g)].map((match) => match[1]!);
-    expect(new Set(forms).size, 'expected three principal forms to check against').toBe(3);
-    for (const form of new Set(forms)) {
-      expect(security, `SECURITY.md does not name the ${form}: principal`).toContain(`${form}:`);
+    const templates = [...body!.matchAll(/return `([^`]+)`/g)].map((match) => match[1]!);
+    expect(templates.length, 'callerPrincipal() returns no template literal at all').toBeGreaterThan(
+      0,
+    );
+    const forms = new Set<string>();
+    for (const template of templates) {
+      const interpolation = template.indexOf('${');
+      expect(
+        interpolation,
+        `callerPrincipal() returns \`${template}\`, which this check cannot read`,
+      ).toBeGreaterThan(0);
+      const prefix = template.slice(0, interpolation);
+      expect(prefix.endsWith(':'), `\`${template}\` is not a <scheme>:<value> principal`).toBe(true);
+      // The interpolated form, always: something the document has to describe
+      // as a placeholder rather than quote.
+      forms.add(`${prefix}<`);
+      // And any value a branch pins with a literal default, which the document
+      // has to quote exactly — that literal IS the principal, verbatim, in
+      // every log line and every pending record it ever appears in.
+      for (const pinned of template.matchAll(/\?\?\s*'([^']+)'/g)) forms.add(prefix + pinned[1]!);
     }
+    return forms;
+  };
+
+  it('names every principal form callerPrincipal() can actually return', () => {
+    const derived = principalForms();
+
+    // The document's own enumeration, read back out of it, so the comparison
+    // has two independent sides. A form the code can produce and the section
+    // does not list fails; so does a form the section lists and the code can no
+    // longer produce.
+    const section = security
+      .split(/^#{2,4} /m)
+      .find((part) => part.includes('callerPrincipal()') && part.includes('`oauth:'));
+    expect(section, 'SECURITY.md no longer has a section enumerating the principal forms').toBeDefined();
+    const documented = new Set(
+      [...section!.matchAll(/`([a-z][\w-]*:[^`]*)`/g)].map((match) => {
+        const span = match[1]!;
+        const colon = span.indexOf(':');
+        return span[colon + 1] === '<' ? `${span.slice(0, colon + 1)}<` : span;
+      }),
+    );
+
+    expect(
+      [...documented].sort(),
+      'SECURITY.md and callerPrincipal() disagree about which principals exist',
+    ).toEqual([...derived].sort());
     expect(security).toContain('callerPrincipal()');
     expect(security).toContain('src/core/pending-actions.ts');
+  });
+
+  it('says which leg produces a session principal, and what that costs', () => {
+    // The finding this exists for. `session:<Mcp-Session-Id>` is not a fourth
+    // spelling of the stdio fallback: on the 2025-11-25 leg of a `dual` process
+    // with `AVITO_MCP_HTTP_AUTH=none`, every `initialize` mints a NEW principal,
+    // proven on a live connection — two legacy sessions on one rig produced
+    // `session:885f4ca7-…` and `session:6380c5de-…` while the modern leg of the
+    // same process produced `session:local-stdio`. The document said the third
+    // form covered "stdio, and HTTP under AVITO_MCP_HTTP_AUTH=none", which is
+    // false for that leg, and it said the confirmation budget "cannot be dodged
+    // by reconnecting", which is false for that leg too.
+    //
+    // Both halves are re-derived from `src/`: that the budget is keyed by the
+    // principal, and that the principal carries the session id.
+    expect(pending, 'the confirmation budget is no longer keyed by a principal').toMatch(
+      /checkConfirmationRateLimit\(\s*\n?\s*principal: string/,
+    );
+    expect(meta, 'meta_confirm_action no longer meters by callerPrincipal()').toContain(
+      'checkConfirmationRateLimit(callerPrincipal(',
+    );
+    expect(security).toContain('checkConfirmationRateLimit');
+    // The leg has to be named where the form is described...
+    const line = security.split('\n').find((text) => text.includes('`session:<'));
+    expect(line, 'SECURITY.md does not describe the session-id principal at all').toBeDefined();
+    expect(line, 'the session-id principal must say which revision still has sessions').toMatch(
+      /2025-11-25/,
+    );
+    // ...and the cost has to be stated where the budget is claimed, not left to
+    // a reader to infer from two paragraphs that never meet.
+    //
+    // Scoped to the BULLET, for the reason the neighbouring assertion already
+    // learned the hard way. The first version of this check took the whole
+    // "what bounds it today" list as one blob and asked it for
+    // /fresh budget|re-runs `initialize`|new connection/ — and the mutation that
+    // put the old, false sentence back ("the key is never a connection, so
+    // exhausting the budget cannot be dodged at all") stayed GREEN, because the
+    // words "new connection" survived in the very clause being falsified. A
+    // claim about the budget is made by the bullet making it.
+    const budget = security
+      .split(/\n- \*\*/)
+      .find((bullet) => bullet.startsWith('A per-principal budget'));
+    expect(budget, 'SECURITY.md no longer describes the per-principal budget').toBeDefined();
+    for (const required of [
+      // which leg the budget stops binding a caller on...
+      /2025-11-25/,
+      // ...what a caller does there to get a new one...
+      /`initialize`/,
+      // ...and that a new one is what they get.
+      /fresh budget|a new budget/,
+    ]) {
+      expect(
+        required.test(budget!),
+        `the budget bullet must satisfy ${required.source}: it is the sentence that says whether ` +
+          'reconnecting resets the counter, and it was wrong before',
+      ).toBe(true);
+    }
   });
 
   it('never calls a session hijackable without saying which era still has sessions', () => {
@@ -233,7 +363,10 @@ describe('M7.3 — SECURITY.md describes the threat model this code actually has
       `${Number(entropyBytes) * 8} bits`,
     );
     expect(security).toContain('AVITO_MCP_CONFIRMATION_TTL_SEC');
-    expect(security).toContain(defaultOf('AVITO_MCP_CONFIRMATION_TTL_SEC'));
+    expect(
+      documentedDefaultOf('AVITO_MCP_CONFIRMATION_TTL_SEC'),
+      'SECURITY.md must state the TTL default next to the variable it belongs to',
+    ).toBe(defaultOf('AVITO_MCP_CONFIRMATION_TTL_SEC'));
     expect(security).toContain('AVITO_MCP_CONFIRMATION_SECRET');
     expect(security).toContain('AVITO_MCP_APPROVAL_MODE=external');
     // The honest half. `meta_confirm_action` does not compare the confirming
@@ -275,9 +408,9 @@ describe('M7.3 — SECURITY.md describes the threat model this code actually has
     for (const variable of ['AVITO_MCP_HTTP_MAX_INFLIGHT', 'AVITO_MCP_HTTP_MAX_STREAMS']) {
       expect(security, `SECURITY.md does not name ${variable}`).toContain(variable);
       expect(
-        security,
+        documentedDefaultOf(variable),
         `SECURITY.md quotes a default for ${variable} that src/config.ts does not parse`,
-      ).toContain(defaultOf(variable));
+      ).toBe(defaultOf(variable));
     }
     // And the retired pair must be named as retired, not silently dropped: an
     // operator sizing a 2026 deployment with them is the failure.

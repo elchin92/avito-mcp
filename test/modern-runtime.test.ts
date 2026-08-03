@@ -45,6 +45,7 @@ import {
   errorOf,
   initializeMessage,
   legacyPost,
+  modernListAll,
   modernPost,
   openModernStream,
   resultOf,
@@ -793,8 +794,10 @@ describe('A15 — tool schemas are bounded and their dialect is documented', () 
 
   it('declares exactly the documented dialect, contains no network $ref, and stays bounded', async () => {
     const rig = await startRig('dual');
-    const listed = resultOf(await modernPost(rig, 'tools/list'))!;
-    const tools = listed.tools as Array<{
+    // The whole catalogue, walked across pages (M4.3). A "no tool schema does
+    // X" claim that only ever read page one would be a claim about a fifth of
+    // the tools while reading as a claim about all of them.
+    const tools = (await modernListAll(rig, 'tools/list', 'tools')) as Array<{
       name: string;
       inputSchema: Record<string, unknown>;
       outputSchema?: Record<string, unknown>;
@@ -838,7 +841,7 @@ describe('A16 — the primitive surface is deterministic', () => {
     // the registry, not one cached answer read twice.
     const rig = await startRig('dual');
     const names = async (): Promise<string[]> =>
-      ((resultOf(await modernPost(rig, 'tools/list'))!.tools as Array<{ name: string }>) ?? []).map(
+      ((await modernListAll(rig, 'tools/list', 'tools')) as Array<{ name: string }>).map(
         (t) => t.name,
       );
 
@@ -859,9 +862,12 @@ describe('A16 — the primitive surface is deterministic', () => {
     // divergence would mean one of the two wires is being built differently —
     // the same class of defect as the two construction sites.
     const rig = await startRig('dual');
-    const modernNames = (
-      resultOf(await modernPost(rig, 'tools/list'))!.tools as Array<{ name: string }>
-    ).map((t) => t.name);
+    // Walked, because the order is a property of the CATALOGUE: page one of a
+    // paginated answer and the whole of an unpaginated one are only comparable
+    // once both are the whole thing.
+    const modernNames = ((await modernListAll(rig, 'tools/list', 'tools')) as Array<{
+      name: string;
+    }>).map((t) => t.name);
 
     const init = await legacyPost(rig, initializeMessage());
     const sessionId = init.sessionId!;
