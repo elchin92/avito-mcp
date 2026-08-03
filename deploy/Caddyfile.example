@@ -29,13 +29,15 @@ mcp.example.com {
 	# The matcher is a bare PREFIX on purpose. Measured on v2.11.3, one request
 	# per path, with `log_skip /avito/webhook/*`: `/avito/webhook/<secret>` is
 	# skipped, but a SECOND receiver mounted beside it —
-	# `/avito/webhook-mondigo/<secret>` — is logged in full, and so is the bare
+	# `/avito/webhook-second/<secret>` — is logged in full, and so is the bare
 	# `/avito/webhook`. With `log_skip /avito/webhook*` all three are skipped
 	# while `/mcp` and `/healthz` are still recorded. `/avito/webhook*/*` is not
 	# a fix: it puts `/avito/webhook/nested/<secret>` back in the log.
 	#
 	# A host with several receivers needs EVERY receiver's path covered: this one
-	# runs avito-mcp.service (:3000) and avito-mcp-mondigo.service (:3001), and a
+	# runs avito-mcp.service (:3000) and a second unit on :3001 (named
+	# avito-mcp-second.service in docs/adr/0007-rollback-criteria.md §6.0, which
+	# also says why the real name is not written down here), and a
 	# single matcher covers both only because both mount under `/avito/webhook`.
 	# If AVITO_MCP_WEBHOOK_PATH moves a receiver off that prefix, add a matcher
 	# for the new path as well.

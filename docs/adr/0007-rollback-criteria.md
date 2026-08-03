@@ -80,14 +80,15 @@ M6.8 asks specifically how logs are collected from ephemeral stdio processes,
 because a stdio server is started and killed by its host and its stderr is not
 anybody's journal by default. Two cases, and only two:
 
-- **On this host, a stdio process is a systemd unit.** `avito-mcp-mondigo.service`
+- **On this host, a stdio process is a systemd unit.** A second unit —
+  `avito-mcp-second.service` in this document, see the naming note in §6.0 —
   runs `AVITO_MCP_TRANSPORT=stdio` with the webhook receiver keeping it alive;
   its stderr is journald like any other unit, and the same commands work with
-  `-u avito-mcp-mondigo`. It exposes no `/mcp`, so no traffic criterion applies
+  `-u avito-mcp-second`. It exposes no `/mcp`, so no traffic criterion applies
   to it — but §6.2 does, because it runs from the same release symlink.
 
   ```bash
-  journalctl -u avito-mcp-mondigo --since "-1h" --no-pager -o cat \
+  journalctl -u avito-mcp-second --since "-1h" --no-pager -o cat \
     | jq -Rc 'fromjson? | select(.level >= 40)'
   ```
 
@@ -135,7 +136,7 @@ Four things about that block, all measured on the Caddy actually installed here
   | `/mcp` | logged | logged | logged |
   | `/healthz` | logged | logged | logged |
   | `/avito/webhook/<secret>` | skipped | skipped | skipped |
-  | `/avito/webhook-mondigo/<secret>` | **logged** | skipped | skipped |
+  | `/avito/webhook-second/<secret>` | **logged** | skipped | skipped |
   | `/avito/webhook/nested/<secret>` | skipped | **logged** | skipped |
   | `/avito/webhook` | **logged** | **logged** | skipped |
 
@@ -143,7 +144,7 @@ Four things about that block, all measured on the Caddy actually installed here
   `*/*` leaks nested paths; only the bare prefix covers this host as deployed,
   and it leaves `/mcp` and `/healthz` — everything §4 counts — logged.
 - **A host with more than one receiver must cover every one of them.** This host
-  runs two: `avito-mcp.service` on `:3000` and `avito-mcp-mondigo.service` on
+  runs two: `avito-mcp.service` on `:3000` and `avito-mcp-second.service` on
   `:3001`, the same pair §6.0 names for the shared release symlink, and the
   second one is a webhook receiver too (§1.1). A single matcher covers both only
   because both mount under `/avito/webhook`. If `AVITO_MCP_WEBHOOK_PATH` moves
@@ -200,7 +201,7 @@ Neither is optional, and neither is something this document can do for itself.
    Then, before the webhook is registered with Avito, POST a probe to each
    receiver's path and confirm neither path appears in the journal. **Each
    receiver needs its own coverage**: this host runs `avito-mcp.service` on
-   `:3000` and `avito-mcp-mondigo.service` on `:3001`, both of them webhook
+   `:3000` and `avito-mcp-second.service` on `:3001`, both of them webhook
    receivers, so probe both — the single prefix matcher covers them only while
    both stay under `/avito/webhook`. A logged webhook URL discloses the
    receiver's only authentication credential.
@@ -511,14 +512,14 @@ what bounds the cost of this gap until M1.15.
 Verified on this host, because two of them are the reason the naive version of
 this procedure is wrong:
 
-- Both `avito-mcp.service` and `avito-mcp-mondigo.service` execute
+- Both `avito-mcp.service` and `avito-mcp-second.service` execute
   `/opt/avito-mcp/current/dist/server.js`. **One symlink, two services.**
 - `deploy/install-services.sh` manages `avito-mcp.service` and `caddy.service`
-  and **does not know that `avito-mcp-mondigo.service` exists**. Its automatic
+  and **does not know that `avito-mcp-second.service` exists**. Its automatic
   `rollback_release` therefore restarts one of the two processes running from
   the path it just moved.
 - The two services read **different** environment files:
-  `/etc/avito-mcp/avito-mcp.env` and `/etc/openclaw/avito-mcp-mondigo.env`.
+  `/etc/avito-mcp/avito-mcp.env` and `/etc/avito-mcp-second/avito-mcp-second.env`.
 - A running process keeps the release directory it started from, even after the
   symlink is moved. `readlink -f /proc/<pid>/cwd` is what proves which release
   is actually executing; `readlink -f /opt/avito-mcp/current` only says what the
@@ -526,6 +527,31 @@ this procedure is wrong:
 - `AVITO_MCP_PROTOCOL_ERA` matches the `AVITO_MCP_*` allowlist in
   `deploy/render-service-env.mjs`, so it survives a re-render of the service
   environment file and does not have to be re-added after a deploy.
+
+> **On the name `avito-mcp-second`.** `avito-mcp.service` and the paths under
+> `/opt/avito-mcp`, `/etc/avito-mcp` and `/var/lib/avito-mcp` are what
+> `deploy/install-services.sh` creates, so they are the same on every install
+> and are written out here. The *second* unit is not: it is whatever else the
+> operator has mounted on the same release, its real name says which other
+> deployment shares this host, and this repository is public. So it is written
+> as `avito-mcp-second.service` throughout, with its environment file under
+> `/etc/avito-mcp-second/` — a stand-in, not a unit name to paste. Read the real
+> list off the host instead of remembering it; this is also the only form that
+> stays correct if a third unit is added:
+>
+> ```bash
+> # every unit executing the release this symlink points at
+> for u in $(systemctl list-units --type=service --all --no-legend 'avito-mcp*' \
+>              | awk '{print $1}'); do
+>   pid=$(systemctl show -p MainPID --value "$u")
+>   [ "$pid" != 0 ] && [ "$(readlink -f /proc/$pid/cwd)" = "$(readlink -f /opt/avito-mcp/current)" ] \
+>     && printf '%s\n' "$u"
+> done
+> ```
+>
+> Substitute what that prints wherever `avito-mcp-second.service` appears below.
+> If it prints one unit, §6.2 is simpler than it is written; if it prints three,
+> §6.2 as written is *wrong* and the third one has to be restarted too.
 
 ### 6.1 Level 1 — the era, seconds
 
@@ -550,14 +576,14 @@ tr '\0' '\n' < /proc/$pid/environ | grep '^AVITO_MCP_PROTOCOL_ERA=' \
 # 4. Verify it serves.
 curl -s --max-time 3 http://127.0.0.1:3000/healthz
 curl -s --max-time 3 http://127.0.0.1:3000/readyz
-systemctl is-active avito-mcp avito-mcp-mondigo caddy
+systemctl is-active avito-mcp avito-mcp-second caddy
 ```
 
-**Do not touch `avito-mcp-mondigo.service` here.** It is `transport=stdio` with
+**Do not touch `avito-mcp-second.service` here.** It is `transport=stdio` with
 a webhook receiver and exposes no `/mcp`; the era flag changes nothing for it,
 and restarting it drops the webhook listener for no reason. If the variable was
-ever added to `/etc/openclaw/avito-mcp-mondigo.env`, remove it there too and
-restart that unit as well — but the default is that it is not there.
+ever added to `/etc/avito-mcp-second/avito-mcp-second.env`, remove it there too
+and restart that unit as well — but the default is that it is not there.
 
 Expected duration: under 10 seconds. Then re-run R1, R3 and the R3 probe; all
 three must read zero / `401` before the incident is called closed.
@@ -583,16 +609,16 @@ readlink -f /opt/avito-mcp/current
 # 3. Restart BOTH services. Neither picks the new target up on its own, and the
 #    installer's own rollback path restarts only the first of the two.
 systemctl restart avito-mcp.service
-systemctl restart avito-mcp-mondigo.service
+systemctl restart avito-mcp-second.service
 
 # 4. Verify that each process is really executing the release you selected.
-for u in avito-mcp avito-mcp-mondigo; do
+for u in avito-mcp avito-mcp-second; do
   pid=$(systemctl show -p MainPID --value $u.service)
   printf '%s pid=%s release=%s\n' "$u" "$pid" "$(readlink -f /proc/$pid/cwd)"
 done
 curl -s --max-time 3 http://127.0.0.1:3000/healthz   # {"version":"<previous>"}
-curl -s --max-time 3 http://127.0.0.1:3001/healthz   # the mondigo unit, same version
-systemctl is-active avito-mcp avito-mcp-mondigo caddy
+curl -s --max-time 3 http://127.0.0.1:3001/healthz   # the second unit, same version
+systemctl is-active avito-mcp avito-mcp-second caddy
 ```
 
 Step 4 is the step that is skipped and should not be: a service whose restart
