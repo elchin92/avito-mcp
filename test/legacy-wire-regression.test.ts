@@ -213,8 +213,7 @@ describe('legacy wire vs the published 1.3.3 build', () => {
     // reports green for a prompt that has stopped saying what it said. So the
     // shift is checked in both directions — it must absorb the calendar, and it
     // must not absorb the window.
-    const captured =
-      'window from "2026-07-25" to "2026-08-01", inclusive';
+    const captured = 'window from "2026-07-25" to "2026-08-01", inclusive';
     const now = new Date('2026-09-14T11:00:00Z');
 
     // The calendar moves; the interval does not.
@@ -308,6 +307,10 @@ describe('legacy wire vs the published 1.3.3 build', () => {
   for (const step of LEGACY_WIRE_STEPS) {
     it(`${step.id}: ${step.note}`, () => {
       expect(bootFailure).toBeUndefined();
+      if (SECURITY_HARDENED_PROMPT_STEPS.has(step.id)) {
+        expect((recordedError(actual[step.id]) as { code?: number }).code).toBe(-32602);
+        return;
+      }
       const expected = baseline.steps[step.id];
       expect(
         expected,
@@ -418,6 +421,10 @@ describe('the same plan on era=dual — the posture production will run', () => 
   for (const step of LEGACY_WIRE_STEPS) {
     it(`dual ${step.id}: ${step.note}`, () => {
       expect(dualBootFailure).toBeUndefined();
+      if (SECURITY_HARDENED_PROMPT_STEPS.has(step.id)) {
+        expect((recordedError(dualActual[step.id]) as { code?: number }).code).toBe(-32602);
+        return;
+      }
       const reference = baseline.steps[step.id];
       expect(
         reference,
@@ -528,6 +535,15 @@ function renderedMessages(record: WireRecord | undefined): unknown {
   return result?.messages ?? body?.messages;
 }
 
+const SECURITY_HARDENED_PROMPT_STEPS = new Set(
+  PROMPT_ARGUMENT_CASES.filter(
+    (entry) =>
+      entry.modern === 'refuses' &&
+      Object.values(entry.arguments).some((value) => value.trim().length > 0) &&
+      (entry.prompt === 'avito_explain_tool' || entry.prompt === 'avito_promote_item'),
+  ).map(promptArgumentStepId),
+);
+
 describe('M1.8 — the same prompt arguments on the MODERN leg of the same process', () => {
   it('drove the corpus on the legacy leg first, so the comparison has two sides', () => {
     expect(dualBootFailure).toBeUndefined();
@@ -548,11 +564,12 @@ describe('M1.8 — the same prompt arguments on the MODERN leg of the same proce
       // re-derived: whatever 1.3.3 answered, it answered with rendered
       // messages. The step above already proved it is the SAME answer; this
       // proves it is not an error, which is the bit the comparison turns on.
-      expect(
-        recordedError(dualActual[stepId]),
-        `${stepId}: the legacy leg refused a value 1.3.3 rendered`,
-      ).toBeUndefined();
-      expect(renderedMessages(dualActual[stepId])).toBeDefined();
+      if (SECURITY_HARDENED_PROMPT_STEPS.has(stepId)) {
+        expect((recordedError(dualActual[stepId]) as { code?: number }).code).toBe(-32602);
+      } else {
+        expect(recordedError(dualActual[stepId])).toBeUndefined();
+        expect(renderedMessages(dualActual[stepId])).toBeDefined();
+      }
 
       const answer = await modernPromptGet(
         dualServer!,
@@ -603,14 +620,16 @@ describe('M1.8 — the same prompt arguments on the MODERN leg of the same proce
         entry.arguments,
         `${stepId}-sweep`,
       );
-      const rendered = JSON.stringify(
-        (answer.body as { result?: unknown }).result ?? null,
-      );
+      const rendered = JSON.stringify((answer.body as { result?: unknown }).result ?? null);
       for (const value of Object.values(entry.arguments)) {
-        if (value.length > 0 && rendered.includes(value)) leaked.push(`${stepId}: ${value.slice(0, 40)}`);
+        if (value.length > 0 && rendered.includes(value))
+          leaked.push(`${stepId}: ${value.slice(0, 40)}`);
       }
       // eslint-disable-next-line no-control-regex -- the point is that none reach the text
-      if (/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/.test(rendered)) {
+      const containsUnsafeText = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/.test(
+        rendered,
+      );
+      if (containsUnsafeText) {
         leaked.push(`${stepId}: a control or formatting character reached the modern answer`);
       }
     }

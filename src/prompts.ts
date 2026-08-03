@@ -499,7 +499,7 @@ function registerUnreadChats(server: McpServer, era: ProtocolEra): void {
   );
 }
 
-/** `avito_explain_tool` — an allowlisted tool name on 2026, any string on 2025. */
+/** `avito_explain_tool` — an allowlisted tool name on both protocol eras. */
 function registerExplainTool(server: McpServer, era: ProtocolEra): void {
   if (era === 'modern') {
     server.registerPrompt(
@@ -540,12 +540,19 @@ function registerExplainTool(server: McpServer, era: ProtocolEra): void {
           'Provide tool_name, e.g. items_update_price.\n\n— Русский / Russian —\n\nУкажи tool_name, например items_update_price.',
         );
       }
-      return explainToolResult(name);
+      if (!TOOL_NAME_PATTERN.test(name)) {
+        throw invalidPromptArgument(
+          'tool_name',
+          'must be a tool name: lowercase letters, digits and underscores, ' +
+            '3 to 64 characters, starting with a letter',
+        );
+      }
+      return explainToolResult(promptSafeText('tool_name', name));
     },
   );
 }
 
-/** `avito_promote_item` — digits only on 2026, any string on 2025. */
+/** `avito_promote_item` — a digits-only listing id on both protocol eras. */
 function registerPromoteItem(server: McpServer, era: ProtocolEra): void {
   if (era === 'modern') {
     server.registerPrompt(
@@ -585,7 +592,13 @@ function registerPromoteItem(server: McpServer, era: ProtocolEra): void {
           'Provide item_id.\n\n— Русский / Russian —\n\nУкажи item_id.',
         );
       }
-      return promoteItemResult(itemId);
+      if (!ITEM_ID_PATTERN.test(itemId)) {
+        throw invalidPromptArgument(
+          'item_id',
+          'must be an Avito listing id: 1 to 19 digits, no leading zero',
+        );
+      }
+      return promoteItemResult(promptSafeText('item_id', itemId));
     },
   );
 }

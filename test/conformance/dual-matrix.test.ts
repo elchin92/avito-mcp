@@ -158,7 +158,7 @@ describe.each(ERAS)('era=%s — the primitive surface', (era: EraName) => {
     expect(error.message).toContain('tool_name');
   });
 
-  it('M1.8 — a hostile prompt argument reaches the model on 2025 and never on 2026', async () => {
+  it('M1.8 — a hostile prompt argument never reaches the model', async () => {
     // The half that matters for the model's context, and the half a
     // blank-argument row cannot reach: a value that is not blank at all, and
     // that reads as an instruction once it sits inside a prompt naming four
@@ -169,13 +169,6 @@ describe.each(ERAS)('era=%s — the primitive surface', (era: EraName) => {
       name: 'avito_explain_tool',
       arguments: { tool_name: hostile },
     });
-
-    if (era === 'legacy') {
-      expect(errorOf(answer)).toBeUndefined();
-      const messages = resultOf(answer)!.messages as Array<{ content: { text?: string } }>;
-      expect(messages[0]!.content.text).toContain(hostile);
-      return;
-    }
 
     expect(resultOf(answer)).toBeUndefined();
     expect(errorOf(answer)!.code).toBe(-32602);
