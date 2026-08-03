@@ -16,14 +16,15 @@ import type {
   RequestResponse,
   SafeStaticHeaders,
 } from './client.js';
-import { errorToMcpContent } from './errors.js';
+import { AvitoApiError, errorToMcpContent } from './errors.js';
 import {
   hashArgs,
   fingerprintIdempotencyKey,
   type IdempotencyStore,
   IdempotencyConflictError,
   IdempotencyLimitError,
-  IdempotencyRecoveryRequiredError,
+  IdempotencyReconcileRequiredError,
+  UpstreamOutcomeUnknownError,
 } from './idempotency.js';
 import { callerPrincipal, type CallerExtra, type PendingActionStore } from './pending-actions.js';
 import { evaluatePolicy, requiresConfirmation } from './policy.js';
@@ -338,10 +339,17 @@ export function defineTool<I extends ZodRawShape>(
     cleanArgs: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<CallToolResult> => {
+    // Latched by the client at the instant the request is handed to the network.
+    // NOT "we are about to call": the gap between those two contains the
+    // rate-limiter queue and the token refresh, and a call cancelled in that gap
+    // changed nothing upstream.
+    let dispatched = false;
     try {
       const response = spec.customExecute
         ? await spec.customExecute(cleanArgs, ctx)
-        : await executeHttpRequest(cleanArgs, spec, ctx, signal);
+        : await executeHttpRequest(cleanArgs, spec, ctx, signal, () => {
+            dispatched = true;
+          });
       const result: CallToolResult = {
         content: [
           {
@@ -357,18 +365,34 @@ export function defineTool<I extends ZodRawShape>(
       if (structured !== undefined) result.structuredContent = structured;
       return result;
     } catch (err) {
-      // A cancellation must PROPAGATE, not become a result (M3 item 11).
+      // A cancelled call does not become an ordinary result (M3 item 11).
       //
       // Every other failure is deliberately turned into an `isError` payload so
       // the agent can read and react to it — but that same conversion, applied
-      // to a cancelled call, is what would defeat the requirement: the
-      // idempotency ledger releases its lease when `execute` REJECTS, and
-      // remembers the value when it resolves. Returning an error payload here
-      // would memoise "the client hung up" under the caller's idempotency key
-      // and wedge every retry that reuses it for the whole TTL. Nobody is left
-      // to read the payload anyway — the stream it would travel on is the one
-      // that just closed.
-      if (signal?.aborted === true) throw err;
+      // to a cancellation, would memoise "the client hung up" under the caller's
+      // idempotency key and wedge every retry that reuses it for the whole TTL.
+      // Nobody is left to read the payload anyway: the stream it would travel on
+      // is the one that just closed. So this branch decides what the LEDGER is
+      // told, and the three answers below are not interchangeable.
+      if (signal?.aborted === true) {
+        // …but WHAT the cancellation means for the caller's idempotency key is
+        // decided by `dispatched`, never by `aborted` alone.
+
+        // Nothing left this process — the call was still queueing for a
+        // rate-limiter slot or a token. Releasing the key is correct and
+        // required: refusing it here would strand every cancelled agent.
+        if (!dispatched) throw err;
+
+        // The upstream answered THIS request with a status. The outcome is known
+        // despite the cancellation, so it is remembered like any other failure
+        // and a retry with the same key replays it instead of re-running it.
+        if (err instanceof AvitoApiError) return errorToMcpContent(err);
+
+        // The request was on the wire and never produced an answer we can read.
+        // The mutation may have applied. The key is held rather than freed —
+        // freeing it is what turns one cancelled money call into two charges.
+        throw new UpstreamOutcomeUnknownError(err);
+      }
       return errorToMcpContent(err);
     }
   };
@@ -579,7 +603,9 @@ export function defineTool<I extends ZodRawShape>(
         if (
           err instanceof IdempotencyConflictError ||
           err instanceof IdempotencyLimitError ||
-          err instanceof IdempotencyRecoveryRequiredError
+          // Covers both reconcile-first refusals: the crash-recovery one and the
+          // hold left by a cancellation that raced a dispatched request.
+          err instanceof IdempotencyReconcileRequiredError
         ) {
           return errorToMcpContent(err);
         }
@@ -804,10 +830,12 @@ async function executeHttpRequest(
   spec: ToolSpec,
   ctx: ToolContext,
   signal?: AbortSignal,
+  onDispatch?: () => void,
 ): Promise<RequestResponse> {
   const { pathParams, query, body } = splitArgs(cleanArgs, spec, ctx);
   return ctx.client.request({
     ...(signal !== undefined ? { signal } : {}),
+    ...(onDispatch !== undefined ? { onDispatch } : {}),
     method: spec.method,
     path: spec.path,
     pathParams,

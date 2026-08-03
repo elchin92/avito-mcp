@@ -123,6 +123,62 @@ For the use cases this server is designed for (humans-in-the-loop using Claude D
 
 ---
 
+## Lifting a held idempotency key
+
+An idempotency key can end up **held**. It happens in exactly one situation: the
+client hung up (on revision 2026-07-28, closed the response stream) *after* the
+request had already been sent to Avito. The outgoing call is aborted and the
+rate-limit slot is returned, but whether Avito applied the mutation is
+unknowable from here — so the key is refused rather than freed, because freeing
+it is what would let the next retry spend the money a second time. The reasoning
+and its cost are in [ADR 0008](adr/0008-idempotency-hold-on-cancelled-dispatch.md).
+
+**What the agent sees.** An `isError` result with
+`structuredContent.error.type = "IDEMPOTENCY_HELD"` and
+`code = "IDEMPOTENCY_HELD/cancelled_after_dispatch"`, saying in words that the
+operation may have taken effect and must be checked before being repeated.
+
+**What you see.** One `warn` line at the moment it happens, carrying the tool
+name, the key's SHA-256 fingerprint, the hold's expiry, and — when durable state
+is configured — the absolute path of the record:
+
+```
+"msg":"idempotency key HELD: the caller cancelled after the request had already been sent to Avito. …"
+"tool":"items_put_item_vas","idempotencyKeyHash":"…","record":"/var/lib/avito-mcp/runtime/<ns>/idempotency/<tool>/<key>.json","heldUntil":"…"
+```
+
+**How it clears.** Three ways, in order of preference:
+
+1. **By itself.** The hold expires after `AVITO_MCP_IDEMPOTENCY_TTL_SEC`
+   (default one hour) from the moment the call started, and is swept the next
+   time that key is used. Until then it counts against the ledger's
+   `maxEntries`, and afterwards it does not. Doing nothing is a valid choice.
+2. **By the agent, with a different key** — but only after it has *checked with
+   Avito* whether the operation applied. The refusal text says exactly this. A
+   fresh key for an operation that already succeeded is a duplicate charge, so
+   this is a decision for whoever can look at the account.
+3. **By you, deliberately.** Once you have reconciled the operation on the Avito
+   side and know the answer, delete the record file named in the log line:
+
+   ```bash
+   # after confirming on the Avito side what actually happened
+   rm /var/lib/avito-mcp/runtime/<ns>/idempotency/<tool-hash>/<key-hash>.json
+   ```
+
+   The path is the one printed in the `warn` line — both components are hashes,
+   so copy it from the log rather than deriving it. Removing the file makes the
+   key usable again on the next call. Removing a `completed` record instead
+   would discard a remembered result and re-enable a real duplicate, so remove
+   only the file the log named, and only after you know what happened upstream.
+
+A hold is **not** the same as the `in_flight` record left behind when a process
+is killed mid-call. That one never expires on purpose: a killed process recorded
+nothing about what it had seen, so nothing bounds the uncertainty. A hold was
+written by a live process that knew exactly how far it had got, which is what
+earns it an expiry date.
+
+---
+
 ## Defence in depth
 
 Even with a strict mode, you should always:
