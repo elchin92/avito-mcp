@@ -679,8 +679,8 @@
             "mimeType": "application/json",
             "text": {
               "firstLine": "{",
-              "length": 380741,
-              "sha256": "32421f165712158094901c88fbad068b"
+              "length": 380745,
+              "sha256": "d84390e504e9e58b4c7b210a67a1450f"
             },
             "uri": "avito://manifest"
           }

@@ -74,12 +74,28 @@
  *     1.3.3 REFUSED and this branch accepts, because 1.3.3 was refusing a
  *     well-formed request. Declared with both sides' values at every checked
  *     path, so the declaration fails the day it stops being true.
- *   • {@link RebasedValue} — the digest of `avito://docs/safety`, which is a
- *     property of `docs/safety.md` and not of the wire. Recomputed from the
- *     live file, which makes the assertion stricter than the frozen one: the
- *     branch must serve that file byte for byte.
+ *   • {@link RebasedValue} — three values that are properties of the repository
+ *     or of the clock rather than of the wire, each recomputed rather than
+ *     frozen, which makes the assertion STRICTER than the frozen one: the
+ *     digest of `avito://docs/safety`, which belongs to `docs/safety.md` (the
+ *     branch must serve that document byte for byte); the RELEASE NUMBER at the
+ *     three places the wire reports it plainly ({@link RELEASE_NUMBER_REBASE} —
+ *     the branch must report the version it actually ships); and the reporting
+ *     window `avito_daily_overview` renders from the clock
+ *     ({@link reanchorDates}), which is re-anchored to today so the window is
+ *     still required to be seven days long and still required to end TODAY.
  *
- * Nothing else in this file may differ.
+ * Nothing else in this file may differ. ONE value is normalised on both sides
+ * rather than declared as a difference, because it is not a property of the
+ * wire and cannot be compared where it appears: the release number inside
+ * `avito://manifest`, a 380 KB document that embeds it
+ * ({@link condenseManifestDocument}). Removing it leaves the frozen 1.3.3
+ * digest pinning every other byte of the catalogue, and the version is still
+ * compared on its own at the three places the wire reports it plainly.
+ *
+ * Neither the rebases nor that normalisation is an allowance. They are the
+ * values that would otherwise force a re-capture on a schedule — the failure
+ * mode that ends with the reference no longer being 1.3.3.
  *
  * Not named *.test.ts, so vitest's include pattern does not collect it.
  */
@@ -396,13 +412,64 @@ function safetyDocument(): string {
 
 /** A `resources/read` whose text is a large document: digest plus a shape probe. */
 function condenseDocument(body: unknown): unknown {
+  return condenseDocumentWith(body, (text) => text);
+}
+
+/**
+ * The same, with the RELEASE NUMBER normalised out of the document first.
+ *
+ * `avito://manifest` embeds `version`, so a release bump moves the digest of a
+ * 380 KB document in which nothing else changed. Left alone, that turns "we cut
+ * a version" into "the legacy wire moved" on every single release — a false
+ * verdict this bench must never produce, and one whose pressure would land on
+ * the bench rather than on the code.
+ *
+ * Normalising is what keeps the assertion strong rather than what weakens it.
+ * The alternative to a placeholder is a rebase of the whole digest against a
+ * recomputed document, and that would have to replicate `liveManifest()` here —
+ * the bench asserting the server against a second copy of the server, which is
+ * no assertion at all. With the release number replaced by a fixed-width token,
+ * the digest frozen from the real 1.3.3 still pins EVERY OTHER BYTE of the
+ * catalogue: 148 tool definitions, their risks, domains, annotations and
+ * schemas, the per-risk and per-domain counts, and `schema_hash`. The version
+ * itself is not lost either — it is compared on its own, against
+ * `package.json`, at the three other places the wire reports it.
+ *
+ * A CONSTANT token matters, and being the same width as the version it replaces
+ * does not: `length` is part of the same condensation, and replacing the
+ * version outright is what makes that length independent of how many digits the
+ * release number happens to have. `1.3.3` and a later `2.0.10` condense to the
+ * same document, which is the property that keeps this step from failing on
+ * every release from now on.
+ */
+const RELEASE_NUMBER_TOKEN = '<release>';
+
+function condenseManifestDocument(body: unknown): unknown {
+  return condenseDocumentWith(body, (text) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Not JSON at all is a finding, not something to normalise past: hand the
+      // raw text on and let the comparison report it.
+      return text;
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return text;
+    const document = parsed as Record<string, unknown>;
+    if (typeof document.version !== 'string') return text;
+    return JSON.stringify({ ...document, version: RELEASE_NUMBER_TOKEN }, null, 2);
+  });
+}
+
+function condenseDocumentWith(body: unknown, normalise: (text: string) => string): unknown {
   const contents = resultOf(body)?.contents;
   if (!Array.isArray(contents)) return { unexpected: body };
   return {
     envelope: { ...(body as Frame), result: { contentCount: contents.length } },
     contents: contents.map((entry) => {
       const item = entry as Record<string, unknown>;
-      const text = typeof item.text === 'string' ? item.text : null;
+      const raw = typeof item.text === 'string' ? item.text : null;
+      const text = raw === null ? null : normalise(raw);
       return {
         ...item,
         text:
@@ -411,6 +478,42 @@ function condenseDocument(body: unknown): unknown {
             : { length: text.length, firstLine: text.split('\n', 1)[0], sha256: digest(text) },
       };
     }),
+  };
+}
+
+/** The release number this branch ships, which the wire reports in four places. */
+function packageVersion(): string {
+  const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
+    version?: string;
+  };
+  if (typeof pkg.version !== 'string') throw new Error('package.json has no version');
+  return pkg.version;
+}
+
+/**
+ * The release number, wherever the wire reports it, rebased onto `package.json`.
+ *
+ * This is the one value in the capture that is SUPPOSED to move, and it moves
+ * on exactly the commits this bench is least interested in — a version bump
+ * touches no protocol code. Frozen at `1.3.3` it would fail every release from
+ * this one onwards, and the fix under that pressure is always to re-capture the
+ * baseline, which is how a compatibility reference quietly becomes a picture of
+ * the branch.
+ *
+ * As a rebase it is STRICTER than the frozen value, on the bench's own terms:
+ * the branch must report the version it actually ships, in all three places, or
+ * the step fails. A build whose `serverInfo.version` disagreed with its
+ * `package.json` — the shape a botched release actually takes — was invisible
+ * to the frozen comparison the moment the number changed, and is caught here.
+ */
+function RELEASE_NUMBER_REBASE(path: readonly string[]): RebasedValue {
+  return {
+    path,
+    value: packageVersion,
+    why:
+      'The release number is a property of package.json, not of the protocol. Rebasing it ' +
+      'keeps every other byte of the answer pinned to the real 1.3.3 while requiring this ' +
+      'build to report the version it actually ships.',
   };
 }
 
@@ -491,6 +594,7 @@ const PROTOCOL_WIRE_STEPS: readonly WireStep[] = [
       capabilities: {},
       clientInfo: { name: 'legacy-wire-bench', version: '1.0.0' },
     },
+    rebase: [RELEASE_NUMBER_REBASE(['body', 'result', 'serverInfo', 'version'])],
   },
   {
     id: '02-notifications-initialized',
@@ -542,7 +646,11 @@ const PROTOCOL_WIRE_STEPS: readonly WireStep[] = [
     note: 'the manifest resource — the published tool registry',
     method: 'resources/read',
     params: { uri: 'avito://manifest' },
-    condense: condenseDocument,
+    // The release number is normalised out of this document before it is
+    // digested; see {@link condenseManifestDocument} for why that keeps the
+    // frozen digest strong instead of weakening it. Everything else in the
+    // catalogue is still compared against the real 1.3.3, byte for byte.
+    condense: condenseManifestDocument,
   },
   {
     id: '10-resources-read-config',
@@ -579,6 +687,7 @@ const PROTOCOL_WIRE_STEPS: readonly WireStep[] = [
         why: 'AVITO_MCP_HTTP_MAX_STREAMS, new in M3.8: the bound on open subscriptions/listen streams, for the same reason.',
       },
     ],
+    rebase: [RELEASE_NUMBER_REBASE(['body', 'contents', '0', 'text', 'version'])],
   },
   {
     id: '11-resources-read-unregistered',
@@ -610,6 +719,7 @@ const PROTOCOL_WIRE_STEPS: readonly WireStep[] = [
     method: 'tools/call',
     params: { name: 'meta_capabilities', arguments: {} },
     condense: condenseCapabilities,
+    rebase: [RELEASE_NUMBER_REBASE(['body', 'payload', 'version'])],
   },
   {
     id: '16-tools-call-unknown',

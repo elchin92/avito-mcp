@@ -87,7 +87,7 @@
  * typo or an invention, and either way the citation cannot be followed.
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -255,43 +255,45 @@ function citedTasks(text: string): Set<string> {
 }
 
 /**
- * Every `*.<suffix>` under `directory`, skipping dot-directories.
+ * Every `*.<suffix>` under `directory`, skipping dot-directories, walked so
+ * that a SIBLING SUITE cannot make this one fail.
  *
- * Both halves of that sentence are load-bearing, and the second one was learned
- * the hard way. This walk runs at MODULE LOAD, i.e. while every other suite in
- * the run is executing, and `test/.sandbox/<random>` is a scratch directory
- * those suites create and delete constantly. A `statSync` on an entry that has
- * been removed between the `readdirSync` and the call throws ENOENT, which is
- * not a failed assertion but a collection error: the whole file reports as
- * failed with no test having run, intermittently, on whichever CI leg lost the
- * race. It happened on Node 22 and not on Node 24 in the same run, which is
- * exactly how a race presents itself as a platform bug.
+ * Both halves of that first sentence are load-bearing, and the second one was
+ * learned the hard way. This walk runs at MODULE LOAD, i.e. while every other
+ * suite in the run is executing, and `test/.sandbox/<random>` is a scratch
+ * directory those suites create and delete constantly
+ * (`test/support/sandbox.ts`). A `statSync` on an entry removed between the
+ * `readdirSync` and the call throws ENOENT, which is not a failed assertion but
+ * a collection error: the whole file reports as failed with no test having run,
+ * intermittently, on whichever CI leg lost the race. It happened on Node 22 and
+ * not on Node 24 in the same run, which is exactly how a race presents itself
+ * as a platform bug — out of a test whose subject is a documentation table.
  *
- * Skipping dot-directories fixes it at the source rather than by catching the
- * error: a task claim, an accepted ADR and a suite title are all committed
- * files, so a scratch directory has nothing this function is looking for. The
- * ENOENT tolerance stays as well, because "skipped the one directory we know
- * about" is not the same as "cannot be raced".
+ * Three changes, each closing part of it. Skipping dot-directories fixes it at
+ * the source rather than by catching the error: a task claim, an accepted ADR
+ * and a suite title are all committed files, so a scratch directory has nothing
+ * this function is looking for. `withFileTypes` takes the answer from the
+ * directory entry that has already been read, so there is no second syscall to
+ * lose the race with at all. And the ENOENT tolerance stays, because "skipped
+ * the one directory we know about" is not the same as "cannot be raced": a
+ * directory that disappears mid-walk is treated as empty rather than fatal,
+ * because by then it is genuinely not a directory containing anything this test
+ * grades.
  */
 function everyFileUnder(directory: string, suffix: string): string[] {
   const found: string[] = [];
   const walk = (current: string): void => {
-    let entries: string[];
+    let entries: Dirent[];
     try {
-      entries = readdirSync(current);
-    } catch {
-      return;
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
     }
     for (const entry of entries) {
-      if (entry.startsWith('.')) continue;
-      const path = join(current, entry);
-      let isDirectory: boolean;
-      try {
-        isDirectory = statSync(path).isDirectory();
-      } catch {
-        continue;
-      }
-      if (isDirectory) walk(path);
+      if (entry.name.startsWith('.')) continue;
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) walk(path);
       else if (path.endsWith(suffix)) found.push(path);
     }
   };
