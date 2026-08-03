@@ -812,27 +812,51 @@ export class OAuthStore {
     }
     if (Date.now() - newestMtimeMs <= LEASE_INITIALIZATION_GRACE_MS) return false;
 
-    // Everything above read a directory another process may be replacing. A lease
-    // published in the meantime carries a fresh mtime, so requiring it unchanged keeps
-    // the reclaim off a successor that took the path while we were looking.
+    // Publish a live transition marker before the final validation. This prevents an
+    // initializer from accepting a marker that it finishes while we validate: it must
+    // observe our competing marker in soleLeaseMarker(). Conversely, if it accepted just
+    // before our claim, the validation below observes its now-valid live owner marker.
+    const claimName = `.transition-${process.pid}-${OAuthStore.newId()}.json`;
+    const claimPath = join(leasePath, claimName);
     try {
-      const current = lstatSync(leasePath);
+      writeFileSync(claimPath, JSON.stringify({ pid: process.pid }), {
+        encoding: 'utf8',
+        flag: 'wx',
+        mode: 0o600,
+      });
+      this.beforeAbandonedLeaseValidation(leasePath);
+      const currentEntries = readdirSync(leasePath);
       if (
-        !current.isDirectory() ||
-        current.dev !== stat.dev ||
-        current.ino !== stat.ino ||
-        current.mtimeMs !== stat.mtimeMs
+        currentEntries.length !== entries.length + 1 ||
+        !currentEntries.includes(claimName) ||
+        entries.some((name) => !currentEntries.includes(name))
       ) {
+        rmSync(claimPath, { force: true });
+        return false;
+      }
+      for (const name of entries) {
+        const entryStat = lstatSync(join(leasePath, name));
+        const pid = this.leaseEntryOwnerPid(leasePath, name, entryStat);
+        if (pid !== undefined && processIsAlive(pid)) {
+          rmSync(claimPath, { force: true });
+          return false;
+        }
+      }
+
+      const current = lstatSync(leasePath);
+      if (!current.isDirectory() || current.dev !== stat.dev || current.ino !== stat.ino) {
+        rmSync(claimPath, { force: true });
         return false;
       }
     } catch {
+      rmSync(claimPath, { force: true });
       return false;
     }
 
     try {
       if (entries.length === 0) {
-        // rmdir refuses with ENOTEMPTY the instant a marker appears, so a generation that
-        // published while we looked survives even if it reused this very inode.
+        rmSync(claimPath, { force: true });
+        // rmdir refuses with ENOTEMPTY the instant another marker appears.
         rmdirSync(leasePath);
       } else {
         const movedPath = `${leasePath}.transitioned-${OAuthStore.newId()}`;
@@ -852,6 +876,10 @@ export class OAuthStore {
       'oauth store: reclaimed an abandoned lease',
     );
     return true;
+  }
+
+  private beforeAbandonedLeaseValidation(_leasePath: string): void {
+    // Tests override this no-op to complete a partial marker after the reclaim claim lands.
   }
 
   /** True when this marker identifies an owner, so inspectLease() can adjudicate it by pid. */

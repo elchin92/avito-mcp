@@ -1256,6 +1256,42 @@ describe('OAuthStore — durable serialized shutdown', () => {
     }
   });
 
+  it('does not reclaim a partial marker that becomes a live owner', async () => {
+    const { OAuthStore } = await import('../src/http/oauth/store.js');
+    const root = await createSandbox('oauth-partial-owner-race');
+    const storeFile = join(root, 'oauth.json');
+    const leasePath = `${storeFile}.process.lock`;
+    const markerPath = join(leasePath, 'owner-halfwritten.json');
+    const prototype = OAuthStore.prototype as unknown as {
+      beforeAbandonedLeaseValidation: (leasePath: string) => void;
+    };
+    const originalHook = prototype.beforeAbandonedLeaseValidation;
+    let intercepted = false;
+    try {
+      await fs.mkdir(leasePath, { recursive: true });
+      await fs.writeFile(markerPath, '', 'utf8');
+      const old = new Date(Date.now() - 120_000);
+      await fs.utimes(markerPath, old, old);
+      await fs.utimes(leasePath, old, old);
+      prototype.beforeAbandonedLeaseValidation = (observedPath) => {
+        if (intercepted || observedPath !== leasePath) return;
+        intercepted = true;
+        writeFileSync(markerPath, JSON.stringify({ pid: process.pid, id: 'halfwritten' }));
+      };
+
+      expect(() => new OAuthStore(storeFile)).toThrow(/already owned by active process/i);
+      expect(intercepted).toBe(true);
+      expect(JSON.parse(readFileSync(markerPath, 'utf8'))).toEqual({
+        pid: process.pid,
+        id: 'halfwritten',
+      });
+      expect(readdirSync(leasePath)).toEqual(['owner-halfwritten.json']);
+    } finally {
+      prototype.beforeAbandonedLeaseValidation = originalHook;
+      await removeSandbox(root);
+    }
+  });
+
   it('refuses an unadjudicable lease whose transition marker names a live claimant', async () => {
     const root = await createSandbox('oauth-live-claimant');
     const storeFile = join(root, 'oauth.json');
