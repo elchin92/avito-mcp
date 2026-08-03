@@ -125,18 +125,46 @@ For the use cases this server is designed for (humans-in-the-loop using Claude D
 
 ## Lifting a held idempotency key
 
-An idempotency key can end up **held**. It happens in exactly one situation: the
-client hung up (on revision 2026-07-28, closed the response stream) *after* the
-request had already been sent to Avito. The outgoing call is aborted and the
-rate-limit slot is returned, but whether Avito applied the mutation is
-unknowable from here — so the key is refused rather than freed, because freeing
-it is what would let the next retry spend the money a second time. The reasoning
-and its cost are in [ADR 0008](adr/0008-idempotency-hold-on-cancelled-dispatch.md).
+An idempotency key can end up **held**: the caller's request was cancelled
+*after* that request had already been sent to Avito. The outgoing call is
+aborted and the rate-limit slot is returned, but whether Avito applied the
+mutation is unknowable from here — so the key is refused rather than freed,
+because freeing it is what would let the next retry spend the money a second
+time. The reasoning and its cost are in
+[ADR 0008](adr/0008-idempotency-hold-on-cancelled-dispatch.md).
+
+**A hold is not a property of one protocol revision, and not of one
+deployment.** A cancellation reaches this server two ways and **both revisions
+this package serves honour it**, the default `legacy` posture included:
+
+- **`notifications/cancelled` naming the request.** This notification exists on
+  revision 2025-11-25 and on revision 2026-07-28 alike. The abort it triggers is
+  installed by the SDK's base protocol for every connection, and the tool layer
+  reads the caller's cancellation signal without asking which revision produced
+  it.
+- **The peer closing the response stream**, which revision 2026-07-28 defines as
+  a cancellation of the request carried on it.
+
+So a 2025-11-25 client, on a deployment that has changed nothing, that cancels a
+money call already on the wire and then retries with the same `idempotencyKey`
+is answered `IDEMPOTENCY_HELD`. Version 1.3.3 could not answer that, because it
+ignored `notifications/cancelled` entirely — the signal is honoured for the
+first time in 2.0.0, on both revisions at once. That the hold covers both is
+deliberate, not an oversight of the migration: the duplicate charge it prevents
+is reachable on both, and narrowing the hold to 2026-07-28 would leave every
+existing client exposed to it.
 
 **What the agent sees.** An `isError` result with
 `structuredContent.error.type = "IDEMPOTENCY_HELD"` and
 `code = "IDEMPOTENCY_HELD/cancelled_after_dispatch"`, saying in words that the
 operation may have taken effect and must be checked before being repeated.
+
+`IDEMPOTENCY_HELD` carries a second reason code that is **not** a cancellation
+and does not clear the way this one does:
+`IDEMPOTENCY_HELD/unfinished_reservation`, raised when a durable `in_flight`
+reservation is found from a process that stopped mid-call. Everything below is
+about `cancelled_after_dispatch`; the difference is spelled out at the end of
+this section.
 
 **What you see.** One `warn` line at the moment it happens, carrying the tool
 name, the key's SHA-256 fingerprint, the hold's expiry, and — when durable state
@@ -172,10 +200,13 @@ is configured — the absolute path of the record:
    only the file the log named, and only after you know what happened upstream.
 
 A hold is **not** the same as the `in_flight` record left behind when a process
-is killed mid-call. That one never expires on purpose: a killed process recorded
-nothing about what it had seen, so nothing bounds the uncertainty. A hold was
-written by a live process that knew exactly how far it had got, which is what
-earns it an expiry date.
+is killed mid-call. Both are refused with `error.type = "IDEMPOTENCY_HELD"`, and
+the reason code is what tells them apart: `cancelled_after_dispatch` versus
+`unfinished_reservation`. The `in_flight` one never expires on purpose — a
+killed process recorded nothing about what it had seen, so nothing bounds the
+uncertainty, and only step 3 above clears it. A hold was written by a live
+process that knew exactly how far it had got, which is what earns it an expiry
+date and makes steps 1 and 2 available.
 
 ---
 

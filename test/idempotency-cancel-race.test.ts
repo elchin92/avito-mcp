@@ -35,6 +35,8 @@ import { startFakeAvito, type FakeAvito } from './support/fake-avito.js';
 import { createSandbox, removeSandbox } from './support/sandbox.js';
 import {
   closeRigs,
+  initializeMessage,
+  legacyPost,
   makeConfig,
   META,
   MODERN_REVISION,
@@ -530,4 +532,186 @@ describe('the dispatch latch', () => {
     expect(dispatched).toBe(false);
     expect(avito.mutations.length).toBe(0);
   }, 30_000);
+});
+
+// ───────────── the same race on the 2025-11-25 wire ─────────────
+
+/**
+ * The blind spot this block exists to close.
+ *
+ * Everything above drives revision 2026-07-28, where a cancellation is the peer
+ * closing the response stream. That framing made it easy to read the hold as a
+ * property of the new revision — the changelog, `docs/safety.md`, both READMEs
+ * and ADR 0008 all did, and all of them were wrong.
+ *
+ * `notifications/cancelled` is defined on revision 2025-11-25 too, the handler
+ * that turns it into `abort()` is registered in the SDK's base `Protocol`
+ * constructor before any era is known, and `src/core/tool-factory.ts` reads
+ * `extra.mcpReq.signal` for every tool call without consulting
+ * `ToolContext.era`. So the whole race — abort, dispatched mutation, held key —
+ * reaches a 2025 client on the DEFAULT posture.
+ *
+ * Nothing else in the suite can see that. The legacy wire baseline
+ * (`test/support/legacy-wire-bench.ts`) replays recorded request/response
+ * PAIRS; a cancellation is an unsolicited notification that is never answered,
+ * so it has no pair to record and the baseline stays green whatever this code
+ * does. The assertion has to be a live one, which is what follows.
+ */
+
+/** Opens a real 2025-11-25 session and returns its id. */
+async function legacySession(c: Case): Promise<string> {
+  const init = await legacyPost(c.rig, initializeMessage());
+  const sessionId = init.sessionId;
+  if (!sessionId) throw new Error(`initialize returned no session id: ${JSON.stringify(init.body)}`);
+  await legacyPost(c.rig, { jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId);
+  return sessionId;
+}
+
+/** A one-shot 2025-11-25 `tools/call` that reads the whole answer. */
+async function legacyCall(
+  c: Case,
+  sessionId: string,
+  key: string,
+  id: number,
+): Promise<Record<string, unknown>> {
+  const answer = await legacyPost(
+    c.rig,
+    {
+      jsonrpc: '2.0',
+      id,
+      method: 'tools/call',
+      params: { name: TOOL, arguments: { ...ARGS, idempotencyKey: key } },
+    },
+    sessionId,
+  );
+  const result = resultOf(answer);
+  if (!result) throw new Error(`tools/call answered no result: ${JSON.stringify(answer.body)}`);
+  return result;
+}
+
+/**
+ * Fires a money `tools/call` on the 2025-11-25 wire without awaiting it, waits
+ * until the mutation has actually reached the upstream, then cancels it with
+ * `notifications/cancelled` — the only cancellation channel that revision has.
+ *
+ * The call is not awaited because the upstream is deliberately hung and a
+ * cancelled request is never answered: awaiting either half would block for the
+ * whole request deadline. What is awaited instead is the observable the test is
+ * about — the mutation counter at the receiving end.
+ */
+async function legacyCancelAfterDispatch(
+  c: Case,
+  sessionId: string,
+  key: string,
+  requestId: number,
+): Promise<() => void> {
+  c.avito.setMode('hang');
+  const before = c.avito.mutations.length;
+  const controller = new AbortController();
+  void fetch(`${c.rig.base}/mcp`, {
+    method: 'POST',
+    signal: controller.signal,
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      host: c.rig.host,
+      'mcp-session-id': sessionId,
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: requestId,
+      method: 'tools/call',
+      params: { name: TOOL, arguments: { ...ARGS, idempotencyKey: key } },
+    }),
+  }).then(
+    (res) => res.text().catch(() => undefined),
+    () => undefined,
+  );
+
+  await vi.waitFor(() => expect(c.avito.mutations.length).toBe(before + 1), { timeout: 15_000 });
+
+  // The 2025-11-25 cancellation: a notification naming the open request id.
+  // Per the specification a cancelled request is never answered, so the SSE
+  // stream it was opened on is not expected to carry anything and is not waited
+  // on — the returned handle closes it once the assertions are done.
+  const ack = await legacyPost(
+    c.rig,
+    {
+      jsonrpc: '2.0',
+      method: 'notifications/cancelled',
+      params: { requestId, reason: 'the caller hung up' },
+    },
+    sessionId,
+  );
+  expect(ack.status).toBe(202);
+  return () => controller.abort();
+}
+
+describe('a cancellation on the LEGACY 2025-11-25 wire', () => {
+  it('holds the key when it raced a dispatched money call, and the retry is refused', async () => {
+    const c = await startCase();
+    const sessionId = await legacySession(c);
+    const idem = 'legacy-cancel-after-dispatch-0001';
+
+    const hangUp = await legacyCancelAfterDispatch(c, sessionId, idem, 4242);
+    expect(c.avito.mutations.length).toBe(1);
+
+    // The cancellation reached the tool layer on a wire that, in 1.3.3, ignored
+    // it entirely: the key is HELD rather than freed.
+    await vi.waitFor(async () => expect(await ledgerState(c, idem)).toBe('indeterminate'), {
+      timeout: 15_000,
+    });
+
+    // The retry a real 2025 agent makes: same session, same key, same args, and
+    // a healthy upstream so that anything that DID go out would be counted.
+    c.avito.setMode('ok');
+    c.avito.releaseHung();
+    hangUp();
+
+    const retry = await legacyCall(c, sessionId, idem, 7);
+
+    // The money was spent exactly once.
+    expect(c.avito.mutations.length).toBe(1);
+    expect(retry.isError).toBe(true);
+    const envelope = errorEnvelope(retry);
+    expect(envelope.type).toBe('IDEMPOTENCY_HELD');
+    expect(envelope.code).toBe('IDEMPOTENCY_HELD/cancelled_after_dispatch');
+    expect(envelope.retryable).toBe(false);
+    const text = (retry.content as Array<{ text?: string }>)[0]?.text ?? '';
+    expect(text).toContain('AFTER its request had already been sent');
+  }, 60_000);
+
+  it('interrupts the outgoing call at all, which 1.3.3 did not', async () => {
+    // The premise of the test above, isolated: on the 2025-11-25 wire the
+    // notification actually aborts the request. If it did not, the call would
+    // run to completion and the key would end up `completed`, not held — the
+    // whole race would be unreachable and the doc claim would have been right.
+    const c = await startCase();
+    const sessionId = await legacySession(c);
+    const idem = 'legacy-cancel-aborts-0001';
+
+    const hangUp = await legacyCancelAfterDispatch(c, sessionId, idem, 909);
+
+    await vi.waitFor(async () => expect(await ledgerState(c, idem)).toBe('indeterminate'), {
+      timeout: 15_000,
+    });
+    const record = await ledgerRecord(c, idem);
+    // `heldReason` is the diagnosis the process recorded, and on this path it can
+    // only have come from the abort: an unknown outcome, produced by a cancelled
+    // transport call rather than by any answer Avito gave.
+    expect(record?.heldReason).toContain('Upstream outcome unknown');
+    expect(record?.heldReason).toContain('Request cancelled');
+    expect(typeof record?.expiresAt).toBe('number');
+
+    c.avito.setMode('ok');
+    c.avito.releaseHung();
+    hangUp();
+
+    // And it is the same bounded hold as on the modern wire: an operator can
+    // lift it, after which the key works again.
+    expect(await c.store.releaseHold(idem, TOOL)).toBe(true);
+    const afterRelease = await legacyCall(c, sessionId, idem, 11);
+    expect(afterRelease.isError).toBeFalsy();
+    expect(c.avito.mutations.length).toBe(2);
+  }, 60_000);
 });
