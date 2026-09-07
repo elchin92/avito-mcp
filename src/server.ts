@@ -15,6 +15,7 @@ function printHelp(): void {
       `  avito-mcp --version        Print version and exit\n` +
       `  avito-mcp --help           Print this help and exit\n` +
       `  avito-mcp --health         Print health snapshot as JSON and exit\n` +
+      `  avito-mcp --demo           Run a local MCP walkthrough with fictional data\n` +
       `\n` +
       `CLI flags (v0.7.0 — sugar for env vars; do not require a value):\n` +
       `  --readonly                 Same as AVITO_MCP_MODE=read_only (only risk='read' tools)\n` +
@@ -48,8 +49,8 @@ function printHelp(): void {
       `  AVITO_MCP_RUNTIME_STATE_DIR      Shared durable state directory (default: beside AVITO_TOKEN_FILE)\n` +
       `  AVITO_MCP_TOKEN_LOCK_TIMEOUT_MS v0.7.0: max wait for cross-process token lock (default: 30000)\n` +
       `  AVITO_MCP_PROTOCOL_ERA  legacy (default) | dual | modern — which MCP protocol era(s)\n` +
-      `                          this process serves. legacy = revision 2025-11-25 only, byte-for-byte\n` +
-      `                          the 1.3.x behaviour; dual also serves 2026-07-28; modern serves only it.\n` +
+      `                          this process serves. legacy = revision 2025-11-25 only, preserving\n` +
+      `                          the client contract with documented fixes; dual also serves 2026-07-28.\n` +
       `  AVITO_SAFE_MODE         DEPRECATED: use AVITO_MCP_MODE=read_only instead\n` +
       `  LOG_LEVEL               pino log level (default: info)\n` +
       `\n` +
@@ -346,6 +347,11 @@ async function main(): Promise<void> {
   }
   if (argv.includes('--help') || argv.includes('-h')) {
     printHelp();
+    return;
+  }
+  if (argv.includes('--demo')) {
+    const { runDemo } = await import('./demo.js');
+    await runDemo(argv.includes('--json'));
     return;
   }
   applyCliFlagsToEnv(argv);

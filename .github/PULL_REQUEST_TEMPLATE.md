@@ -7,7 +7,6 @@
 
 <!-- 1-3 предложения: что меняется и зачем. Если фиксит issue — "Fixes #123". -->
 
-
 ## Type of change
 
 - [ ] Bug fix (не ломает существующее поведение)
@@ -19,14 +18,13 @@
 
 ## Checklist
 
-- [ ] `npm run lint` — без ошибок
-- [ ] `npx tsc --noEmit` — типы валидны
-- [ ] `npm run build` — собирается
-- [ ] `npm test` — все тесты зелёные
-- [ ] Обновил `CHANGELOG.md` (если изменение видно пользователю)
-- [ ] Нет реальных credentials, токенов, item-IDs, бизнес-данных в коде / тестах / примерах
-- [ ] Если добавлен новый swagger — есть запись в `src/meta/domain-registry.ts` и описания на русском
-- [ ] Каждый новый tool имеет явный `risk` (`'read'` / `'write'` / `'money'` / `'public'`) — см. [CONTRIBUTING.md](../CONTRIBUTING.md#conventions). Кастомные tools через `server.registerTool` напрямую — реализуют свой safe-mode guard.
+- [ ] Code changes: `npm run verify:release` passes; relevant behavior is covered by meaningful tests.
+- [ ] Docs/examples: client format, internal links and EN/RU guidance are consistent.
+- [ ] Updated `CHANGELOG.md` for user-visible changes.
+- [ ] No real credentials, tokens, customer data or business identifiers in code, tests or examples.
+- [ ] New domains are registered in `src/meta/domain-registry.ts`; tool titles and descriptions are in English.
+- [ ] New tools have an explicit `risk` (`read`, `write`, `money`, `public`, or `sensitive`).
+- [ ] Business tools use `defineTool`, including custom execution, so policy, confirmation, dry-run, idempotency and error handling stay shared. See [CONTRIBUTING](../CONTRIBUTING.md#conventions).
 
 ## Notes for reviewer / Заметки для ревьюера
 

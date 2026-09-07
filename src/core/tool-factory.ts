@@ -15,8 +15,9 @@ import type {
   HttpMethod,
   RequestResponse,
   SafeStaticHeaders,
+  RequestOptions,
 } from './client.js';
-import { AvitoApiError, errorToMcpContent } from './errors.js';
+import { AvitoApiError, AvitoTransportError, errorToMcpContent } from './errors.js';
 import {
   hashArgs,
   fingerprintIdempotencyKey,
@@ -25,6 +26,7 @@ import {
   IdempotencyLimitError,
   IdempotencyReconcileRequiredError,
   UpstreamOutcomeUnknownError,
+  UpstreamRequestNotSentError,
 } from './idempotency.js';
 import { callerPrincipal, type CallerExtra, type PendingActionStore } from './pending-actions.js';
 import { evaluatePolicy, requiresConfirmation } from './policy.js';
@@ -253,6 +255,7 @@ export interface ToolSpec<I extends ZodRawShape = ZodRawShape> {
   customExecute?: (
     cleanArgs: Record<string, unknown>,
     ctx: ToolContext,
+    execution: Pick<RequestOptions, 'signal' | 'onDispatch' | 'onRejected'>,
   ) => Promise<RequestResponse>;
   /** Build a dry-run preview for a custom executor without performing side effects. */
   buildDryRunPreview?: (cleanArgs: Record<string, unknown>, ctx: ToolContext) => unknown;
@@ -344,12 +347,19 @@ export function defineTool<I extends ZodRawShape>(
     // rate-limiter queue and the token refresh, and a call cancelled in that gap
     // changed nothing upstream.
     let dispatched = false;
+    const execution = {
+      signal,
+      onDispatch: () => {
+        dispatched = true;
+      },
+      onRejected: () => {
+        dispatched = false;
+      },
+    };
     try {
       const response = spec.customExecute
-        ? await spec.customExecute(cleanArgs, ctx)
-        : await executeHttpRequest(cleanArgs, spec, ctx, signal, () => {
-            dispatched = true;
-          });
+        ? await spec.customExecute(cleanArgs, ctx, execution)
+        : await executeHttpRequest(cleanArgs, spec, ctx, execution);
       const result: CallToolResult = {
         content: [
           {
@@ -367,9 +377,8 @@ export function defineTool<I extends ZodRawShape>(
     } catch (err) {
       // A cancelled call does not become an ordinary result (M3 item 11).
       //
-      // Every other failure is deliberately turned into an `isError` payload so
-      // the agent can read and react to it — but that same conversion, applied
-      // to a cancellation, would memoise "the client hung up" under the caller's
+      // Domain failures become `isError` payloads. Cancellation must escape the
+      // ledger instead: converting it here would memoise "the client hung up" under the caller's
       // idempotency key and wedge every retry that reuses it for the whole TTL.
       // Nobody is left to read the payload anyway: the stream it would travel on
       // is the one that just closed. So this branch decides what the LEDGER is
@@ -393,6 +402,12 @@ export function defineTool<I extends ZodRawShape>(
         // freeing it is what turns one cancelled money call into two charges.
         throw new UpstreamOutcomeUnknownError(err);
       }
+      if (isDestructive(risk) && err instanceof AvitoTransportError) {
+        // Keep retryable pre-dispatch failures out of the completed ledger;
+        // after dispatch, only reconciliation can make another mutation safe.
+        if (!dispatched) throw new UpstreamRequestNotSentError(err);
+        throw new UpstreamOutcomeUnknownError(err, 'transport_failure_after_dispatch');
+      }
       return errorToMcpContent(err);
     }
   };
@@ -407,7 +422,29 @@ export function defineTool<I extends ZodRawShape>(
     pendingIdempotencyKey?: string,
     pendingArgsHash?: string,
   ): Promise<CallToolResult> => {
-    const result = await execute(pendingArgs);
+    let result: CallToolResult;
+    try {
+      result = await execute(pendingArgs);
+    } catch (error) {
+      // No mutation was sent: finish this confirmation without caching its
+      // transient error. The existing pending preview becomes stale, so a
+      // retry can request a fresh confirmation under the same key.
+      if (error instanceof UpstreamRequestNotSentError) return errorToMcpContent(error);
+      if (
+        error instanceof UpstreamOutcomeUnknownError &&
+        pendingIdempotencyKey &&
+        pendingArgsHash &&
+        ctx.idempotencyStore
+      ) {
+        await ctx.idempotencyStore.holdPersistent(
+          pendingIdempotencyKey,
+          spec.name,
+          pendingArgsHash,
+          error,
+        );
+      }
+      throw error;
+    }
     if (pendingIdempotencyKey && pendingArgsHash && ctx.idempotencyStore) {
       await ctx.idempotencyStore.rememberPersistent(
         pendingIdempotencyKey,
@@ -605,14 +642,28 @@ export function defineTool<I extends ZodRawShape>(
           err instanceof IdempotencyLimitError ||
           // Covers both reconcile-first refusals: the crash-recovery one and the
           // hold left by a cancellation that raced a dispatched request.
-          err instanceof IdempotencyReconcileRequiredError
+          err instanceof IdempotencyReconcileRequiredError ||
+          err instanceof UpstreamRequestNotSentError ||
+          (err instanceof UpstreamOutcomeUnknownError &&
+            err.reason === 'transport_failure_after_dispatch')
         ) {
           return errorToMcpContent(err);
         }
         throw err;
       }
     }
-    return execute(cleanArgs, signal);
+    try {
+      return await execute(cleanArgs, signal);
+    } catch (error) {
+      if (
+        error instanceof UpstreamRequestNotSentError ||
+        (error instanceof UpstreamOutcomeUnknownError &&
+          error.reason === 'transport_failure_after_dispatch')
+      ) {
+        return errorToMcpContent(error);
+      }
+      throw error;
+    }
   };
 
   // The SDK types the callback via an internal BaseToolCallback with its own inferred CallToolResult,
@@ -829,13 +880,11 @@ async function executeHttpRequest(
   cleanArgs: Record<string, unknown>,
   spec: ToolSpec,
   ctx: ToolContext,
-  signal?: AbortSignal,
-  onDispatch?: () => void,
+  execution: Pick<RequestOptions, 'signal' | 'onDispatch' | 'onRejected'>,
 ): Promise<RequestResponse> {
   const { pathParams, query, body } = splitArgs(cleanArgs, spec, ctx);
   return ctx.client.request({
-    ...(signal !== undefined ? { signal } : {}),
-    ...(onDispatch !== undefined ? { onDispatch } : {}),
+    ...execution,
     method: spec.method,
     path: spec.path,
     pathParams,

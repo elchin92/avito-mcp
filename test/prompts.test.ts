@@ -127,6 +127,9 @@ describe('MCP prompts', () => {
     expect(text).toContain('user_get_user_balance');
     expect(text).toContain('items_get_items_info');
     expect(text).toContain('items_post_account_spendings');
+    expect(text).toContain('page: 1, 2, ...');
+    expect(text).toContain('Count distinct listing IDs across all pages');
+    expect(text).toContain('label the count as partial');
   });
 
   it('avito_promote_item embeds item_id and does not invoke purchase tools', async () => {
@@ -273,7 +276,7 @@ describe('M1.8 — prompt arguments are validated before they reach the model', 
     // window running into the future) and turned every other malformation into
     // the default, so a caller could not tell a typo from a rendering.
     const client = await rig();
-    for (const value of ['0', '-1', '-500', '1e3', 'seven', '99999', ' 7', '07']) {
+    for (const value of ['0', '-1', '-500', '1e3', 'seven', '271', '365', '99999', ' 7', '07']) {
       expect((await refusal(client, 'avito_daily_overview', { days: value })).code, value).toBe(
         -32602,
       );
@@ -288,7 +291,7 @@ describe('M1.8 — prompt arguments are validated before they reach the model', 
     const client = await rig();
     const cases: Array<[string, Record<string, string>, string]> = [
       ['avito_daily_overview', {}, '7 дней'],
-      ['avito_daily_overview', { days: '365' }, '365 дней'],
+      ['avito_daily_overview', { days: '270' }, '270 дней'],
       ['avito_check_unread_chats', {}, 'limit: 20'],
       ['avito_check_unread_chats', { limit: '100' }, 'limit: 100'],
       ['avito_safety_report', {}, 'avito://manifest'],
@@ -392,9 +395,8 @@ describe('M1.8 — the legacy era answers 1.3.3, not the 2026-07-28 rules', () =
     // Falsy after parseInt and NaN after parseInt both collapse to the default…
     expect(await rendered({ days: '0' })).toContain('7 дней');
     expect(await rendered({ days: 'seven' })).toContain('7 дней');
-    // …and a value above every bound this server would choose is taken at face
-    // value, which is what makes it a defect and what makes it the contract.
-    expect(await rendered({ days: '99999' })).toContain('99999 дней');
+    // v2.1 keeps the permissive parser but clamps the resulting API window.
+    expect(await rendered({ days: '99999' })).toContain('270 дней');
     const chats = await client.getPrompt({
       name: 'avito_check_unread_chats',
       arguments: { limit: '500' },

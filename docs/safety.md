@@ -123,10 +123,42 @@ For the use cases this server is designed for (humans-in-the-loop using Claude D
 
 ---
 
+## Lost responses after a mutation (v2.1)
+
+If an HTTP timeout or connection failure happens **after** a mutation was sent,
+Avito may already have applied it. The tool returns `OUTCOME_UNKNOWN` with
+`retryable: false`. Check the listing, order or transaction in Avito before
+issuing a new mutation. This applies to both MCP protocol revisions, including
+confirmed actions and calls without an idempotency key.
+
+With an idempotency key, the reservation is held with reason
+`transport_failure_after_dispatch`; **this hold does not expire with the ordinary
+idempotency TTL**. Reusing that key refuses the operation rather than sending it
+again. The confirmation claim also remains consumed. A new key is not a recovery
+mechanism: it can duplicate the first operation. Without a key the server cannot
+recognize an independently submitted duplicate, so the client must honour the
+non-retryable result.
+
+A known successful BBIP order creation keeps its order ID if subsequent polling
+fails; inspect that existing order instead of creating a replacement.
+
+After reconciliation, an operator may release the held reservation using the
+store's `releaseHold` maintenance method, or remove the exact held record with
+all writers stopped. Never remove an unresolved record or a completed result.
+For a confirmed action, also clear the corresponding pending claim after
+reconciliation; releasing an idempotency hold alone does not free its claimed
+pending-action slot. `PendingActionStore.completePersistent(id)` works only in
+the live store instance that owns the claim. For recovery after a restart or
+from a separate maintenance process, stop all writers, verify the exact action
+ID and `claimed` state in the pending record, then remove that reconciled record
+alongside its held idempotency record. Do not clear the entire state directory.
+There is deliberately no model-accessible tool that discards this protection.
+Failures before dispatch and ordinary read requests remain retryable.
+
 ## Lifting a held idempotency key
 
 An idempotency key can end up **held**: the caller's request was cancelled
-*after* that request had already been sent to Avito. The outgoing call is
+_after_ that request had already been sent to Avito. The outgoing call is
 aborted and the rate-limit slot is returned, but whether Avito applied the
 mutation is unknowable from here — so the key is refused rather than freed,
 because freeing it is what would let the next retry spend the money a second
@@ -181,8 +213,8 @@ is configured — the absolute path of the record:
    (default one hour) from the moment the call started, and is swept the next
    time that key is used. Until then it counts against the ledger's
    `maxEntries`, and afterwards it does not. Doing nothing is a valid choice.
-2. **By the agent, with a different key** — but only after it has *checked with
-   Avito* whether the operation applied. The refusal text says exactly this. A
+2. **By the agent, with a different key** — but only after it has _checked with
+   Avito_ whether the operation applied. The refusal text says exactly this. A
    fresh key for an operation that already succeeded is a duplicate charge, so
    this is a decision for whoever can look at the account.
 3. **By you, deliberately.** Once you have reconciled the operation on the Avito

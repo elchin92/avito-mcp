@@ -32,7 +32,7 @@
  *
  * and that a bad argument is a refusal, not a stub: `-32602` covers "invalid
  * arguments" and "missing required arguments" for `prompts/get`
- * (`docs/mcp-2026-07-28/schema-2.md`). On that era a blank required argument
+ * (https://modelcontextprotocol.io/specification/2026-07-28/schema). On that era a blank required argument
  * used to produce a SUCCESSFUL result whose text asked the model to supply the
  * value — an answer the client cannot distinguish from a real expansion, so an
  * agent would happily hand it to the model and act on a prompt that never
@@ -75,10 +75,12 @@
  * This is the same shape as the `-32700`-on-an-unreadable-body divergence, and
  * it gets the same answer: an ERA SPLIT, not a rollback.
  *
- *   • **legacy (2025-11-25)** — byte-identical to 1.3.3: `z.string()` with no
+ *   • **legacy (2025-11-25)** — preserves 1.3.3 argument parsing: `z.string()` with no
  *     pattern, `Number.parseInt(x) || default` for the counts, `trim()` and the
  *     "…is required" stub for a blank required argument. Pinned by
  *     `test/legacy-wire-regression.test.ts` against a captured 1.3.3 process.
+ *     The v2.1 daily overview correction clamps the resulting window to 1–270
+ *     days and adds pagination guidance; exact replacements declare this delta.
  *   • **modern (2026-07-28)** — both layers above, in full. This is the era the
  *     MUST is written for, it has no installed base to break, and it is the era
  *     block F of the plan puts into production.
@@ -183,7 +185,7 @@ const TOOL_NAME_PATTERN = /^[a-z][a-z0-9_]{2,63}$/;
 const ITEM_ID_PATTERN = /^[1-9][0-9]{0,18}$/;
 
 /** The longest spendings window `avito_daily_overview` will build a date range for. */
-const MAX_OVERVIEW_DAYS = 365;
+const MAX_OVERVIEW_DAYS = 270;
 
 /** The most chats `avito_check_unread_chats` will ask the agent to walk. */
 const MAX_CHAT_LIMIT = 100;
@@ -271,7 +273,10 @@ function countArgument(field: string, max: number, description: string) {
 // the same bytes here, and the single source is what makes that mechanical
 // rather than a matter of keeping two copies in step.
 
-function dailyOverviewResult(days: number): GetPromptResult {
+function dailyOverviewResult(requestedDays: number): GetPromptResult {
+  // v2.1: keep legacy parsing, but never recommend dates outside Avito's
+  // documented 270-day retention window (including malformed negative input).
+  const days = Math.min(MAX_OVERVIEW_DAYS, Math.max(1, requestedDays));
   const dateTo = new Date().toISOString().slice(0, 10);
   const dateFrom = new Date(Date.now() - days * 86400_000).toISOString().slice(0, 10);
   return {
@@ -288,6 +293,10 @@ function dailyOverviewResult(days: number): GetPromptResult {
           `       spendingTypes: ["all"],\n` +
           `       grouping: "day"\n` +
           `     }\n\n` +
+          `Paginate items_get_items_info with page: 1, 2, ... and per_page: 50 until a page ` +
+          `contains fewer than 50 listings. Count distinct listing IDs across all pages. ` +
+          `If any page fails or you stop early, label the count as partial; never present ` +
+          `the first page as the account total. Respect the 25 requests/minute limit.\n\n` +
           `Produce a summary: balance, number of active listings (by status), ` +
           `total spendings for the period broken down by type. No long tables.` +
           `\n\n— Русский / Russian —\n\n` +
@@ -301,6 +310,10 @@ function dailyOverviewResult(days: number): GetPromptResult {
           `       spendingTypes: ["all"],\n` +
           `       grouping: "day"\n` +
           `     }\n\n` +
+          `Пройди страницы items_get_items_info с page: 1, 2, ... и per_page: 50, пока ` +
+          `страница не вернёт меньше 50 объявлений. Считай уникальные ID по всем страницам. ` +
+          `При ошибке или досрочной остановке явно назови количество неполным; первая ` +
+          `страница не равна итогу аккаунта. Соблюдай лимит 25 запросов в минуту.\n\n` +
           `Сформируй итог: баланс, количество активных объявлений (по статусам), ` +
           `сумма расходов за период с разбивкой по типам. Без длинных таблиц.`,
       ),

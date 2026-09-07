@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Private vulnerability report / Приватное сообщение об уязвимости
+    url: https://github.com/elchin92/avito-mcp/security/advisories/new
+    about: Report security issues privately; do not include credentials in public issues.

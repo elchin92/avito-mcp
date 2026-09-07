@@ -98,11 +98,10 @@ asserts one mutation, not two, at the receiving end of a real socket.
 
 ## Why this is allowed, and where the revision says so
 
-The corpus in `docs/mcp-2026-07-28/` supports the change directly, and it is
-worth being precise about which clause carries which weight.
+The public [cancellation specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/cancellation) distinguishes stopping work from handling races. The clause labels below come from the original analysis; the linked specification is the normative source.
 
 **The MUST is untouched.** C-04 — «The server **MUST** treat a client disconnect
-as cancellation of that request» ([`utilities-1.md`](../mcp-2026-07-28/utilities-1.md)) —
+as cancellation of that request» ([Cancellation](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/cancellation)) —
 is about stopping the work. The work is stopped: the `fetch` is aborted, the
 limiter slot is returned. Nothing here declines to treat the disconnect as a
 cancellation.
@@ -123,21 +122,13 @@ notification «**MAY** arrive after the request has already finished». A money
 mutation that is already on the wire is the textbook "cannot be cancelled": the
 server can stop *listening*, but it cannot un-send it.
 
-**And the corpus states this project's criterion literally.**
-[`changelog.md`](../mcp-2026-07-28/changelog.md) §18, on the removal of
-resumability:
-
-> …при обрыве потока клиент переотправляет запрос с новым ID. Для avito-mcp это
-> важно в связке с идемпотентностью (`src/core/idempotency.ts`): **переотправка
-> после обрыва станет нормой**, а не исключением… Проверяемый критерий:
-> **повторный `tools/call` с тем же идемпотентным ключом после обрыва потока не
-> приводит ко второй трате денег в Avito.**
-
-The behaviour this ADR replaces failed that criterion — and the same corpus
-repeats the underlying rule for money elsewhere: «для операций с деньгами
-одноразовость обязательна» ([`blog.md`](../mcp-2026-07-28/blog.md) §31),
-«повторное предъявление … не должно приводить ко второму списанию»
-([`client.md`](../mcp-2026-07-28/client.md) §6).
+**The no-double-mutation criterion is this project's policy.** The public
+[changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog)
+describes the removal of resumability. Our resulting requirement is that a
+repeated `tools/call` with the same idempotency key after a disconnect must not
+produce a second Avito mutation. This is an application-level decision, not a
+quotation from the MCP specification. `test/idempotency-cancel-race.test.ts`
+checks that requirement at the receiving socket.
 
 ## What it costs us
 

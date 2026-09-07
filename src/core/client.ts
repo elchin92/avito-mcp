@@ -74,6 +74,8 @@ export interface RequestOptions {
    * reports every attempt. Callers treat it as a latch.
    */
   onDispatch?: () => void;
+  /** A 401 definitively rejected the previous attempt before a token-refresh retry. */
+  onRejected?: () => void;
 }
 
 export interface RequestResponse<T = unknown> {
@@ -208,6 +210,7 @@ export class AvitoClient {
         this.rateLimiter.observe(rateKey, resp.headers, reqInfo.domain ?? 'default');
 
         if (resp.status === 401 && allowRefresh && opts.auth !== false) {
+          opts.onRejected?.();
           await discardResponse(resp);
           allowRefresh = false;
           logger.info({ url }, '401 from avito, refreshing token and retrying once');

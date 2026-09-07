@@ -22,8 +22,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 
-export type UpstreamMode = 'ok' | 'hang' | '502';
-export type TokenMode = 'ok' | 'hang';
+export type UpstreamMode = 'ok' | 'hang' | '502' | 'disconnect' | '401';
+export type TokenMode = 'ok' | 'hang' | 'disconnect';
 
 export interface MutationRecord {
   seq: number;
@@ -72,6 +72,10 @@ export async function startFakeAvito(): Promise<FakeAvito> {
 
       if (req.method === 'POST' && url.startsWith('/token')) {
         tokens += 1;
+        if (tokenMode === 'disconnect') {
+          res.destroy();
+          return;
+        }
         if (tokenMode === 'hang') {
           hung.push(res);
           return;
@@ -90,6 +94,15 @@ export async function startFakeAvito(): Promise<FakeAvito> {
           at: Date.now(),
           mode,
         });
+        if (mode === 'disconnect') {
+          res.destroy();
+          return;
+        }
+        if (mode === '401') {
+          res.writeHead(401, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'unauthorized' }));
+          return;
+        }
         if (mode === 'hang') {
           hung.push(res); // deliberately never answered until releaseHung()
           return;
@@ -100,14 +113,14 @@ export async function startFakeAvito(): Promise<FakeAvito> {
           return;
         }
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(
-          JSON.stringify({ result: { success: true, mutation_seq: mutations.length } }),
-        );
+        res.end(JSON.stringify({ result: { success: true, mutation_seq: mutations.length } }));
         return;
       }
 
       res.writeHead(404, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: { code: 404, message: `no fake route for ${req.method} ${url}` } }));
+      res.end(
+        JSON.stringify({ error: { code: 404, message: `no fake route for ${req.method} ${url}` } }),
+      );
     })();
   });
 

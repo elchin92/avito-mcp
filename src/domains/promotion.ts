@@ -7,6 +7,7 @@
 import { z } from 'zod';
 
 import { defineTool, type DomainRegister } from '../core/tool-factory.js';
+import { AvitoApiError, AvitoTransportError } from '../core/errors.js';
 
 interface BbipItemStatus {
   itemId?: number | string;
@@ -22,9 +23,13 @@ export function normalizeBbipResult(
 ): Record<string, unknown> {
   const source = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
   const items = Array.isArray(source.items) ? (source.items as BbipItemStatus[]) : [];
-  const successful = items.filter((item) => item.status === 'processed' || item.status === 'active');
+  const successful = items.filter(
+    (item) => item.status === 'processed' || item.status === 'active',
+  );
   const failed = items.filter((item) => item.status === 'error' || item.status === 'canceled');
-  const pending = items.filter((item) => ['initialized', 'waiting', 'in_process'].includes(item.status ?? ''));
+  const pending = items.filter((item) =>
+    ['initialized', 'waiting', 'in_process'].includes(item.status ?? ''),
+  );
   const normalizedItems = items.map((item) => ({
     ...item,
     error_code:
@@ -35,7 +40,11 @@ export function normalizeBbipResult(
           : null,
   }));
   let outcome: 'success' | 'partial' | 'failed' | 'pending' | 'unknown' = 'unknown';
-  if (pending.length > 0 || ['initialized', 'waiting', 'in_process'].includes(String(source.status ?? ''))) outcome = 'pending';
+  if (
+    pending.length > 0 ||
+    ['initialized', 'waiting', 'in_process'].includes(String(source.status ?? ''))
+  )
+    outcome = 'pending';
   else if (failed.length > 0 && successful.length > 0) outcome = 'partial';
   else if (failed.length > 0) outcome = 'failed';
   else if (items.length > 0 && successful.length === items.length) outcome = 'success';
@@ -49,7 +58,10 @@ export function normalizeBbipResult(
     confirmed_cost_kopecks:
       typeof source.totalPrice === 'number'
         ? source.totalPrice
-        : successful.reduce((sum, item) => sum + (typeof item.price === 'number' ? item.price : 0), 0),
+        : successful.reduce(
+            (sum, item) => sum + (typeof item.price === 'number' ? item.price : 0),
+            0,
+          ),
   };
 }
 
@@ -61,7 +73,11 @@ export function normalizeBbipResult(
 // only create; v0.7.2 also fixes forecasts, which mistakenly sent {itemId, budget}).
 const BbipOrderItem = z
   .object({
-    itemId: z.number().int().positive().describe('Avito listing ID (int64) for which promotion is being enabled.'),
+    itemId: z
+      .number()
+      .int()
+      .positive()
+      .describe('Avito listing ID (int64) for which promotion is being enabled.'),
     duration: z
       .number()
       .int()
@@ -165,8 +181,9 @@ export const register: DomainRegister = (server, ctx) => {
         ),
     },
     body: { contentType: 'application/json', fields: ['items'] },
-    customExecute: async (args, toolCtx) => {
+    customExecute: async (args, toolCtx, execution) => {
       const created = await toolCtx.client.request<Record<string, unknown>>({
+        ...execution,
         method: 'PUT',
         path: '/promotion/v1/items/services/bbip/orders/create',
         domain: 'promotion',
@@ -181,12 +198,30 @@ export const register: DomainRegister = (server, ctx) => {
       if (!orderId) return { ...created, data: normalizeBbipResult(created.data, requested) };
       let last: Record<string, unknown> = created.data;
       for (let attempt = 0; attempt < 20; attempt += 1) {
-        const status = await toolCtx.client.request<Record<string, unknown>>({
-          method: 'POST',
-          path: '/promotion/v1/items/services/orders/status',
-          domain: 'promotion',
-          body: { orderId },
-        });
+        let status;
+        try {
+          status = await toolCtx.client.request<Record<string, unknown>>({
+            signal: execution.signal,
+            method: 'POST',
+            path: '/promotion/v1/items/services/orders/status',
+            domain: 'promotion',
+            body: { orderId },
+          });
+        } catch (error) {
+          // Creation already succeeded. A failed status poll must not invite
+          // another purchase; keep its orderId available for read-only polling.
+          if (!(error instanceof AvitoTransportError) && !(error instanceof AvitoApiError))
+            throw error;
+          return {
+            ...created,
+            data: {
+              ...normalizeBbipResult(last, requested),
+              orderId,
+              next_step:
+                'Read promotion_get_order_status_v1 with this orderId. Do not create another order.',
+            },
+          };
+        }
         last = status.data;
         const normalized = normalizeBbipResult(last, requested);
         if (normalized.outcome !== 'pending') return { ...status, data: normalized };
@@ -227,7 +262,9 @@ export const register: DomainRegister = (server, ctx) => {
         .min(1)
         .max(100)
         .optional()
-        .describe('Avito listing IDs (int64) for which active promotion services are needed. Up to 100.'),
+        .describe(
+          'Avito listing IDs (int64) for which active promotion services are needed. Up to 100.',
+        ),
     },
     body: { contentType: 'application/json', fields: ['itemIds'] },
   });
@@ -237,7 +274,7 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Promotion: list orders',
     risk: 'read',
     description:
-      'Returns a paginated list of the current user\'s promotion orders: id (UUID), createdAt and ' +
+      "Returns a paginated list of the current user's promotion orders: id (UUID), createdAt and " +
       'status of each order. READ-ONLY: spends NO money. Use it for order history/overview; the detailed status ' +
       'of a specific order is available via promotion_get_order_status_v1 by its orderId.',
     method: 'POST',
@@ -246,18 +283,27 @@ export const register: DomainRegister = (server, ctx) => {
     input: {
       pagination: z
         .object({
-          page: z.number().int().min(1).optional().describe('Page number, starting from 1 (default 1).'),
+          page: z
+            .number()
+            .int()
+            .min(1)
+            .optional()
+            .describe('Page number, starting from 1 (default 1).'),
           perPage: z
             .number()
             .int()
             .min(1)
             .max(100)
             .optional()
-            .describe('Number of records per page, 1–100 (default 20). The field name is strictly camelCase.'),
+            .describe(
+              'Number of records per page, 1–100 (default 20). The field name is strictly camelCase.',
+            ),
         })
         .passthrough()
         .optional()
-        .describe('Pagination parameters {page, perPage}. Can be omitted — the first page is returned.'),
+        .describe(
+          'Pagination parameters {page, perPage}. Can be omitted — the first page is returned.',
+        ),
     },
     body: { contentType: 'application/json', fields: ['pagination'] },
   });
@@ -267,20 +313,23 @@ export const register: DomainRegister = (server, ctx) => {
     title: 'Promotion: order status',
     risk: 'read',
     description:
-      'Returns the status of a BBIP order by its orderId: the order\'s overall status (initialized/waiting/in_process/processed), ' +
+      "Returns the status of a BBIP order by its orderId: the order's overall status (initialized/waiting/in_process/processed), " +
       'totalPrice (kopecks) and a per-item status for each listing (slug, price, errorReason). READ-ONLY: spends NO money. ' +
-      'Call it AFTER promotion_create_bbip_order_for_items_v1 to track the order\'s execution.',
+      "Call it AFTER promotion_create_bbip_order_for_items_v1 to track the order's execution.",
     method: 'POST',
     path: '/promotion/v1/items/services/orders/status',
     domain: 'promotion',
     input: {
       orderId: z
         .string()
-        .describe('Promotion order identifier in UUID format, obtained from promotion_create_bbip_order_for_items_v1.'),
+        .describe(
+          'Promotion order identifier in UUID format, obtained from promotion_create_bbip_order_for_items_v1.',
+        ),
     },
     body: { contentType: 'application/json', fields: ['orderId'] },
-    customExecute: async (args, toolCtx) => {
+    customExecute: async (args, toolCtx, execution) => {
       const response = await toolCtx.client.request<Record<string, unknown>>({
+        ...execution,
         method: 'POST',
         path: '/promotion/v1/items/services/orders/status',
         domain: 'promotion',
