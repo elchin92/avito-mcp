@@ -63,13 +63,15 @@ describe('publication boundaries', () => {
   it('executes the npm JavaScript entry point with an intact path and argument list', () => {
     const result = check({}, undefined, [], { npmCliFixture: true });
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('1 npm files.');
+    expect(result.stderr).toContain('1 npm files.');
+    expect(result.stdout).toBe('');
   });
 
   it('finds npm when invoked directly without npm lifecycle variables', () => {
     const result = check({}, undefined, [], { omitNpmExecPath: true });
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('Publication check passed');
+    expect(result.stderr).toContain('Publication check passed');
+    expect(result.stdout).toBe('');
   });
 
   it('ships explicit public files and compiled code while excluding adjacent local notes', () => {
@@ -83,7 +85,8 @@ describe('publication boundaries', () => {
       [],
     );
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('Publication check passed');
+    expect(result.stderr).toContain('Publication check passed');
+    expect(result.stdout).toBe('');
   });
 
   it('rejects a broad Markdown glob that would publish an untracked conversation', () => {

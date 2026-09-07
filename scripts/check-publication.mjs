@@ -120,7 +120,8 @@ if (issues.length) {
   );
   process.exitCode = 1;
 } else {
-  process.stdout.write(
+  // prepack inherits stdout from `npm pack --json`; keep that stream valid JSON.
+  process.stderr.write(
     `Publication check passed: ${tracked.length} Git files; ${packed.files.length} npm files.\n`,
   );
 }
