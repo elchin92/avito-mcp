@@ -6,7 +6,9 @@ Contributions should help a seller complete a real task or help a maintainer kee
 
 ## Development setup
 
-Use Node.js 22.12 or later and a supported npm version. Work on a branch from `main`:
+Use Node.js 24 and a supported npm version for development. If you use Node.js 22,
+use 22.13 or later to satisfy ESLint's requirements. The published server supports
+Node.js 22.12 or later. Work on a branch from `main`:
 
 ```bash
 npm ci
@@ -81,7 +83,7 @@ The MCP revision `2026-07-28` publishes a [registry of Deprecated features](http
 - **Roots** — `roots/list`, `listRoots()`, `notifications/roots/list_changed` (the notification is already removed, not just deprecated). Deprecated in `2026-07-28` (SEP-2577). Take directories and files as tool parameters, resource URIs, or configuration — `AVITO_MCP_ALLOWED_UPLOAD_DIRS` is exactly that.
 - **`includeContext: "thisServer"` / `"allServers"`** — deprecated by SEP-2596, removed no later than Sampling itself. Nothing to migrate: the field only exists on Sampling requests, which this server never sends.
 - **HTTP+SSE transport** — `SSEServerTransport`, the `/sse` subpath (`@modelcontextprotocol/server-legacy/sse` in the v2 line). Deprecated by SEP-2596 (soft-deprecated since `2025-03-26`). Use Streamable HTTP, already wired in `src/http/mcp-http.ts`.
-- **The retired v1 SDK package** — `@modelcontextprotocol/sdk` and any of its subpaths. The server is on the `@modelcontextprotocol/*@2` line: import from `@modelcontextprotocol/{core,server,node,express}` (and `client` in tests and scripts). The transitional exception is the authorization-server layer: `mcpAuthRouter`, `OAuthServerProvider` and `redirectUriMatches` come from the deprecated `@modelcontextprotocol/server-legacy/auth` remain there in 2.1.1 to preserve existing installations; see [ADR 0004](docs/adr/0004-own-authorization-server.md). Note the two do **not** share an error hierarchy — see the header comment in `src/http/oauth/provider.ts` before touching a `throw` there.
+- **The retired v1 SDK package** — `@modelcontextprotocol/sdk` and any of its subpaths. The server is on the `@modelcontextprotocol/*@2` line: import from `@modelcontextprotocol/{core,server,node,express}` (and `client` in tests and scripts). The transitional exception is the authorization-server layer: `mcpAuthRouter`, `OAuthServerProvider` and `redirectUriMatches` still come from the deprecated `@modelcontextprotocol/server-legacy/auth` in 2.1.1 to preserve existing installations; see [ADR 0004](docs/adr/0004-own-authorization-server.md). Note the two do **not** share an error hierarchy — see the header comment in `src/http/oauth/provider.ts` before touching a `throw` there.
 
 `test/deprecated-surface.test.ts` enforces this: it parses every `src/**/*.ts` with the TypeScript parser and fails on any of those identifiers, string literals or module specifiers. It looks at **code tokens only** — comments are trivia and are not scanned, so you can (and should) name a deprecated feature in a comment when explaining why it is absent.
 
