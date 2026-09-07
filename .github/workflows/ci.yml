@@ -33,6 +33,25 @@ jobs:
       - run: npm run typecheck:tests
       - run: npm test
 
+  desktop-smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - run: npm run build:release
+      - run: node dist/server.js --version
+      - run: node dist/server.js --health
+      # The demo starts a real stdio child and exercises discovery, a read,
+      # a dry run and a confirmation against a local fixture, without credentials.
+      - run: node dist/server.js --demo --json
+
   coverage:
     runs-on: ubuntu-latest
     steps:
@@ -54,6 +73,7 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run build:release
+      - run: npm run check:registry
       - name: Verify npm tarball contents
         run: |
           npm pack --json >/tmp/npm-pack.json
@@ -77,6 +97,7 @@ jobs:
           ./node_modules/.bin/avito-mcp --version
           ./node_modules/.bin/avito-mcp --health >/tmp/installed-health.json
           node -e "const h=require('/tmp/installed-health.json'); if(!h.ok) process.exit(1)"
+          ./node_modules/.bin/avito-mcp --demo --json
 
   docker:
     runs-on: ubuntu-latest

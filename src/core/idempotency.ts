@@ -46,7 +46,8 @@ interface IdempotencyReservation {
  * did not tell us whether the upstream mutation happened.
  *
  * It is not an entry (there is no result to replay) and not a reservation (no
- * promise is still running). It is a refusal with an expiry date.
+ * promise is still running). Cancellation holds retain their legacy expiry;
+ * transport-failure holds require explicit reconciliation and operator release.
  */
 interface IdempotencyHold {
   key: string;
@@ -54,6 +55,7 @@ interface IdempotencyHold {
   argsHash: string;
   heldAt: number;
   expiresAt: number;
+  reason?: 'cancelled_after_dispatch' | 'transport_failure_after_dispatch';
 }
 
 interface PersistentRecord {
@@ -63,7 +65,8 @@ interface PersistentRecord {
    *                 a hard stop leaves no evidence at all, so it stays fail-closed.
    * `completed`   — a remembered result, replayable until `expiresAt`.
    * `indeterminate` — {@link IdempotencyHold}: the request WAS dispatched and the
-   *                 outcome is unknown. Refused until `expiresAt`, then swept.
+   *                 outcome is unknown. Cancellation holds expire; transport
+   *                 failures stay held until explicitly reconciled and released.
    */
   state: 'in_flight' | 'completed' | 'indeterminate';
   key: string;
@@ -76,6 +79,7 @@ interface PersistentRecord {
   /** Why an `indeterminate` record exists, for the operator reading the file. */
   heldReason?: string;
   heldAt?: number;
+  holdReason?: IdempotencyHold['reason'];
 }
 
 export interface IdempotencyStoreOptions {
@@ -126,7 +130,8 @@ export class IdempotencyReconcileRequiredError extends Error {
   constructor(
     message: string,
     /** Machine-readable cause, surfaced in the error envelope. */
-    readonly reason: 'unfinished_reservation' | 'cancelled_after_dispatch',
+    readonly reason:
+      'unfinished_reservation' | 'cancelled_after_dispatch' | 'transport_failure_after_dispatch',
     /** When the refusal lifts by itself, if it ever does. */
     readonly heldUntil?: number,
   ) {
@@ -150,20 +155,28 @@ export class IdempotencyRecoveryRequiredError extends IdempotencyReconcileRequir
  * The caller went away AFTER the request had already been handed to Avito.
  *
  * Whether the mutation applied is unknowable from here — that is the whole
- * point — so the key is refused rather than replayed or re-run. Unlike
- * `in_flight`, this refusal expires: it was produced by a live process that
- * recorded exactly what it knew, so it earns a bounded lifetime.
+ * point — so the key is refused rather than replayed or re-run. The original
+ * cancellation refusal retains its expiry for compatibility. Ordinary transport
+ * failures require explicit reconciliation instead.
  */
 export class IdempotencyHeldError extends IdempotencyReconcileRequiredError {
-  constructor(key: string, toolName: string, heldUntil: number) {
+  constructor(
+    key: string,
+    toolName: string,
+    heldUntil: number,
+    reason: IdempotencyHold['reason'] = 'cancelled_after_dispatch',
+  ) {
     super(
-      `Idempotency key '${storedIdempotencyKey(key)}' for '${toolName}' is held: the previous call was cancelled ` +
-        'AFTER its request had already been sent to Avito, so the operation may have taken effect. ' +
-        'Refusing to repeat it. Check the operation on the Avito side; the hold lifts by itself at ' +
-        `${new Date(heldUntil).toISOString()}, and an operator can lift it sooner (see docs/safety.md). ` +
-        'Use a fresh idempotencyKey only if you have confirmed the previous attempt did NOT apply.',
-      'cancelled_after_dispatch',
-      heldUntil,
+      reason === 'transport_failure_after_dispatch'
+        ? `Idempotency key '${storedIdempotencyKey(key)}' for '${toolName}' is held: Avito may have applied the operation before the connection failed. ` +
+            'Do not repeat the mutation or use a new key. Reconcile the operation with Avito first; an operator must release this hold after reconciliation (see docs/safety.md).'
+        : `Idempotency key '${storedIdempotencyKey(key)}' for '${toolName}' is held: the previous call was cancelled ` +
+            'AFTER its request had already been sent to Avito, so the operation may have taken effect. ' +
+            'Refusing to repeat it. Check the operation on the Avito side; the hold lifts by itself at ' +
+            `${new Date(heldUntil).toISOString()}, and an operator can lift it sooner (see docs/safety.md). ` +
+            'Use a fresh idempotencyKey only if you have confirmed the previous attempt did NOT apply.',
+      reason,
+      reason === 'transport_failure_after_dispatch' ? undefined : heldUntil,
     );
     this.name = 'IdempotencyHeldError';
   }
@@ -182,6 +195,7 @@ export class UpstreamOutcomeUnknownError extends Error {
   constructor(
     /** The original failure, rethrown to the caller after the hold is recorded. */
     readonly cause: unknown,
+    readonly reason: NonNullable<IdempotencyHold['reason']> = 'cancelled_after_dispatch',
   ) {
     super(
       cause instanceof Error
@@ -189,6 +203,14 @@ export class UpstreamOutcomeUnknownError extends Error {
         : `Upstream outcome unknown: ${String(cause)}`,
     );
     this.name = 'UpstreamOutcomeUnknownError';
+  }
+}
+
+/** A transport failure before dispatch: release the reservation before rendering its retry hint. */
+export class UpstreamRequestNotSentError extends Error {
+  constructor(readonly cause: unknown) {
+    super('The upstream request was not sent');
+    this.name = 'UpstreamRequestNotSentError';
   }
 }
 
@@ -231,6 +253,45 @@ export class IdempotencyStore {
       );
     }
     return entry;
+  }
+
+  /** Replace a confirmation preview with a refusal when its claimed mutation has no known result. */
+  async holdPersistent(
+    key: string,
+    toolName: string,
+    argsHash: string,
+    error: UpstreamOutcomeUnknownError,
+  ): Promise<void> {
+    const path = this.persistentPath(toolName, key);
+    if (!path) {
+      this.hold(this.composeKey(toolName, key), key, toolName, argsHash, error.reason);
+      return;
+    }
+    await withFileLock(
+      path,
+      async () => {
+        const record = await readJsonFile<PersistentRecord>(path);
+        if (record && record.argsHash !== argsHash)
+          throw new IdempotencyConflictError(key, toolName);
+        const now = Date.now();
+        await this.holdReservation(
+          path,
+          record ?? {
+            version: 1,
+            state: 'in_flight',
+            key: storedIdempotencyKey(key),
+            toolName,
+            argsHash,
+            createdAt: now,
+            expiresAt: now + this.ttlMs,
+          },
+          key,
+          toolName,
+          error,
+        );
+      },
+      { timeoutMs: this.options.lockTimeoutMs ?? 30_000 },
+    );
   }
 
   /**
@@ -315,15 +376,19 @@ export class IdempotencyStore {
           }
           // A live hold: the previous caller was cancelled with its request
           // already on the wire. Refuse while it lasts.
-          if (record?.state === 'indeterminate' && record.expiresAt >= now) {
+          if (
+            record?.state === 'indeterminate' &&
+            (record.holdReason === 'transport_failure_after_dispatch' || record.expiresAt >= now)
+          ) {
             this.holds.set(this.composeKey(toolName, key), {
               key: record.key,
               toolName,
               argsHash: record.argsHash,
               heldAt: record.heldAt ?? record.createdAt,
               expiresAt: record.expiresAt,
+              reason: record.holdReason,
             });
-            throw new IdempotencyHeldError(key, toolName, record.expiresAt);
+            throw new IdempotencyHeldError(key, toolName, record.expiresAt, record.holdReason);
           }
           if (record?.state === 'in_flight') {
             throw new IdempotencyRecoveryRequiredError(key, toolName);
@@ -370,7 +435,7 @@ export class IdempotencyStore {
             // mutation for a first one that may already have been applied.
             if (error instanceof UpstreamOutcomeUnknownError) {
               await this.holdReservation(persistentPath, reservation, key, toolName, error);
-              throw error.cause;
+              throw error.reason === 'cancelled_after_dispatch' ? error.cause : error;
             }
             // Any other caught application failure means no usable result was produced,
             // and the request never reached Avito or was definitively answered by it.
@@ -392,7 +457,7 @@ export class IdempotencyStore {
     const held = this.holds.get(composed);
     if (held) {
       if (held.argsHash !== argsHash) throw new IdempotencyConflictError(key, toolName);
-      throw new IdempotencyHeldError(key, toolName, held.expiresAt);
+      throw new IdempotencyHeldError(key, toolName, held.expiresAt, held.reason);
     }
 
     const cached = this.entries.get(composed);
@@ -430,8 +495,8 @@ export class IdempotencyStore {
         if (err instanceof UpstreamOutcomeUnknownError) {
           // Same rule as the durable path: an unknown upstream outcome converts
           // the reservation into a bounded refusal instead of freeing the key.
-          this.hold(composed, key, toolName, argsHash);
-          rejectReservation(err.cause);
+          this.hold(composed, key, toolName, argsHash, err.reason);
+          rejectReservation(err.reason === 'cancelled_after_dispatch' ? err.cause : err);
         } else {
           rejectReservation(err);
         }
@@ -441,36 +506,43 @@ export class IdempotencyStore {
   }
 
   /**
-   * Records the in-memory half of a hold. The caller that produced it still gets
-   * its ORIGINAL failure — it is the cancelled request, and rewriting its
-   * rejection into a policy answer would only mislead whoever reads the logs.
+   * Records the in-memory half of a hold. Cancelled requests retain their original
+   * rejection; callers still connected receive a non-retryable unknown-outcome result.
    */
-  private hold(composed: string, key: string, toolName: string, argsHash: string): void {
+  private hold(
+    composed: string,
+    key: string,
+    toolName: string,
+    argsHash: string,
+    reason: IdempotencyHold['reason'] = 'cancelled_after_dispatch',
+  ): void {
     const heldAt = Date.now();
     const expiresAt = heldAt + this.ttlMs;
+    this.entries.delete(composed);
+    this.retainExpired.delete(composed);
     this.holds.set(composed, {
       key: storedIdempotencyKey(key),
       toolName,
       argsHash,
       heldAt,
       expiresAt,
+      reason,
     });
     logger.warn(
       {
         tool: toolName,
         idempotencyKeyHash: fingerprintIdempotencyKey(key),
-        heldUntil: new Date(expiresAt).toISOString(),
+        heldUntil:
+          reason === 'transport_failure_after_dispatch' ? null : new Date(expiresAt).toISOString(),
       },
-      'idempotency key HELD: the caller cancelled after the request had already been sent to Avito. ' +
-        'The key is refused until it expires; reconcile the operation on the Avito side.',
+      'idempotency key HELD: the request was sent but its outcome is unknown; reconcile the operation on the Avito side.',
     );
   }
 
   /**
-   * Rewrites a durable reservation into a bounded hold, keeping the `expiresAt`
-   * the reservation was created with. That deadline is what stops this from
-   * becoming a second permanent `in_flight`: the record is refused while it
-   * lasts and swept by {@link runExclusive} once it does not.
+   * Rewrites a reservation or confirmation preview into a durable hold. The
+   * original expiry applies only to cancellation; transport failures require
+   * operator release because elapsed time cannot establish their outcome.
    */
   private async holdReservation(
     persistentPath: string,
@@ -485,25 +557,32 @@ export class IdempotencyStore {
       state: 'indeterminate',
       heldAt,
       heldReason: error.message,
+      holdReason: error.reason,
+      result: undefined,
     };
     await writeJsonAtomic(persistentPath, record);
+    this.entries.delete(this.composeKey(toolName, key));
+    this.retainExpired.delete(this.composeKey(toolName, key));
     this.holds.set(this.composeKey(toolName, key), {
       key: reservation.key,
       toolName,
       argsHash: reservation.argsHash,
       heldAt,
       expiresAt: reservation.expiresAt,
+      reason: error.reason,
     });
     logger.warn(
       {
         tool: toolName,
         idempotencyKeyHash: fingerprintIdempotencyKey(key),
         record: persistentPath,
-        heldUntil: new Date(reservation.expiresAt).toISOString(),
+        heldUntil:
+          error.reason === 'transport_failure_after_dispatch'
+            ? null
+            : new Date(reservation.expiresAt).toISOString(),
       },
-      'idempotency key HELD: the caller cancelled after the request had already been sent to Avito. ' +
-        'The key is refused until it expires. Reconcile the operation with Avito first; ' +
-        'to lift the hold sooner, delete the record file named above (see docs/safety.md).',
+      'idempotency key HELD: the request was sent but its outcome is unknown. Reconcile the operation with Avito first; ' +
+        'after reconciliation, an operator can release the hold (see docs/safety.md).',
     );
   }
 
@@ -644,10 +723,10 @@ export class IdempotencyStore {
     // Active reservations deliberately have no TTL. Removing one before its
     // promise settles would allow a second mutation to run under the same key.
     //
-    // Holds are the opposite case and DO expire: nothing is running any more, and
-    // an unbounded hold would both wedge the key for good and eat a maxEntries
-    // slot that no operator could ever get back.
+    // Cancellation holds preserve their original expiry. Transport failures need
+    // explicit operator release: elapsed time cannot prove a mutation did not apply.
     for (const [k, hold] of this.holds) {
+      if (hold.reason === 'transport_failure_after_dispatch') continue;
       if (hold.expiresAt >= now) continue;
       this.holds.delete(k);
       logger.info(

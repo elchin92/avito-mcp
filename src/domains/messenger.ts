@@ -498,7 +498,7 @@ export const register: DomainRegister = (server, ctx) => {
         },
       };
     },
-    customExecute: async (args) => {
+    customExecute: async (args, _toolCtx, execution) => {
       const userId = (args.user_id as number | undefined) ?? ctx.config.profileId;
       if (userId === undefined) {
         // v0.7.4: no user_id arg and no Profile_id configured → can't build the path.
@@ -544,6 +544,7 @@ export const register: DomainRegister = (server, ctx) => {
       }
 
       return ctx.client.request({
+        ...execution,
         method: 'POST',
         path: '/messenger/v1/accounts/{user_id}/uploadImages',
         pathParams: { user_id: userId },

@@ -20,8 +20,7 @@
  *     justification must RESOLVE — see below;
  *   • every requirement of §1.2.A (all sixteen) must have a row, and blocks
  *     B–E must be represented;
- *   • every source link must name a document that exists in the research
- *     corpus.
+ *   • every source link must name a reviewed public primary-source URL.
  *
  * ── Why the justifications are checked at all ───────────────────────────────
  * The first version of this file checked «покрыто» rows and nothing else, and
@@ -81,10 +80,9 @@
  * typo'd task id resolves to "open" here. The direction that rots — a deferral
  * that outlives its task — is the direction that is checked.
  *
- * The corpus itself is untracked (8.4 MB, deliberately kept out of the package
- * and the image by M0.5), so its file list is frozen below rather than globbed.
- * A link to `docs/mcp-2026-07-28/whatever.md` that is not in that list is a
- * typo or an invention, and either way the citation cannot be followed.
+ * Public citations must remain usable from a clean checkout: exact reviewed
+ * URLs replace private corpus filenames. This offline check verifies citation
+ * identity and revision, not network availability or the source's truth.
  */
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs';
@@ -94,79 +92,41 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DOC = 'docs/conformance.md';
 
-/**
- * The 66 documents of the research corpus captured on 2026-07-28. Frozen, not
- * globbed: the directory is untracked by design, so on a clean checkout (and in
- * CI) there is nothing to glob.
- */
-const CORPUS = new Set([
-  '00-INDEX.md',
-  'api-1.md',
-  'api-2.md',
-  'authorization.md',
-  'basic.md',
-  'blog.md',
-  'changelog.md',
-  'client-elicitation.md',
-  'client-roots.md',
-  'client-sampling.md',
-  'client.md',
-  'concepts.md',
-  'deprecated.md',
-  'extensions-1.md',
-  'extensions-2.md',
-  'extensions-auth.md',
-  'governance.md',
-  'guides-1.md',
-  'guides-2.md',
-  'guides-3.md',
-  'guides-security.md',
-  'lifecycle-policy.md',
-  'overview-1.md',
-  'overview-2.md',
-  'patterns.md',
-  'registry-1.md',
-  'registry-2.md',
-  'related.md',
-  'schema-1.md',
-  'schema-2.md',
-  'schema-3.md',
-  'sdk-typescript-1.md',
-  'sdk-typescript-2.md',
-  'sdk-typescript-3.md',
-  'sdk-typescript-4.md',
-  'sdk-typescript-5.md',
-  'sdk-typescript-6.md',
-  'sdk-typescript-7.md',
-  'sdk.md',
-  'seps-1.md',
-  'seps-2.md',
-  'seps-3.md',
-  'seps-4.md',
-  'seps-5.md',
-  'server-1.md',
-  'server-2.md',
-  'server-discovery.md',
-  'server-overview.md',
-  'server-prompts.md',
-  'server-resources.md',
-  'server-tools.md',
-  'site-index.md',
-  'spec-architecture.md',
-  'spec-authorization.md',
-  'spec-basic.md',
-  'spec-core.md',
-  'spec-overview.md',
-  'spec-patterns.md',
-  'spec-security.md',
-  'spec-transports.md',
-  'tool-annotations.md',
-  'transports.md',
-  'utilities-1.md',
-  'utilities-2.md',
-  'utilities-3.md',
-  'versioning.md',
+/** Reviewed primary-source URLs, independently frozen rather than read from the document. */
+const PUBLIC_SOURCES = new Set([
+  'https://blog.modelcontextprotocol.io/posts/2026-07-28',
+  'https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/migration/upgrade-to-v2.md',
+  'https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/protocol-versions.md',
+  'https://modelcontextprotocol.io/extensions/auth/overview',
+  'https://modelcontextprotocol.io/specification/2025-11-25/schema',
+  'https://modelcontextprotocol.io/specification/2026-07-28/basic',
+  'https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization',
+  'https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations',
+  'https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns',
+  'https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/cancellation',
+  'https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr',
+  'https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions',
+  'https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http',
+  'https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning',
+  'https://modelcontextprotocol.io/specification/2026-07-28/changelog',
+  'https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation',
+  'https://modelcontextprotocol.io/specification/2026-07-28/schema',
+  'https://modelcontextprotocol.io/specification/2026-07-28/server',
+  'https://modelcontextprotocol.io/specification/2026-07-28/server/discover',
+  'https://modelcontextprotocol.io/specification/2026-07-28/server/prompts',
+  'https://modelcontextprotocol.io/specification/2026-07-28/server/resources',
+  'https://modelcontextprotocol.io/specification/2026-07-28/server/tools',
+  'https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching',
+  'https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/logging',
 ]);
+
+function isPublicSource(url: string): boolean {
+  return PUBLIC_SOURCES.has(url);
+}
+
+function sourceLinks(text: string): string[] {
+  return [...text.matchAll(/\]\(([^)]+)\)/g)].map((match) => match[1]!);
+}
 
 const STATUSES = ['покрыто', 'не покрыто', 'неприменимо'] as const;
 
@@ -707,26 +667,44 @@ describe('M6.2 — docs/conformance.md is checkable, not merely written', () => 
     }
   });
 
-  it('cites only documents that exist in the research corpus', () => {
-    const unknown: string[] = [];
-    for (const match of markdown.matchAll(/mcp-2026-07-28\/([A-Za-z0-9._-]+\.md)/g)) {
-      if (!CORPUS.has(match[1]!)) unknown.push(match[1]!);
+  it('cites only reviewed public primary sources', () => {
+    expect(markdown).not.toMatch(/\]\([^)]*mcp-2026-07-28\//);
+    expect(markdown).not.toMatch(/\]\([^)]*MIGRATION_PLAN\.md/);
+    for (const row of rows) {
+      for (const url of sourceLinks(row.source)) {
+        if (url === 'adr/0008-idempotency-hold-on-cancelled-dispatch.md') {
+          expect(existsSync(join(root, 'docs', url)), `${row.id}: missing supporting ADR`).toBe(
+            true,
+          );
+        } else {
+          expect(isPublicSource(url), `${row.id}: unreviewed source ${url}`).toBe(true);
+        }
+      }
     }
-    expect([...new Set(unknown)]).toEqual([]);
   });
 
-  it('cites the corpus on every row of block A', () => {
-    // Blocks B–E are about this repository's own promises (wire compatibility,
-    // the test seam, the security posture, the public contract) and are cited
-    // to the migration plan; block A is the revision itself, and a normative
-    // claim with no document behind it is the thing this table exists to
-    // prevent.
+  it('rejects unofficial, unversioned, mistyped and private source references', () => {
+    const valid = 'https://modelcontextprotocol.io/specification/2026-07-28/server/discover';
+    expect(isPublicSource(valid)).toBe(true);
+    for (const invalid of [
+      valid.replace('https:', 'http:'),
+      valid.replace('modelcontextprotocol.io', 'modelcontextprotocol.io.example.com'),
+      valid.replace('2026-07-28', '2027-07-28'),
+      valid.replace('2026-07-28', 'latest'),
+      valid.replace('server/discover', 'server/nonexistent-page'),
+      'mcp-2026-07-28/server-discovery.md',
+    ]) {
+      expect(isPublicSource(invalid), invalid).toBe(false);
+    }
+  });
+
+  it('cites a public primary source on every row of block A', () => {
     for (const row of rows) {
       expect(row.source.length, `${row.id} has an empty source cell`).toBeGreaterThan(3);
       if (!row.id.startsWith('A')) continue;
       expect(
-        /mcp-2026-07-28\/[A-Za-z0-9._-]+\.md/.test(row.source),
-        `${row.id} cites no corpus document`,
+        sourceLinks(row.source).some(isPublicSource),
+        `${row.id} cites no reviewed primary source`,
       ).toBe(true);
     }
   });

@@ -1,8 +1,8 @@
 {
   "name": "avito-mcp",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "mcpName": "io.github.elchin92/avito-mcp",
-  "description": "Hand your Avito account to an AI agent: it answers buyers, keeps listings priced and promoted, and fulfils orders — 148 tools, with a dry run and a confirming second call before anything irreversible. Serves MCP revision 2025-11-25 (default) or 2026-07-28, selected by AVITO_MCP_PROTOCOL_ERA.",
+  "description": "MCP server for Avito: 148 tools for buyer chats, listings, promotion and orders, with dry runs and confirmation for consequential actions. Supports MCP 2025-11-25 (default) and 2026-07-28 via AVITO_MCP_PROTOCOL_ERA.",
   "type": "module",
   "bin": {
     "avito-mcp": "dist/server.js"
@@ -10,17 +10,22 @@
   "main": "dist/server.js",
   "files": [
     "dist/",
-    "docs/safety.md",
+    "docs/*.md",
+    "docs/adr/",
+    "docs/assets/",
+    "examples/",
     "swaggers/",
     "README.md",
     "README.ru.md",
     "LICENSE",
+    "NOTICE",
     "CHANGELOG.md",
     "MIGRATION.md",
     "MIGRATION.ru.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
     "SUPPORT.md",
+    "ROADMAP.md",
     ".env.example"
   ],
   "scripts": {
@@ -44,9 +49,11 @@
     "build:release": "npm run build && npm run generate:manifest",
     "check:release-version": "node scripts/check-release-version.mjs",
     "verify": "npm run lint && npm run typecheck && npm run typecheck:scripts && npm run typecheck:tests && npm run test:coverage",
-    "verify:release": "npm run verify && npm run build:release && npm run check:release-version",
+    "verify:release": "npm run verify && npm run build:release && npm run check:release-version && npm run check:registry",
     "prepack": "npm run build:release",
-    "prepublishOnly": "npm run verify:release"
+    "prepublishOnly": "npm run verify:release",
+    "demo": "tsx src/server.ts --demo",
+    "check:registry": "node scripts/check-registry-schema.mjs"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -93,9 +100,9 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.6.1",
-    "hono": "^4.12.33",
+    "hono": "^4.13.7",
     "pino": "^10.3.1",
-    "zod": "^4.4.3"
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -109,6 +116,8 @@
     "tsx": "^4.23.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.7",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
   }
 }

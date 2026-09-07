@@ -1,0 +1,2 @@
+# Keep the official schema bytes identical to their reviewed SHA-256 digest.
+scripts/schemas/*.schema.json

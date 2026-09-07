@@ -30,8 +30,9 @@ const read = (path: string): string => readFileSync(resolve(root, path), 'utf8')
  */
 const RESEARCH_DIR = 'docs/mcp-2026-07-28';
 const RESEARCH_ONLY_ROOT_FILES = ['MIGRATION_PLAN.md', 'MIGRATION_PROGRESS.md'];
-/** Everything under docs/ that is allowed to ship (docs/safety.md backs avito://docs/safety). */
-const PACKABLE_DOCS = new Set(['docs/safety.md']);
+/** Public guides and assets ship; migration research remains excluded. */
+const isPackableDoc = (path: string): boolean =>
+  /^docs\/[^/]+\.md$/.test(path) || path.startsWith('docs/adr/') || path.startsWith('docs/assets/');
 /** The one file the secret scan is allowed to hold schema digests in. */
 const LEGACY_WIRE_BASELINE = 'test/baselines/legacy-1.3.3-wire.json';
 
@@ -234,7 +235,7 @@ describe('release and deployment hardening', () => {
     expect(release).toContain('workflow_dispatch:');
     expect(release).not.toMatch(/^\s+push:/m);
     expect(release).toContain('id-token: write');
-    expect(release.match(/id-token: write/g)).toHaveLength(1);
+    expect(release.match(/id-token: write/g)).toHaveLength(2);
     expect(release.indexOf('id-token: write')).toBeGreaterThan(release.indexOf('\n  publish:'));
     expect(release).toContain('actions: read');
     expect(release).toContain('environment: npm-publish');
@@ -252,7 +253,7 @@ describe('release and deployment hardening', () => {
     expect(release).toContain(
       'RELEASE_COMMIT="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"',
     );
-    expect(release.match(/git fetch --force --no-tags origin/g)).toHaveLength(4);
+    expect(release.match(/git fetch --force --no-tags origin/g)).toHaveLength(6);
     expect(release).not.toContain('merge-base --is-ancestor');
     const firstRefCheck = release.indexOf('- name: Verify release tag is current main');
     const secondRefCheck = release.indexOf(
@@ -278,6 +279,13 @@ describe('release and deployment hardening', () => {
     );
     expect(release).toContain('packages=(./release-artifact/*.tgz)');
     expect(release).toContain('overwrite: true');
+    const registry = release.slice(release.indexOf('\n  registry:'));
+    expect(registry).toContain('needs: publish');
+    expect(registry).toContain('login github-oidc');
+    expect(registry).toContain('publish server.json');
+    expect(registry).not.toContain('npm publish');
+    expect(registry).not.toContain('/releases/latest/');
+    expect(registry).toContain('sha256sum --check --strict');
     expect(read('package.json')).toContain('check:release-version');
     expect(read('scripts/check-release-version.mjs')).toContain('server.json.packages[0].version');
     expect(release).toMatch(/actions\/checkout@[0-9a-f]{40}/);
@@ -394,6 +402,10 @@ describe('release and deployment hardening', () => {
         workflow,
         'Recheck release tag is current main and publish',
       );
+      const registryCheck = extractRunBlock(
+        workflow,
+        'Recheck registry release tag is current main',
+      );
       expect(secondCheck.startsWith(firstCheck)).toBe(true);
 
       const temp = mkdtempSync(resolve(tmpdir(), 'avito-release-ref-'));
@@ -416,8 +428,15 @@ describe('release and deployment hardening', () => {
         git(work, ['tag', '-a', 'v1.2.0-annotated', currentSha, '-m', 'annotated release']);
         git(work, ['remote', 'add', 'origin', remote]);
         git(work, ['push', '--quiet', 'origin', 'main', 'v1.1.9', 'v1.2.0', 'v1.2.0-annotated']);
+        writeFileSync(resolve(work, 'server.json'), JSON.stringify({ version: '1.2.0' }));
 
         expect(runReleaseRefCheck(work, firstCheck, currentSha, 'v1.2.0').status).toBe(0);
+        expect(runReleaseRefCheck(work, registryCheck, currentSha, 'v1.2.0').status).toBe(0);
+        expect(runReleaseRefCheck(work, registryCheck, currentSha, 'v1.1.9').status).not.toBe(0);
+        expect(runReleaseRefCheck(work, registryCheck, staleSha, 'v1.2.0').status).not.toBe(0);
+        expect(
+          runReleaseRefCheck(work, registryCheck, currentSha, 'v1.2.0', 'refs/heads/topic').status,
+        ).not.toBe(0);
         expect(runReleaseRefCheck(work, firstCheck, currentSha, 'v1.2.0-annotated').status).toBe(0);
 
         const staleTag = runReleaseRefCheck(work, firstCheck, currentSha, 'v1.1.9');
@@ -433,6 +452,7 @@ describe('release and deployment hardening', () => {
         git(work, ['commit', '-am', 'advance main after prepare']);
         git(work, ['push', '--quiet', 'origin', 'main']);
         expect(runReleaseRefCheck(work, firstCheck, currentSha, 'v1.2.0').status).not.toBe(0);
+        expect(runReleaseRefCheck(work, registryCheck, currentSha, 'v1.2.0').status).not.toBe(0);
       } finally {
         rmSync(temp, { recursive: true, force: true });
       }
@@ -458,7 +478,7 @@ describe('release and deployment hardening', () => {
     // Any future docs/ subtree must be added to the allowlist deliberately,
     // rather than riding along on a directory-wide entry.
     const unexpectedDocs = packed.filter(
-      (path) => path.startsWith('docs/') && !PACKABLE_DOCS.has(path),
+      (path) => path.startsWith('docs/') && !isPackableDoc(path),
     );
     expect(unexpectedDocs).toEqual([]);
 
@@ -471,7 +491,7 @@ describe('release and deployment hardening', () => {
     // Second barrier: the allowlist itself must name files under docs/, never the directory.
     const pkg = JSON.parse(read('package.json')) as { files?: string[] };
     expect(pkg.files).toBeDefined();
-    expect(pkg.files).toContain('docs/safety.md');
+    expect(pkg.files).toContain('docs/*.md');
     expect(pkg.files?.filter((entry) => /^docs\/?$/.test(entry))).toEqual([]);
 
     // Third barrier: the same paths never enter the build context or the image.
@@ -611,39 +631,39 @@ describe('public contract — supported protocol revisions', () => {
     }
   });
 
-  it('stays on the registry schema that exists, and inside its length limit', () => {
-    // WHAT THIS DOES AND DOES NOT CHECK, because the difference was overstated
-    // once already: the changelog entry for this work said both additions were
-    // "validated against the registry's published 2025-12-11 schema", and no
-    // test validates anything against that schema. Fetching it at test time
-    // would make the suite depend on a network; vendoring it would need a
-    // JSON-Schema validator this package does not depend on, and the document
-    // uses `not`, which the converter available here (`z.fromJSONSchema`)
-    // cannot express. So the schema was read by hand when the fields were
-    // written, and what is re-checked on every run is this: the pin, the one
-    // limit the schema imposes on a field we fill, and — in the two assertions
-    // above — that every revision claimed matches the code that serves it.
+  it('declares the pinned registry schema and the publisher metadata namespace', () => {
     const server = serverJson();
-    // There is no revision-aligned successor to this schema: `/registry/*`
-    // carries no protocol-revision marker and no changelog, and the registry
-    // asks nothing of a 2026-07-28 server. Moving the pin to a date that looks
-    // newer would point at a document that does not exist.
     expect(server.$schema).toBe(REGISTRY_SCHEMA);
-    // `description` is capped at 100 characters by that schema, which is why
-    // the revision statement lives in `_meta` and in the env-var entry instead.
-    expect(server.description?.length).toBeLessThanOrEqual(100);
-    // And the publisher block sits under the namespace the schema reserves for
-    // it, spelled exactly: `_meta` keys are namespaced strings, and a typo here
-    // is metadata no registry would ever read.
     expect(Object.keys(server._meta ?? {})).toContain(PUBLISHER_META);
   });
 
-  it('says in the changelog what is checked against the registry schema, and what is not', () => {
-    // The claim that was too strong, held to its correction. A future edit that
-    // restores "validated against the schema" has to make it true first.
-    const changelog = read('CHANGELOG.md');
-    expect(changelog).not.toMatch(/validated against the registry's published/);
-    expect(changelog).toContain('A full JSON-Schema validation is not run');
+  it('validates the complete registry document, including nested enums and URI formats', () => {
+    const checker = resolve(root, 'scripts/check-registry-schema.mjs');
+    const valid = spawnSync(process.execPath, [checker], { encoding: 'utf8' });
+    expect(valid.status, valid.stderr).toBe(0);
+    const temp = mkdtempSync(resolve(tmpdir(), 'avito-registry-validation-'));
+    try {
+      const original = JSON.parse(read('server.json')) as Record<string, unknown>;
+      const invalidDocuments = [
+        { ...original, name: undefined },
+        { ...original, websiteUrl: 'not a URI' },
+        {
+          ...original,
+          packages: [
+            { registryType: 'npm', identifier: 'avito-mcp', transport: { type: 'invalid' } },
+          ],
+        },
+      ];
+      for (const [index, document] of invalidDocuments.entries()) {
+        const path = resolve(temp, `invalid-${index}.json`);
+        writeFileSync(path, JSON.stringify(document));
+        const result = spawnSync(process.execPath, [checker, path], { encoding: 'utf8' });
+        expect(result.status, `invalid fixture ${index}: ${result.stdout}`).toBe(1);
+        expect(result.stderr).toContain('Invalid MCP Registry manifest');
+      }
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
   });
 
   it('binds package.json and server.json to one identity', () => {
@@ -735,26 +755,23 @@ describe('public contract — supported protocol revisions', () => {
     }
     expect(shipping).toContain('AVITO_MCP_PROTOCOL_ERA');
 
-    // Both locales carry the section, at the same line, in the same order —
-    // server.json points a registry consumer at the English anchor, and a
-    // Russian reader who follows the same link must land on the same table.
+    // Each locale preserves the compatibility contract. Translations can grow
+    // independently; their line counts and section positions are not an API.
     const headings: Record<string, string> = {
       'README.md': '### Protocol revisions',
       'README.ru.md': '### Ревизии протокола',
     };
-    const lineOf: number[] = [];
     for (const [locale, heading] of Object.entries(headings)) {
       const lines = read(locale).split('\n');
       const at = lines.indexOf(heading);
       expect(at, `${locale} has no "${heading}" section`).toBeGreaterThanOrEqual(0);
-      lineOf.push(at);
-      const body = lines.slice(at, at + 40).join('\n');
+      const following = lines.slice(at + 1);
+      const nextHeading = following.findIndex((line) => /^#{1,3} /.test(line));
+      const body = following.slice(0, nextHeading < 0 ? undefined : nextHeading).join('\n');
       for (const revision of SUPPORTED_PROTOCOL_VERSIONS) {
         expect(body, `${locale} names ${revision} outside its era section`).toContain(revision);
       }
       expect(body).toContain('AVITO_MCP_PROTOCOL_ERA');
     }
-    expect(new Set(lineOf).size, 'the era section sits on different lines per locale').toBe(1);
-    expect(read('README.md').split('\n').length).toBe(read('README.ru.md').split('\n').length);
   });
 });

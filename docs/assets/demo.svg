@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="414" viewBox="0 0 1040 414" role="img" aria-labelledby="title desc">
+<title id="title">Avito MCP local demo</title>
+<desc id="desc">AVITO MCP — local demo with fictional data
+Real MCP calls; loopback fixture only. No Avito credentials or AI subscription required.
+
+Balance: 5000 RUB
+Active listings: 53 across 2 pages
+Unread chats: 2
+Price preview: 1400 RUB — no change sent
+Proposed change: waiting for confirmation — no change sent
+Demo approval: exactly one fixture change
+Retry with the same key: cached result — still one change
+
+Next: https://github.com/elchin92/avito-mcp/blob/main/docs/clients.md</desc>
+<rect width="1040" height="414" rx="16" fill="#101827"/>
+<g font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="16">
+<text x="28" y="35" fill="#91baff">$ npx -y avito-mcp@2 --demo</text>
+<text x="28" y="82" fill="#d5deef">AVITO MCP — local demo with fictional data</text>
+<text x="28" y="109" fill="#d5deef">Real MCP calls; loopback fixture only. No Avito credentials or AI subscription required.</text>
+<text x="28" y="136" fill="#d5deef"></text>
+<text x="28" y="163" fill="#d5deef">Balance: 5000 RUB</text>
+<text x="28" y="190" fill="#d5deef">Active listings: 53 across 2 pages</text>
+<text x="28" y="217" fill="#d5deef">Unread chats: 2</text>
+<text x="28" y="244" fill="#d5deef">Price preview: 1400 RUB — no change sent</text>
+<text x="28" y="271" fill="#d5deef">Proposed change: waiting for confirmation — no change sent</text>
+<text x="28" y="298" fill="#83e1b4">Demo approval: exactly one fixture change</text>
+<text x="28" y="325" fill="#83e1b4">Retry with the same key: cached result — still one change</text>
+<text x="28" y="352" fill="#83e1b4"></text>
+<text x="28" y="379" fill="#d5deef">Next: https://github.com/elchin92/avito-mcp/blob/main/docs/clients.md</text>
+</g></svg>

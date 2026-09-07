@@ -261,6 +261,41 @@ export function reanchorDates(captured: string, now: Date): string {
   );
 }
 
+/**
+ * v2.1's deliberate daily-overview correction, applied to the immutable 1.3.3
+ * fixture. Exact replacements preserve all unrelated prose and wire fields.
+ * Never import the production renderer here: that would compare it to itself.
+ */
+export function correctOverviewRelease(captured: string, now = new Date()): string {
+  let text = reanchorDates(captured, now);
+  const requested = Number(/last (\d+) days/.exec(text)?.[1]);
+  if (requested > 270) {
+    const oldFrom = /dateFrom: "([^"\n]+)"/.exec(text)?.[1];
+    const from = new Date(now.getTime() - 270 * 86400_000).toISOString().slice(0, 10);
+    if (oldFrom) text = text.replaceAll(oldFrom, from);
+    text = text
+      .replaceAll(`${requested} days`, '270 days')
+      .replaceAll(`${requested} дней`, '270 дней');
+  }
+  return text
+    .replace(
+      'Produce a summary: balance, number of active listings (by status), ',
+      'Paginate items_get_items_info with page: 1, 2, ... and per_page: 50 until a page ' +
+        'contains fewer than 50 listings. Count distinct listing IDs across all pages. ' +
+        'If any page fails or you stop early, label the count as partial; never present ' +
+        'the first page as the account total. Respect the 25 requests/minute limit.\n\n' +
+        'Produce a summary: balance, number of active listings (by status), ',
+    )
+    .replace(
+      'Сформируй итог: баланс, количество активных объявлений (по статусам), ',
+      'Пройди страницы items_get_items_info с page: 1, 2, ... и per_page: 50, пока ' +
+        'страница не вернёт меньше 50 объявлений. Считай уникальные ID по всем страницам. ' +
+        'При ошибке или досрочной остановке явно назови количество неполным; первая ' +
+        'страница не равна итогу аккаунта. Соблюдай лимит 25 запросов в минуту.\n\n' +
+        'Сформируй итог: баланс, количество активных объявлений (по статусам), ',
+    );
+}
+
 /** A deep copy of `value` with every rebased path recomputed from live sources. */
 export function applyRebases(value: unknown, rebases: readonly RebasedValue[] = []): unknown {
   const out = structuredClone(value);
@@ -741,8 +776,9 @@ const PROTOCOL_WIRE_STEPS: readonly WireStep[] = [
     rebase: [
       {
         path: ['body', 'result', 'messages', '0', 'content', 'text'],
-        value: (captured) => reanchorDates(captured as string, new Date()),
+        value: (captured) => correctOverviewRelease(captured as string),
         why:
+          'v2.1 explicitly fixes pagination and the 270-day window; only those exact prose/date replacements are permitted. ' +
           'The prompt embeds a seven-day window ending today (`src/prompts.ts`), so the ' +
           'captured literal stops being true at the first UTC midnight after the capture — ' +
           'and did, turning the bench red on a branch that changed nothing. Re-anchoring the ' +
@@ -1088,8 +1124,13 @@ function condensePromptResult(body: unknown): unknown {
 function overviewWindowRebase(why: string): readonly RebasedValue[] {
   return [
     {
+      path: ['body', 'result', 'description'],
+      value: (captured) => (captured as string).replaceAll('99999', '270'),
+      why: 'v2.1 caps the formerly unlimited legacy retention window at 270 days.',
+    },
+    {
       path: ['body', 'result', 'messages', '0', 'content', 'text'],
-      value: (captured) => reanchorDates(captured as string, new Date()),
+      value: (captured) => correctOverviewRelease(captured as string),
       why,
     },
   ];

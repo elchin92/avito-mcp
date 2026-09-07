@@ -1,8 +1,14 @@
 # Contributing to avito-mcp
 
-Thank you for considering contributing! This project's main goal is to give AI agents the maximum useful coverage of Avito's public API. Most PRs will be either adding new domains, expanding tool descriptions, or fixing bugs.
+Thank you for considering contributing! This project's main goal is to give AI agents the maximum useful coverage of Avito's public API. Contributions can improve tools, documentation, recipes, client setup, or bug fixes. For bounded starter tasks, see [ROADMAP.md](ROADMAP.md).
 
 > **Before you start:** for help or questions see [SUPPORT.md](./SUPPORT.md). For security issues use the private channel in [SECURITY.md](./SECURITY.md) — **not** a public issue.
+
+## First contribution
+
+Reproduce a [workflow](docs/workflows.md), improve a [client configuration](docs/clients.md), or report a documentation mismatch. Include your client version and OS; use fictional IDs and redacted results. A docs-only PR needs accurate examples, valid local links, and EN/RU updates where the same guidance exists.
+
+For code changes, use the shared factory below and run the release checks. For a new Avito domain, discuss the official specification and the user task in an issue before starting a large implementation.
 
 ## Architecture in 30 seconds
 
@@ -49,6 +55,7 @@ One `defineTool(server, ctx, { ... })` call in the appropriate `src/domains/<nam
   - `'public'` — visible to customers or third parties (sending messages, replying to reviews, changing prices, setting tracking numbers, accepting returns).
 
   The factory derives the MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`) from `risk` automatically — well-behaved MCP clients use these to warn users before destructive calls.
+
 - **Warn on write methods in the description** — prefix with `⚠️` for `money`/`public` tools as a belt-and-suspenders signal alongside the annotations.
 - **Path parameters with `{user_id}` or `{userId}`** — use `injectProfileId: 'user_id' | 'userId'` so the user's profile id is auto-filled if the agent doesn't pass it.
 - **Complex nested bodies** — model the bundled OpenAPI contract with explicit Zod schemas. Use `z.unknown()` only when the upstream schema is genuinely unconstrained, and document that exception in `test/openapi-contract.test.ts`.
@@ -85,6 +92,8 @@ npm audit --omit=dev --audit-level=high
 ```
 
 These commands cover lint, strict source/script/test typechecks, all-source coverage thresholds, tests, the deterministic manifest, and the release build. CI also installs the actual npm tarball, runs container/restart deployment gates, blocks on `npm audit`, and scans git history for secrets. If you added or renamed a tool, the manifest snapshot test will flag it; update the snapshot deliberately (`npx vitest run -u`) and commit it together with your change.
+
+Maintainers preparing a release or production rollout: follow the [release and deployment runbook](docs/releases.md).
 
 ## Filing issues
 

@@ -20,6 +20,8 @@ import type { DomainRegister } from '../core/tool-factory.js';
 import { PACKAGE_NAME, VERSION, readManifestMetadata } from '../version.js';
 import { callerPrincipal } from '../core/pending-actions.js';
 import { runtimeNamespace } from '../core/runtime-state.js';
+import { UpstreamOutcomeUnknownError } from '../core/idempotency.js';
+import { errorToMcpContent } from '../core/errors.js';
 
 /**
  * Constant-time secret comparison. Equal-length buffers required by Node's
@@ -580,6 +582,14 @@ export const register: DomainRegister = (server, ctx) => {
           await ctx.pendingStore.completePersistent(id);
           return result;
         } catch (error) {
+          if (
+            error instanceof UpstreamOutcomeUnknownError &&
+            error.reason === 'transport_failure_after_dispatch'
+          ) {
+            // Keep both the durable claim and the in-memory lifecycle closed:
+            // neither a second confirmation nor a stale preview may rerun it.
+            return errorToMcpContent(error);
+          }
           // Keep the durable marker fail-closed when result persistence is unknown,
           // but do not pin the process-local in-flight map forever.
           ctx.pendingStore.complete(id);

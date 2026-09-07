@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.elchin92/avito-mcp",
-  "description": "An AI agent that runs your Avito account — 148 tools for chats, listings, promotion, orders.",
+  "description": "MCP server for Avito: chats, listings, orders and analytics, with previews and confirmations.",
   "repository": {
     "url": "https://github.com/elchin92/avito-mcp",
     "source": "github"
   },
-  "version": "2.0.0",
+  "version": "2.1.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "avito-mcp",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "transport": {
         "type": "stdio"
       },

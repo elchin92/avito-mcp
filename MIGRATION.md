@@ -1,5 +1,7 @@
 # Upgrading from 1.3.x to 2.0.0
 
+> **2.0 → 2.1:** no configuration change is required. Lost mutation responses now return `OUTCOME_UNKNOWN` and require reconciliation; their held keys do not expire automatically. The daily overview caps spending history at 270 days and asks for all listing pages. See [2.1.0 changes](CHANGELOG.md#210---2026-09-07) and [recovery guidance](docs/safety.md#lost-responses-after-a-mutation-v21). The guide below describes the earlier 1.3 → 2.0 migration.
+
 **[Русская версия →](./MIGRATION.ru.md)** · [README](./README.md) · [CHANGELOG](./CHANGELOG.md)
 
 **If you run the default stdio setup, `npm install avito-mcp@2.0.0` and you are done.** No tool was
@@ -10,12 +12,12 @@ no resource URI or prompt moved.
 The major version is bought by three OAuth tightenings and one cancellation behaviour, not by the
 protocol work. MCP revision 2026-07-28 ships switched off.
 
-| Your setup                                                          | What to do                                                                        |
-| ------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| stdio — `npx avito-mcp` in Claude Desktop, Cursor, Cline            | Nothing, unless your client cancels tool calls. See [Cancellation](#cancellation-is-now-honoured) |
-| HTTP with `AVITO_MCP_HTTP_AUTH=none` or `bearer`                    | Nothing                                                                           |
-| HTTP with OAuth on `https://…`                                      | Read [DCR is stricter](#dynamic-client-registration-is-stricter) — some clients re-register |
-| HTTP with OAuth on `http://…` on a routable host                    | **The server will refuse to start.** Fix below                                    |
+| Your setup                                               | What to do                                                                                        |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| stdio — `npx avito-mcp` in Claude Desktop, Cursor, Cline | Nothing, unless your client cancels tool calls. See [Cancellation](#cancellation-is-now-honoured) |
+| HTTP with `AVITO_MCP_HTTP_AUTH=none` or `bearer`         | Nothing                                                                                           |
+| HTTP with OAuth on `https://…`                           | Read [DCR is stricter](#dynamic-client-registration-is-stricter) — some clients re-register       |
+| HTTP with OAuth on `http://…` on a routable host         | **The server will refuse to start.** Fix below                                                    |
 
 ---
 
@@ -64,11 +66,11 @@ passed both, which put an owner-approved authorization code on the network in th
 A `redirect_uri` must now be `https`, or `http` on a loopback address (`127.0.0.1`, `[::1]`,
 `localhost`), and must carry no fragment.
 
-| Callback that used to register             | What to do                                            |
-| ------------------------------------------ | ------------------------------------------------------ |
-| `http://` on a routable host               | Move it to `https://`                                 |
-| `com.example.app:/cb` (private-use scheme) | Use a loopback redirect — supported since v0.9.1      |
-| Anything carrying `#fragment`              | Drop the fragment                                     |
+| Callback that used to register             | What to do                                       |
+| ------------------------------------------ | ------------------------------------------------ |
+| `http://` on a routable host               | Move it to `https://`                            |
+| `com.example.app:/cb` (private-use scheme) | Use a loopback redirect — supported since v0.9.1 |
+| Anything carrying `#fragment`              | Drop the fragment                                |
 
 **This lands sooner than you might expect.** Clients already written to a persisted store
 (`AVITO_MCP_OAUTH_STORE_FILE`) are not re-validated on load and keep working, but without that
@@ -108,7 +110,7 @@ here — the mutation may have gone through. The key goes into a time-limited ho
 it answers `IDEMPOTENCY_HELD` rather than executing.
 
 That refusal is the point. For a money operation, being told no beats a second charge. Cancelling
-*before* the request was dispatched — while it queued behind the rate-limit budget, or waited on a
+_before_ the request was dispatched — while it queued behind the rate-limit budget, or waited on a
 token — frees the key exactly as before, and the rate-limiter slot is returned either way.
 
 There is no flag that restores the 1.3.3 behaviour, because restoring it would restore the
@@ -141,9 +143,9 @@ before can break.
 
 Nothing changes until you set the variable, and it is off by default.
 
-| `AVITO_MCP_PROTOCOL_ERA` | What the process serves                                                           |
+| `AVITO_MCP_PROTOCOL_ERA` | What the process serves                                                            |
 | ------------------------ | ---------------------------------------------------------------------------------- |
-| `legacy` *(default)*     | Revision 2025-11-25 only — byte-for-byte the 1.3.x wire                           |
+| `legacy` _(default)_     | Revision 2025-11-25 only — byte-for-byte the 1.3.x wire                            |
 | `dual`                   | Both. A 2025 client keeps calling `initialize`, a 2026 one calls `server/discover` |
 | `modern`                 | Revision 2026-07-28 only, which strands every 2025 client                          |
 

@@ -6,6 +6,9 @@ export default defineConfig({
     globalSetup: ['test/support/global-setup.ts'],
     environment: 'node',
     globals: false,
+    // Integration suites also spawn MCP processes; bound parallel files so
+    // coverage runs do not oversubscribe developer machines and CI runners.
+    maxWorkers: 4,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

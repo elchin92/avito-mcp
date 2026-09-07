@@ -1,0 +1,59 @@
+# Подключение AI-клиента
+
+[README](../README.ru.md) · [English](clients.md)
+
+Примеры используют Node.js 22.12+, `avito-mcp@2` и режим `AVITO_MCP_MODE=read_only`. Замените `YOUR_CLIENT_ID`, `YOUR_CLIENT_SECRET` и `YOUR_PROFILE_ID` локально. Добавьте запись `avito` к существующей конфигурации, сохранив остальные серверы. Заполненный файл содержит секреты: храните его в личной конфигурации и не добавляйте в Git.
+
+Форматы сверены с указанными первоисточниками в сентябре 2026 года. Это справочник настроек, а не подтверждение проверки каждой версии клиента на реальном Avito.
+
+## Claude Desktop
+
+Откройте **Settings → Developer → Edit Config** и добавьте [claude-desktop.json](../examples/clients/claude-desktop.json). Стандартные пути: macOS — `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows — `%APPDATA%\Claude\claude_desktop_config.json`. Полностью закройте и заново откройте приложение. На другой платформе используйте путь, который показывает приложение. [Официальная инструкция](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
+
+## Cursor
+
+Добавьте [cursor.json](../examples/clients/cursor.json) в личный `~/.cursor/mcp.json`, затем перезапустите сервер в Cursor. Проектный файл — `.cursor/mcp.json`; заполненные секреты в нём не коммитьте. [Документация Cursor](https://cursor.com/docs/mcp).
+
+## VS Code
+
+Используйте [vscode.json](../examples/clients/vscode.json): верхний ключ здесь **`servers`**. Команда **MCP: Open User Configuration** открывает личную конфигурацию; для проекта используется `.vscode/mcp.json`. Запустите сервер из редактора конфигурации. В общих проектах замените секреты на защищённые input-переменные VS Code. [Документация VS Code](https://code.visualstudio.com/docs/agent-customization/mcp-servers).
+
+## Zed
+
+Добавьте [zed.json](../examples/clients/zed.json) в настройки, открываемые командой **zed: open settings file**. Верхний ключ — **`context_servers`**, `command` — строка, а `args` и `env` находятся рядом. Альтернатива: **Settings → AI → MCP Servers → Add Server → Add Local Server**. [Документация Zed](https://zed.dev/docs/ai/mcp).
+
+<a id="codex-and-chatgpt-desktop"></a>
+
+## Codex и ChatGPT desktop
+
+Добавьте [codex.toml](../examples/clients/codex.toml) в `~/.codex/config.toml`. Codex CLI, расширение IDE и ChatGPT desktop используют общие настройки MCP на одном Codex-хосте. Пример даёт 60 секунд на первоначальную загрузку npm. После правок перезапустите сервер.
+
+В **ChatGPT desktop** откройте **Settings → MCP servers → Add server → STDIO**, укажите команду `npx`, аргументы `-y` и `avito-mcp@2`, а также четыре переменные окружения из примера. Сохраните и нажмите **Restart**. Команда `/mcp` показывает подключения.
+
+В **Codex CLI** команда `codex mcp list` перечисляет серверы. Для HTTP-развёртывания добавьте его URL `/mcp` и выполните `codex mcp login avito`. В этом варианте доступы Avito хранятся на сервере. [Официальная документация OpenAI](https://learn.chatgpt.com/docs/extend/mcp).
+
+<a id="chatgpt-web"></a>
+
+## ChatGPT web
+
+В облачном ChatGPT Work удалённые MCP-инструменты предоставляются установленными плагинами. Веб-версия не читает ваш локальный TOML и не запускает `npx` на ноутбуке. Этот репозиторий поставляет сервер; интеграцию плагина и доступное защищённое развёртывание нужно настроить отдельно. Доступность может ограничиваться администратором рабочего пространства. [Официальное описание](https://learn.chatgpt.com/docs/extend/mcp).
+
+Для локальной работы начните с desktop-конфигурации выше. Для своей интеграции прочитайте [настройку HTTP](operations.ru.md#удалённый-mcp-по-http-oauth-21).
+
+## Профили под задачу
+
+[analytics](../examples/profiles/analytics.env.json), [messenger](../examples/profiles/messenger.env.json) и [seller](../examples/profiles/seller.env.json) — **наборы переменных окружения**, а не полные конфиги и не автоматически загружаемые пресеты. Перенесите записи в `env` своего сервера; в TOML — в `[mcp_servers.avito.env]`. Сохраните три доступа Avito, замените старые значения настройками выбранного профиля и перезапустите сервер.
+
+| Профиль   | Инструменты                                           | Какие изменения доступны                      |
+| --------- | ----------------------------------------------------- | --------------------------------------------- |
+| analytics | Аккаунт, объявления, активность и расходы             | Никакие                                       |
+| messenger | Чаты, история, контекст объявления и текстовые ответы | Отправка текста через подтверждение           |
+| seller    | Объявления, цены и остатки                            | Изменение цены и остатков через подтверждение |
+
+В messenger нет отметки «прочитано», загрузки картинок и смены подписок. В seller нет переписки и платного продвижения. Оба профиля с изменениями используют подтверждение `all_destructive`. Allowlist не добавляет новые инструменты автоматически. Другие denylist/opt-in настройки продолжают действовать: проверьте результат через `meta_capabilities` и список инструментов клиента.
+
+## Проверка подключения
+
+В стандартном read-only примере или профиле analytics спросите: «Через Avito покажи мой баланс и первую страницу активных объявлений. Ничего не меняй». Ожидаемые инструменты — `user_get_user_balance` и `items_get_items_info`. Пустой список допустим, если объявлений нет.
+
+Статус connected проверяет связь по MCP; успешное чтение дополнительно проверяет авторизацию и доступ к методу Avito. `meta_health` проверяет только локальный сервер. При ошибке откройте [диагностику](troubleshooting.md).

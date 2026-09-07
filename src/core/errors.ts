@@ -1,6 +1,10 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
 
-import { IdempotencyReconcileRequiredError } from './idempotency.js';
+import {
+  IdempotencyReconcileRequiredError,
+  UpstreamOutcomeUnknownError,
+  UpstreamRequestNotSentError,
+} from './idempotency.js';
 
 export interface RequestInfo {
   method: string;
@@ -84,6 +88,7 @@ export type ErrorType =
   | 'AVITO_API_ERROR'
   | 'NETWORK_ERROR'
   | 'TIMEOUT'
+  | 'OUTCOME_UNKNOWN'
   /**
    * The server refuses to run this idempotency key because an upstream mutation
    * under it may already have happened. A deliberate answer, not a malfunction —
@@ -143,9 +148,14 @@ function classifyApiError(err: AvitoApiError): ErrorEnvelope {
  * programmatically without running regex over the text.
  */
 export function errorToMcpContent(err: unknown): CallToolResult {
+  if (err instanceof UpstreamRequestNotSentError) return errorToMcpContent(err.cause);
   let text: string;
   let envelope: ErrorEnvelope;
-  if (err instanceof AvitoApiError) {
+  if (err instanceof UpstreamOutcomeUnknownError) {
+    text =
+      'Avito may have applied this operation before the connection failed. Do not repeat the mutation or use a new idempotency key. Check the operation on Avito first; reconcile its result before retrying.';
+    envelope = { type: 'OUTCOME_UNKNOWN', message: text, retryable: false };
+  } else if (err instanceof AvitoApiError) {
     const bodyStr = typeof err.body === 'string' ? err.body : JSON.stringify(err.body, null, 2);
     text =
       `Avito API error ${err.status}\n` +
@@ -206,7 +216,12 @@ function legacyKindFromType(t: ErrorType): string {
   // the v0.6.0 vocabulary. The three legacy kinds have no room for a fourth without
   // breaking the readers that field exists for; `error.type`/`error.code` carry the
   // real answer.
-  if (t === 'INTERNAL_ERROR' || t === 'CONFIG_ERROR' || t === 'IDEMPOTENCY_HELD')
+  if (
+    t === 'INTERNAL_ERROR' ||
+    t === 'CONFIG_ERROR' ||
+    t === 'IDEMPOTENCY_HELD' ||
+    t === 'OUTCOME_UNKNOWN'
+  )
     return 'internal_error';
   return 'avito_api_error';
 }
