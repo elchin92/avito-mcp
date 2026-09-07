@@ -69,7 +69,7 @@ function criteria(markdown: string): Section[] {
     const to =
       next !== undefined
         ? next.index!
-        : (markdown.slice(from).search(/^## /m) + from + 1 || markdown.length);
+        : markdown.slice(from).search(/^## /m) + from + 1 || markdown.length;
     found.push({ id: heading[1]!, title: heading[2]!, body: markdown.slice(from, to) });
   }
   return found;
@@ -171,7 +171,8 @@ function section(heading: string): string {
 const sharedSymlinkUnits = (): string[] => {
   const facts = section('6\\.0');
   const bullet =
-    facts.split(/\n- /).find((item) => item.includes('/opt/avito-mcp/current/dist/server.js')) ?? '';
+    facts.split(/\n- /).find((item) => item.includes('/opt/avito-mcp/current/dist/server.js')) ??
+    '';
   return [...new Set([...bullet.matchAll(/`([a-z0-9.-]+\.service)`/g)].map((match) => match[1]!))];
 };
 
@@ -202,7 +203,8 @@ describe('M6.8 — the rollback criteria are checkable, not merely written', () 
       if (trigger === null) incomplete.push(`${section.id}: no **Trigger:**`);
       else if (!/\d/.test(trigger[1]!))
         incomplete.push(`${section.id}: the trigger carries no number`);
-      if (!/^- \*\*Window:\*\*/m.test(section.body)) incomplete.push(`${section.id}: no **Window:**`);
+      if (!/^- \*\*Window:\*\*/m.test(section.body))
+        incomplete.push(`${section.id}: no **Window:**`);
       if (!/^- \*\*Rollback level:\*\*/m.test(section.body))
         incomplete.push(`${section.id}: no **Rollback level:**`);
       if (fencedBlocks(section.body).length === 0)
@@ -258,7 +260,10 @@ describe('M6.8 — the rollback criteria are checkable, not merely written', () 
     expect(runbook).toContain(`**${recorded.join(', ')}**`);
 
     const r1 = sections.find((section) => section.id === 'R1')!;
-    const allowed = /\[([\d, ]+)\]\s*\|\s*index\(\.status\)/.exec(r1.body);
+    // Capture the request status before piping into the allow-list array.
+    // Reading .status after that pipe indexes the array and fails in jq.
+    expect(r1.body).toMatch(/select\(\.status as \$status\s*\|/);
+    const allowed = /\[([\d, ]+)\]\s*\|\s*index\(\$status\)/.exec(r1.body);
     expect(allowed, 'R1 does not filter on an explicit status allow-list').not.toBeNull();
     const list = allowed![1]!.split(',').map((value) => Number(value.trim()));
     // Everything the bench recorded must be tolerated, or R1 fires on traffic

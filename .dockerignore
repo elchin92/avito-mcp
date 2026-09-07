@@ -38,3 +38,20 @@ logs
 .DS_Store
 .vscode
 .idea
+
+# Working conversations and local assistant state never belong in an image.
+.codex
+.wire-baseline
+**/conversations
+**/conversation
+**/transcripts
+**/transcript
+**/chat-exports
+**/session-notes
+**/conversation-*.md
+**/conversation_*.md
+**/transcript-*.md
+**/transcript_*.md
+**/chat-export-*
+**/session-notes-*
+**/*.pid

@@ -1,2 +1,24 @@
 # Keep the official schema bytes identical to their reviewed SHA-256 digest.
 scripts/schemas/*.schema.json
+
+# Format public sources only; leave local research and conversations untouched.
+.claude/
+.codex/
+.wire-baseline/
+docs/mcp-2026-07-28/
+MIGRATION_PLAN.md
+MIGRATION_PROGRESS.md
+PROJECT_AUDIT.md
+AUDIT-*.md
+conversations/
+conversation/
+transcripts/
+transcript/
+chat-exports/
+session-notes/
+conversation-*.md
+conversation_*.md
+transcript-*.md
+transcript_*.md
+chat-export-*
+session-notes-*

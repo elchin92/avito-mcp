@@ -59,3 +59,24 @@ MIGRATION_PROGRESS.md
 # probes that produced them). Evidence for a review, not a source: it is large,
 # it is regenerated on demand, and it must never be staged by a wide `git add`.
 .wire-baseline/
+
+# Local conversations, audit notes, and runtime files are never public sources.
+PROJECT_AUDIT.md
+.codex/
+conversations/
+conversation/
+transcripts/
+transcript/
+chat-exports/
+session-notes/
+conversation-*.md
+conversation_*.md
+transcript-*.md
+transcript_*.md
+chat-export-*
+session-notes-*
+*.pid
+*.pem
+*.key
+.env.*
+!.env.example

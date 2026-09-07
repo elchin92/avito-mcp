@@ -1,76 +1,31 @@
-# ADR 0004 — avito-mcp remains its own OAuth authorization server, on a frozen SDK package
+# ADR 0004 — Keep the built-in OAuth authorization server
 
 Status: accepted
 Date: 2026-08-01
-Context: migration to MCP revision 2026-07-28, open question 1; stage M5
-Supersedes: nothing
+Updated: 2026-09-07
+Context: OAuth architecture, stage M5
 
 ## Decision
 
-avito-mcp keeps running its own OAuth 2.1 authorization server, built on
-`@modelcontextprotocol/server-legacy@2`, and does **not** delegate authorization
-to an external identity provider in this major. The dependency on a package the
-SDK marks frozen and deprecated is accepted as transitional, with the exit
-conditions below written down rather than assumed.
+Version 2.1.1 retains the built-in authorization server and its transitional dependency on `@modelcontextprotocol/server-legacy/auth`. Existing installations keep their consent flow, issuer, registrations and token-store behavior. The resource-server verification path uses the maintained v2 middleware.
 
-This is the recorded default of open question 1 in the migration plan; the owner
-has not closed that question, and this ADR is the decision that stands until
-they do. Stage M0.1's ADR is the intended long-term home for it — it does not
-exist on this branch, so the decision is recorded here and can be folded in
-later.
+A dedicated identity provider remains the longer-term migration path. It is not a drop-in replacement suitable for a patch release.
 
-## What the alternative would have cost
+## Why retain it now
 
-Delegating to an external IdP means the resource-server half of this repository
-stays and the authorization-server half goes away: no `/authorize`, no `/token`,
-no DCR, no consent page, no token store, no lease. That is a smaller and better
-supported surface, and it is the direction the SDK is pointing.
+The supported deployment serves one Avito account. An operator starts the server and approves clients through a password-protected consent page. Moving authorization to an external provider would require issuer configuration, client registration, signing-key discovery and a migration for existing tokens. It would also change installation requirements for users who currently need only this package and a reverse proxy.
 
-It is also a different product. avito-mcp is a single-tenant server whose entire
-authorization model is "the deployment owner types a password on a consent
-screen". There is exactly one principal. An external IdP would require the
-operator to run or buy one, register avito-mcp in it, and keep its issuer and
-JWKS reachable — for the purpose of authenticating one person to their own
-server. For the documented deployment (a small Avito seller running one
-instance behind Caddy) that is a larger operational burden than the thing it
-secures.
+Retaining the current implementation preserves that deployment contract while keeping the dependency explicit.
 
-Doing it during the protocol migration would also mean changing the
-authorization architecture and the wire era in the same release train, on a
-production account with no sandbox to validate against.
+## Maintenance obligations
 
-## What we are accepting
+- Track the frozen authorization helper package and its compatibility with supported Node and SDK versions.
+- Keep OAuth checks covered by the HTTP and provider integration tests, including invalid tokens, issuer binding, redirects, PKCE, refresh and revocation.
+- Keep the authorization helper's error classes separate from the resource middleware's errors. The router maps exceptions by their own class hierarchy; the wrong class can turn an expected `401` into `500`.
+- Preserve discovery and consent behavior when updating dependencies.
 
-- **`server-legacy` is frozen.** It receives no new features, and the SDK
-  recommends a dedicated OAuth server for production. It is not unmaintained
-  today, but it will be.
-- **Its revision boundary is undocumented.** Nothing in the sources states which
-  MCP revisions the AS half is expected to satisfy. Where the revision imposes
-  something the package does not do, it falls to this repository — which is what
-  M5.1 turned out to be: the router appends `iss` only to redirects issued from
-  the response it hands `authorize()`, and ours comes from a separate consent
-  POST.
-- **Two error hierarchies coexist and must not be mixed.** The AS half throws
-  `server-legacy` error classes, which `mcpAuthRouter` maps by `instanceof`; the
-  resource-server half throws the v2 `OAuthError` from
-  `@modelcontextprotocol/express`. `new InvalidTokenError() instanceof OAuthError`
-  is false in both directions, so a verifier throwing the wrong brand answers
-  `500` instead of `401 + WWW-Authenticate` and strips clients of discovery.
-  This is maintained by hand and pinned by tests
-  (`test/oauth-bearer-http.test.ts`).
+## Migration triggers
 
-## Exit conditions
+Revisit this decision if the helper loses compatibility or receives an unresolved security issue; if deployment becomes multi-tenant; or before introducing long-lived machine credentials. A dedicated-provider implementation should first be optional, document its operational requirements and demonstrate migration and rollback with existing clients.
 
-Any one of these makes the decision worth reopening:
-
-1. `server-legacy` stops working against a supported Node or SDK version, or its
-   AS half is removed outright.
-2. The deployment stops being single-tenant — more than one principal whose
-   access must be told apart rather than merely gated.
-3. Machine-to-machine credentials appear (client-credentials grant, long-lived
-   tokens), which is also the trigger in ADR 0006 for the token-storage
-   decision.
-4. The owner answers open question 1 in favour of an external IdP.
-
-Until then the AS half stays here, and its obligations under the revision are
-met in this repository — see stage M5 and `SECURITY.md`.
+See [OAuth scope compatibility](0005-scopes.md), [token storage](0006-token-storage.md) and [SECURITY.md](../../SECURITY.md).

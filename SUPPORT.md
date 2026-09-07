@@ -1,41 +1,37 @@
 # Support / Поддержка
 
+[English](#english) · [Русский](#русский)
+
 ## English
 
-| You have…                                                                                               | Go here                                                                                                 |
-| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| A bug in `avito-mcp` (tool crashes, wrong response, etc.)                                               | [Open an issue](https://github.com/elchin92/avito-mcp/issues/new/choose)                                |
-| A question or idea ("how do I…?", "what about…?")                                                       | [Ask a question / Задать вопрос](https://github.com/elchin92/avito-mcp/issues/new?template=question.md) |
-| A security vulnerability                                                                                | See [SECURITY.md](SECURITY.md) — **do not** open a public issue                                         |
-| A problem with the Avito API itself (rate limits, missing endpoint, wrong response from `api.avito.ru`) | [Avito API support](https://developers.avito.ru/) — we can't fix Avito's side                           |
-| A problem with your MCP client (Claude Desktop, Cursor, etc.)                                           | Report it to that project — we don't maintain the clients                                               |
+Start with [client setup](docs/clients.md) or [troubleshooting](docs/troubleshooting.md). Questions in English and Russian are welcome. Search [existing issues](https://github.com/elchin92/avito-mcp/issues) before opening a new one.
 
-**Before opening an issue:** check existing [issues](https://github.com/elchin92/avito-mcp/issues?q=is%3Aissue) and the [README](README.md) — start with the [client configurations](docs/clients.md) and [troubleshooting guide](docs/troubleshooting.md).
+| What you need                                      | Where to go                                                                                       |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Help with setup or a workflow                      | [Ask a question](https://github.com/elchin92/avito-mcp/issues/new?template=question.md)           |
+| Report a reproducible server error                 | [Report a bug](https://github.com/elchin92/avito-mcp/issues/new?template=bug_report.md)           |
+| Suggest a tool or improvement                      | [Request a feature](https://github.com/elchin92/avito-mcp/issues/new?template=feature_request.md) |
+| Report a security vulnerability                    | Use the [private reporting channel](SECURITY.md#how-to-report)                                    |
+| Resolve Avito account access or an API restriction | [Avito API support](https://developers.avito.ru/)                                                 |
+| Report a client application bug                    | Contact that client's maintainers; include whether other MCP servers are affected                 |
 
-**When you do open an issue, include:**
+For technical questions, include the installed server version, client/version, OS, Node version, transport and exact tool name. Add minimal steps and the error with secrets removed. `npm view avito-mcp version` reports the latest npm release; use the connected server's `meta_health` result to identify the running version.
 
-- MCP client + version (e.g. "Claude Desktop 0.9.2 on macOS 14")
-- Node version (`node --version`)
-- Installed `avito-mcp` version (the latest npm version may differ)
-- Exact tool name + arguments you called
-- Full error message from stderr (with secrets redacted)
+Issues are public. Replace credentials, tokens, account IDs, buyer messages and private file paths with clear placeholders. Do not attach your filled configuration or a full conversation export. Security and conduct reports use their respective private channels in [SECURITY](SECURITY.md) and the [Code of Conduct](CODE_OF_CONDUCT.md#enforcement).
 
 ## Русский
 
-| У вас…                                                                                     | Куда                                                                                                    |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| Баг в `avito-mcp` (tool падает, неверный ответ и т.п.)                                     | [Открыть issue](https://github.com/elchin92/avito-mcp/issues/new/choose)                                |
-| Вопрос или идея («как сделать…?», «а что если…?»)                                          | [Ask a question / Задать вопрос](https://github.com/elchin92/avito-mcp/issues/new?template=question.md) |
-| Уязвимость в безопасности                                                                  | Читайте [SECURITY.md](SECURITY.md) — **не открывайте** публичный issue                                  |
-| Проблема с самим Avito API (rate limits, недостающий метод, странный ответ `api.avito.ru`) | [Поддержка Avito API](https://developers.avito.ru/) — мы не правим сторону Avito                        |
-| Проблема с вашим MCP-клиентом (Claude Desktop, Cursor и т.д.)                              | Пишите в тот проект — клиенты не наши                                                                   |
+Начните с [подключения клиента](docs/clients.ru.md) или [решения проблем](docs/troubleshooting.ru.md). Вопросы можно задавать на русском и английском. Перед созданием нового issue проверьте [существующие обращения](https://github.com/elchin92/avito-mcp/issues).
 
-**Перед открытием issue:** посмотрите [существующие issues](https://github.com/elchin92/avito-mcp/issues?q=is%3Aissue), [настройки клиентов](docs/clients.ru.md) и [диагностику](docs/troubleshooting.md).
+| Что нужно                                              | Куда обратиться                                                                                    |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Помощь с настройкой или сценарием                      | [Задать вопрос](https://github.com/elchin92/avito-mcp/issues/new?template=question.md)             |
+| Сообщить о воспроизводимой ошибке сервера              | [Создать баг](https://github.com/elchin92/avito-mcp/issues/new?template=bug_report.md)             |
+| Предложить инструмент или улучшение                    | [Предложить функцию](https://github.com/elchin92/avito-mcp/issues/new?template=feature_request.md) |
+| Сообщить об уязвимости                                 | Использовать [приватный канал](SECURITY.md#how-to-report)                                          |
+| Решить вопрос с доступом аккаунта или ограничением API | [Поддержка API Avito](https://developers.avito.ru/)                                                |
+| Сообщить об ошибке приложения-клиента                  | Написать его разработчикам; указать, затронуты ли другие MCP-серверы                               |
 
-**В issue приложите:**
+Для технического вопроса укажите установленную версию сервера, клиент и его версию, ОС, Node, транспорт и точное имя инструмента. Добавьте короткие шаги и ошибку без секретов. `npm view avito-mcp version` показывает последний релиз npm; версию запущенного сервера смотрите в ответе `meta_health`.
 
-- Какой MCP-клиент и его версия (например, «Claude Desktop 0.9.2 на macOS 14»)
-- Версия Node (`node --version`)
-- Версия `avito-mcp` (ваша установленная)
-- Точное имя tool'а и аргументы которые передали
-- Полный текст ошибки из stderr (без секретов)
+Issues доступны всем. Замените ключи, токены, ID аккаунтов, сообщения покупателей и частные пути понятными заглушками. Не прикладывайте заполненную конфигурацию или полный экспорт разговора. Для уязвимостей и нарушений правил сообщества используйте приватные каналы из [SECURITY](SECURITY.md) и [Code of Conduct](CODE_OF_CONDUCT.md#enforcement).

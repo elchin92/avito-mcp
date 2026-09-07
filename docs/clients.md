@@ -2,7 +2,18 @@
 
 [README](../README.md) · [Русская версия](clients.ru.md)
 
-These examples use Node.js 22.12+, `avito-mcp@2`, and `AVITO_MCP_MODE=read_only`. Replace `YOUR_CLIENT_ID`, `YOUR_CLIENT_SECRET`, and `YOUR_PROFILE_ID` locally. Merge the `avito` entry into an existing configuration instead of replacing other servers. Filled configurations contain credentials: use a personal config or your client's secret inputs, and keep secrets out of Git.
+Choose your client, copy its example, and replace the three credential placeholders locally. All examples use Node.js 22.12+, `avito-mcp@2`, and `AVITO_MCP_MODE=read_only`. They connect to **your real Avito account**; they do not use demo data. To try fictional data first, run `npx -y avito-mcp@2 --demo` in a terminal.
+
+| Client                                                | Example                                                        | Config format            |
+| ----------------------------------------------------- | -------------------------------------------------------------- | ------------------------ |
+| [Claude Desktop](#claude-desktop)                     | [claude-desktop.json](../examples/clients/claude-desktop.json) | `mcpServers` JSON        |
+| [Cursor](#cursor)                                     | [cursor.json](../examples/clients/cursor.json)                 | `mcpServers` JSON        |
+| [VS Code](#vs-code)                                   | [vscode.json](../examples/clients/vscode.json)                 | `servers` JSON           |
+| [Zed](#zed)                                           | [zed.json](../examples/clients/zed.json)                       | `context_servers` JSON   |
+| [Codex / ChatGPT desktop](#codex-and-chatgpt-desktop) | [codex.toml](../examples/clients/codex.toml)                   | TOML or desktop settings |
+| [ChatGPT web](#chatgpt-web)                           | Remote integration                                             | Hosted plugin            |
+
+Merge the `avito` entry into your existing configuration, preserving other servers. `YOUR_CLIENT_ID`, `YOUR_CLIENT_SECRET`, and `YOUR_PROFILE_ID` come from your Avito API account. Filled configurations contain credentials: use a personal config or your client's secret inputs, and keep them out of Git. `avito-mcp@2` receives updates within major version 2; use an exact published version when you control updates yourself.
 
 The formats below were checked against linked primary documentation in September 2026. This is a configuration reference, not a live compatibility certification for every client version.
 
@@ -48,10 +59,14 @@ The [analytics](../examples/profiles/analytics.env.json), [messenger](../example
 | messenger | Chat lists/history, listing context and text replies | Text replies, through the confirmation flow            |
 | seller    | Listing details, prices and stock                    | Price and stock changes, through the confirmation flow |
 
-`messenger` deliberately excludes marking chats read, image uploads and subscription changes. `seller` excludes messaging and paid promotion. Both write-enabled profiles use `all_destructive` confirmation. Each uses an allowlist, so newly added tools are not automatically exposed. Existing denylist or opt-in settings still apply; use `meta_capabilities` and your client's tool list to check the effective configuration.
+`messenger` excludes marking chats read, image uploads and subscription changes. `seller` excludes messaging and paid promotion. Both profiles that allow changes use `all_destructive` confirmation. The AI client can call the confirmation tool itself; configure [separate approval controls](safety.md) if a person must approve each change.
+
+Each profile uses `AVITO_MCP_ALLOW_TOOLS`: only the named tools are exposed, so newly added tools do not appear automatically. Existing denylist or opt-in settings still apply. Check the effective configuration with `meta_capabilities` and your client's tool list.
 
 ## Verify the first connection
 
 Ask: “Use Avito to show my account balance and the first page of active listings. Do not change anything.” Start with the default read-only client example or the analytics profile. Expect calls to `user_get_user_balance` and `items_get_items_info`. If your account has no listings, an empty list is a valid response.
 
-A server appearing connected proves the MCP connection; a successful read also checks Avito authentication and permission for that endpoint. `meta_health` only checks the local server. [Troubleshooting](troubleshooting.md) covers the next steps when a call fails.
+A connected status confirms the MCP connection. A successful read also checks Avito authentication and permission for that endpoint. `meta_health` checks only the local server.
+
+Next, try a [morning report](workflows.md#morning-report) or [unread-chat review](workflows.md#unread-chat-triage). If the first call fails, use the [troubleshooting guide](troubleshooting.md).

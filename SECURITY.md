@@ -1,239 +1,105 @@
-# Security Policy
+# Security policy
 
-`avito-mcp` runs on your machine and holds OAuth credentials for your Avito account. If you find a way that could leak those credentials, execute arbitrary code, or otherwise put a user at risk — please tell us privately before posting it anywhere public.
+`avito-mcp` holds credentials for an Avito account and can act on that account through configured tools. This policy covers the local process, remote HTTP/OAuth endpoints, webhook receiver and persistent state.
 
-## How to report
+<a id="how-to-report"></a>
 
-Use **GitHub Private Vulnerability Reporting**:
-**https://github.com/elchin92/avito-mcp/security/advisories/new**
+## Report privately
 
-Please include:
+Use [GitHub private vulnerability reporting](https://github.com/elchin92/avito-mcp/security/advisories/new). Include the affected installed version, realistic impact and a minimal reproduction with fictional credentials and identifiers. Do not post tokens, customer data or a working exploit against a live account in a public issue.
 
-- Affected version (`npm view avito-mcp version` for latest)
-- What the issue is and what an attacker could do
-- A minimal reproduction — **do not** paste real `Client_id` / `Client_secret` / tokens. Use placeholders like `EXAMPLE_TOKEN`.
+Reports are discussed in the advisory thread. Please allow time for a fix before public disclosure. Credit is available unless the reporter prefers anonymity. General questions belong in [Issues](https://github.com/elchin92/avito-mcp/issues).
 
-We'll reply on the same advisory thread. Once a fix is released, the advisory becomes public and you get credit (unless you'd rather stay anonymous).
+## Scope and trust boundaries
 
-## In scope
+The supported deployment serves one configured Avito account. MCP clients can supply tool arguments, protocol messages and cancellation requests. Remote callers can reach authentication and registration endpoints before approval. Avito webhook deliveries and upstream responses are external input.
 
-- Leakage of `Client_secret`, `access_token`, or the OAuth token cache file (default location is per-user state dir, configurable via `AVITO_TOKEN_FILE`) to logs, stdout, MCP resources, or any endpoint other than `api.avito.ru`.
-- Arbitrary code execution from a malicious MCP-client message.
-- TLS / certificate-validation bypasses against `api.avito.ru`.
-- Race conditions in the OAuth token store that could expose tokens on shared machines.
-- **The remote HTTP surface** (`AVITO_MCP_TRANSPORT=http|both`): bypasses of the OAuth 2.1 authorization server or the bearer guard on `/mcp`, leakage of `AVITO_MCP_OAUTH_OWNER_PASSWORD` / issued tokens / `AVITO_MCP_HTTP_AUTH_TOKEN`, DNS-rebinding attacks, and — on the 2025-11-25 leg, which still has sessions — hijacking of a `Mcp-Session-Id`.
-- **State handle hijacking** on either leg: a way to obtain, guess or replay a `confirmation_id` that you were not given. See [the 2026-07-28 threat model](#what-revision-2026-07-28-changed-about-the-threat-model) — on that revision handles are what sessions used to be, and they are the thing worth attacking.
-- **The webhook receiver**: leakage of `AVITO_MCP_WEBHOOK_SECRET`, or ways to read or forge buffered events without the secret.
-- Confirmed vulnerable dependencies (with an exploit path through how we use them).
+Report credential exposure, unauthorized operations, arbitrary code execution, upload-path escapes, TLS validation bypasses, cross-caller state access, unbounded resource retention and exploitable dependency issues. Include how the affected path is reachable in a supported configuration.
 
-## Not in scope
+Avito API behavior and defects in an MCP client belong to their respective projects. A user independently publishing a token requires credential rotation; a server defect that causes such a disclosure is in scope.
 
-- Avito API behaviour itself — rate limits, scope restrictions, deprecations. Report those to Avito support.
-- Bugs in the MCP client (Claude Desktop, Cursor, etc.) — report to that project.
-- A user accidentally pasting their own token somewhere public — that's a credential rotation problem, rotate it.
+### Local stdio
 
-## What revision 2026-07-28 changed about the threat model
+stdio has **no authentication**: the peer is the process launched by the local operator, using that process's credentials. It is not a boundary for an untrusted remote caller. A tool being callable by that peer is expected; arbitrary code execution or access outside `AVITO_MCP_ALLOWED_UPLOAD_DIRS` is not.
 
-This server speaks two revisions of MCP on the same endpoint and in the same process
-(`AVITO_MCP_PROTOCOL_ERA` — `legacy`, `dual`, `modern`; both READMEs document the selector). The
-2025-11-25 leg is unchanged and its threat model is unchanged with it. The 2026-07-28 leg removed
-protocol sessions altogether, and that moves several things this file used to take for granted.
+For remote callers, use `AVITO_MCP_HTTP_AUTH=oauth`. The SDK selects the stdio protocol revision from the opening message; see [the accepted protocol limitation](docs/adr/0001-protocol-era-limitations.md).
 
-### There is no session on the 2026 leg, so caller identity comes from the request
+### Caller identity
 
-`initialize`, `Mcp-Session-Id` and session state are gone from revision 2026-07-28. An inbound
-`Mcp-Session-Id` is ignored rather than rejected, and the server mints none. Nothing on that leg
-identifies a caller by remembering a previous request.
+`callerPrincipal()` in `src/core/pending-actions.ts` derives identity in this order:
 
-Identity is derived per request, in `callerPrincipal()` (`src/core/pending-actions.ts`), from what
-the request itself carries. It has **four** forms, checked in this order, and the last two are told
-apart by which leg answered — a `dual` process produces both, from the same function, in the same
-minute:
+1. `oauth:<client_id>` — the client ID from a verified token issued by this deployment; stable across both protocol revisions.
+2. `bearer:<sha256 of the token>` — a fingerprint of a configured shared secret. Everyone using that secret is the same principal.
+3. `session:<Mcp-Session-Id>` — an anonymous legacy HTTP caller on revision **2025-11-25**; a new initialization creates a new principal.
+4. `session:local-stdio` — local stdio, or modern HTTP with no authentication; all such callers share the fallback principal.
 
-1. `oauth:<client_id>` — the `client_id` of the access token this deployment's own authorization
-   server issued and verified for this request (`AVITO_MCP_HTTP_AUTH=oauth`). This is the only
-   branch backed by an authentication event, and it is the only one that is the same principal
-   across both legs.
-2. `bearer:<sha256 of the token>` — the shared secret of `AVITO_MCP_HTTP_AUTH=bearer`, fingerprinted
-   rather than stored. It separates *this secret* from *another secret*; it does not identify a
-   person, and everyone holding the same secret is the same principal.
-3. `session:<Mcp-Session-Id>` — the **2025-11-25 leg**, which still has sessions. When no credential
-   was presented, the principal is the session id the server minted at `initialize`, so it is
-   per-connection: a caller who re-runs `initialize` is a **different** principal, holding the same
-   (absent) credential. This is what 1.3.3 did and it is deliberately unchanged — the 2025 wire is
-   frozen, and `AVITO_MCP_APPROVAL_MODE=external`, which requires the confirming identity to differ
-   from the initiating one, is built on this leg's per-session identity.
-4. `session:local-stdio` — the fallback when there is neither a credential nor a session: stdio on
-   either era, and the **2026-07-28 leg** under `AVITO_MCP_HTTP_AUTH=none`. There the name is a
-   label for "the operator who started this process", and **every caller shares it**. That is one
-   reason `none` is a development mode.
+Misattributing a verified client to another principal or exposing a bearer fingerprint is reportable. Modern HTTP has no protocol session; session hijacking applies to the legacy **2025-11-25** transport.
 
-The consequence to size a deployment by: under `AVITO_MCP_HTTP_AUTH=none` the two legs of one
-process attribute anonymous callers **differently** — the 2026 leg funnels them all into a single
-principal, the 2025 leg gives each `initialize` its own. Anything keyed by principal therefore
-behaves differently per leg; the per-principal confirmation budget below says what that means for
-it.
+### State handle hijacking
 
-Consequences worth reporting: a request whose token verifies as one `client_id` being attributed to
-another; a request that presented a credential being attributed to a session principal instead;
-the `bearer` fingerprint appearing anywhere in a log, a resource or a result.
+`confirmation_id` is an explicit handle shared by both protocol revisions. Its controls are:
 
-### State handle hijacking replaces session hijacking
+- **128 bits of entropy**, generated with `randomBytes(16)`.
+- **Expiry:** `AVITO_MCP_CONFIRMATION_TTL_SEC`, default 900 seconds, capped at 24 hours.
+- **Atomic claims:** one caller claims the action under a file lock before execution.
+- **A per-principal budget** enforced by `checkConfirmationRateLimit`. OAuth and bearer principals survive reconnection. An anonymous caller on **2025-11-25** that repeats `initialize` receives a fresh budget because its session principal changes; use authentication when the limit must bind a caller.
+- **Optional separate approval:** `AVITO_MCP_CONFIRMATION_SECRET` adds a separate factor. `AVITO_MCP_APPROVAL_MODE=external` requires that secret and records a successful confirmer as `external:secret-provider`; it does not authenticate a second person or require a second OAuth client.
 
-The revision's replacement for session-scoped state is an explicit, server-minted handle passed as
-an ordinary tool argument (SEP-2567). This server already worked that way before the revision
-required it: the two-step confirmation for money- and public-risk tools mints a `confirmation_id`
-and `meta_confirm_action` takes it back as a normal argument. It survives the removal of sessions
-without a change, and it is now the object an attacker wants.
+Possession of a handle is not authentication. The ordinary confirmation flow does **not** require the confirming principal to be the initiator. An already-authorized caller who obtains a valid handle may confirm it, including across protocol revisions. Set the separate confirmation secret and external approval mode when that behavior is unsuitable.
 
-What bounds it today:
+Predictable or leaked handles, reuse of expired or consumed actions, bypass of the configured approval factor, and authentication-bound budget bypasses are reportable. The documented ability to confirm a possessed handle in the ordinary mode is the existing design boundary.
 
-- **128 bits of entropy**, `randomBytes(16)` (`src/core/pending-actions.ts`) — not derived from the
-  tool name, the arguments or a counter.
-- **A short life.** `AVITO_MCP_CONFIRMATION_TTL_SEC`, default 900 seconds, capped at 24 hours.
-- **One shot.** The pending record is claimed atomically under a file lock before the executor
-  runs, so two concurrent callers presenting the same handle produce exactly one operation.
-- **A per-principal budget** on hard-confirmation attempts, keyed by `callerPrincipal()`
-  (`checkConfirmationRateLimit`). What that buys depends on the principal, so it is worth stating
-  exactly: under `oauth` and `bearer` the key survives reconnection, so exhausting the budget cannot
-  be dodged by opening a new connection. On the **2025-11-25 leg with no credential** the key is the
-  session id, so a caller who re-runs `initialize` starts a fresh budget — the budget bounds a
-  connection there, not a caller, and the thing actually bounding the guess is the one-shot claim and
-  the 128-bit handle, not this counter. Deployments that need the budget to bind a caller must give
-  callers a credential: `AVITO_MCP_HTTP_AUTH=oauth` or `bearer`.
-- **An out-of-band factor when configured.** `AVITO_MCP_CONFIRMATION_SECRET` requires a value that
-  never travelled over MCP, and `AVITO_MCP_APPROVAL_MODE=external` refuses a confirmation from the
-  same identity that created the action.
+## Required controls
 
-**Possession of a handle is not authentication, and this server does not pretend otherwise.**
-SEP-2567's guidance for authenticated servers is to validate the pair `(handle, auth context)` on
-every call; this server validates the handle and re-evaluates the safety policy, but does **not**
-require the confirming principal to be the one that minted the handle. That is deliberate and has a
-cost: a handle minted on the modern leg is confirmable on the legacy leg of the same process, which
-is what makes `dual` a single server rather than two, and a caller who obtains someone else's
-`confirmation_id` within its TTL — and who is already authorized to reach `/mcp` at all — can spend
-it. The mitigation for a deployment that cannot accept that is not a code change but a
-configuration: set `AVITO_MCP_CONFIRMATION_SECRET`, which possession of the handle can never
-satisfy.
+| Obligation                       | Implementation                                                        | Reportable failure                                                                             |
+| -------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Validate all tool inputs         | Zod schemas in `src/core/tool-factory.ts`; `src/core/upload-guard.ts` | Unvalidated arguments reaching a sensitive sink; traversal or symlink escape from upload roots |
+| Implement proper access controls | `src/core/policy.ts` and confirmation checks                          | A denied tool can execute, including through confirmation replay                               |
+| Rate limit tool invocations      | `src/core/rate-limiter.ts` and locked shared state                    | Cross-process bypass or unreleased work slots                                                  |
+| Sanitize tool outputs            | `src/resources.ts`, `src/logger.ts`, `src/core/client.ts`             | A secret reaches output, logs or an unintended destination                                     |
 
-So a report that a handle leaked into a log, that it is predictable, that a claimed or expired
-handle can still be spent, or that the per-principal budget can be reset by reconnecting, is a
-vulnerability. A report that "whoever holds the id can confirm" is the documented design above.
+The upstream client obtains its own Avito token; it must not forward a caller's MCP Authorization header to Avito. Resource cache hints do not authorize access, and account-scoped resources are not public cache entries.
 
-### The four server MUSTs, and where each one lives
+## Modern protocol surface
 
-The revision states four obligations for a server that exposes tools: *validate all tool inputs*,
-*implement proper access controls*, *rate limit tool invocations*, *sanitize tool outputs*. Named
-here so a report can be aimed at the module that is supposed to be holding the line:
+Revision `2026-07-28` validates request `_meta` before dispatch: malformed inputs use `-32602`, mismatched mirrored claims `-32020`, missing required capabilities `-32021` where applicable, and unsupported versions `-32022`. Unexpected server failures or bypass of these checks are in scope.
 
-| Obligation | Implemented in | What "broken" looks like |
-| --- | --- | --- |
-| Validate all tool inputs | Per-tool zod schemas in `src/core/tool-factory.ts`; `src/core/upload-guard.ts` for the one tool that reads files from disk | An argument reaching Avito, the filesystem or a shell without passing its schema; a path escaping `AVITO_MCP_ALLOWED_UPLOAD_DIRS` via a symlink or a traversal |
-| Implement proper access controls | `src/core/policy.ts` — `read_only` / `guarded` / `full_access`, plus allow/deny lists. A blocked tool is never registered, so it is absent from `tools/list` rather than refused at call time | A tool the active mode forbids being callable, listed, or reachable through the confirmation replay path |
-| Rate limit tool invocations | `src/core/rate-limiter.ts` — a durable budget shared across processes through a locked state file; slots are released when a call is cancelled | A caller spending budget that is never returned, or bypassing the shared file by running a second process |
-| Sanitize tool outputs | `src/resources.ts` (`sanitizeConfig` and a recursive redaction sweep for `avito://state/config`), `src/logger.ts` (pino redact paths), and `src/core/client.ts`, which mints this server's own Avito token and never forwards a caller's `Authorization` header | Any credential, token or `Client_secret` appearing in a tool result, an MCP resource or a log line |
+`subscriptions/listen` filters are narrowed by `src/core/subscriptions.ts`. Delivery outside the acknowledged filter or across an unauthorized caller boundary is in scope.
 
-Cache hints do not stand in for any of this: the revision is explicit that `cacheScope` alone must
-not be relied on to keep a primitive from an unauthorized reader, and no account-scoped URI on this
-server is published as `"public"`.
+`AVITO_MCP_HTTP_MAX_SESSIONS` and `AVITO_MCP_HTTP_SESSION_IDLE_SEC` apply to legacy HTTP only. Modern capacity is bounded by `AVITO_MCP_HTTP_MAX_INFLIGHT` (default 64) and `AVITO_MCP_HTTP_MAX_STREAMS` (default 32). Exceeding a limit returns `503` with `Retry-After`. Slots and streams must be released when the exchange ends.
 
-### New surface the revision added
+## Remote authentication
 
-Three things exist on the 2026 leg that did not exist before, and each of them is attacker-reachable:
+Only `AVITO_MCP_HTTP_AUTH=oauth` implements MCP authorization discovery. `bearer` is a manually configured shared-secret guard; `none` provides no guard. Their lack of OAuth discovery is documented, while accepting an invalid bearer token or bypassing OAuth is reportable.
 
-- **`subscriptions/listen`** replaces `resources/subscribe` and the HTTP GET stream. A client sends
-  a filter; the server narrows it to what it can actually deliver (`src/core/subscriptions.ts`) and
-  acknowledges only the honoured subset. A stream that delivers a notification type the filter did
-  not ask for, or that carries another caller's events, is in scope.
-- **The per-request `_meta` envelope** carries the protocol version and the client's capabilities on
-  every single request. It is attacker-controlled input on the hottest path in the server, and it is
-  validated before dispatch: a missing or wrong-typed key is `-32602`, a header disagreeing with the
-  body is `-32020`, an undeclared capability is `-32021`, an unknown revision is `-32022`, each with
-  an HTTP 4xx. Any envelope that produces a 500, or that gets served without validation, is in scope.
-- **Quantitative limits instead of a session table.** With sessions gone, `AVITO_MCP_HTTP_MAX_SESSIONS`
-  and `AVITO_MCP_HTTP_SESSION_IDLE_SEC` bound nothing on this leg; `AVITO_MCP_HTTP_MAX_INFLIGHT`
-  (default 64) bounds concurrent `/mcp` exchanges and `AVITO_MCP_HTTP_MAX_STREAMS` (default 32)
-  bounds how many of those may be long-lived subscription streams, so streams cannot starve tool
-  calls. Beyond either, the server answers `503` with `Retry-After`. A way to hold a slot or a
-  stream that is never returned — in particular after the client hangs up — is a denial-of-service
-  report and is in scope.
+`AVITO_MCP_HTTP_PUBLIC_URL` is the OAuth issuer identifier and resource URL. OAuth requires HTTPS except on loopback. Development cleartext overrides do not belong in production. Changing the URL resets stored clients and tokens; clients must register and authorize again. Preserve its scheme, host and exact issuer representation through the proxy.
 
-### The stdio trust boundary
+The built-in authorization server retains a transitional SDK helper dependency. Its architecture and exit conditions are recorded in [ADR 0004](docs/adr/0004-own-authorization-server.md). The single `avito:mcp` scope is separate from the tool policy; narrower scopes are planned in [ADR 0005](docs/adr/0005-scopes.md).
 
-Over `AVITO_MCP_TRANSPORT=stdio` there is no authentication, and there never was one to remove: the
-peer is whoever started the process, the credentials are the ones in that process's environment, and
-`callerPrincipal()` returns a single principal for everything. This is the intended deployment for a
-local MCP client, and it is **not** a boundary you can put an untrusted party behind. If a caller
-you do not fully trust needs access, run the HTTP transport with `AVITO_MCP_HTTP_AUTH=oauth` and let
-the authorization server be the boundary. "A local MCP client could call a tool" is therefore not a
-vulnerability; "a message from that client escapes into arbitrary code execution, or reads a file
-outside `AVITO_MCP_ALLOWED_UPLOAD_DIRS`" very much is.
+### Client registration
 
-One limitation on stdio is known and not fixable from this repository: the SDK's stdio entry decides
-a connection's era from its first classifiable message and holds that decision for the life of the
-connection, so an operator cannot infer the served era from configuration alone. It is a
-compatibility limitation rather than an authorization one — stdio carries no authorization to
-downgrade — and the analysis, the diagnostic we ship instead, and the conditions that would reopen
-it are recorded in [`docs/adr/0001-protocol-era-limitations.md`](docs/adr/0001-protocol-era-limitations.md).
+Dynamic Client Registration remains supported. Client ID Metadata Documents are not implemented: fetching an unauthenticated caller's URL needs a separate SSRF-resistant design.
 
-## Operational notes for the remote HTTP surface
+Registration controls in `src/http/oauth/provider.ts` and `src/http/oauth/index.ts` include:
 
-### `bearer` and `none` do not claim MCP authorization conformance
+- A 32 KiB JSON body and serialized metadata limit, plus field limits.
+- `redirect_uris` with between 1 and 10 entries, at most 2048 bytes each; HTTPS or loopback HTTP, no fragments, wildcards or private-use schemes.
+- Exact redirect matching at authorization.
+- `application_type: web` requires a non-loopback HTTPS redirect; `native` clients receive no client secret.
+- Owner approval is rate-limited to 10 attempts per 15 minutes per IP; password comparison is constant-time.
 
-Only `AVITO_MCP_HTTP_AUTH=oauth` implements the MCP authorization specification. `bearer` is a shared-secret guard and `none` is no guard at all; neither publishes RFC 9728 protected-resource metadata, neither runs an authorization server, and the challenge on a rejected request is a bare `Bearer realm="avito-mcp"` with no `resource_metadata` parameter. An MCP client written against revision 2026-07-28 therefore cannot discover an authorization server from these modes and cannot complete a flow it is required to initiate itself.
+Redirect-rule bypass, an outbound fetch initiated by registration, or a secret issued to a native client is in scope.
 
-This is a deliberate scope decision, not an oversight: `bearer` exists for a caller you configure by hand with a secret you generated, and publishing discovery metadata for an authorization server that does not exist would be worse than publishing none. **Use `oauth` for MCP clients.** A report that `bearer` lacks OAuth discovery is not a vulnerability; a report that `bearer` accepts a token it was not given, or that `oauth` can be bypassed, very much is.
+### Persistent credentials
 
-### `AVITO_MCP_HTTP_PUBLIC_URL` is the OAuth issuer identifier
+`AVITO_MCP_OAUTH_STORE_FILE` contains cleartext access tokens, refresh tokens and registered client secrets. This accepted limitation is documented in [ADR 0006](docs/adr/0006-token-storage.md). Files are created `0600` within a `0700` directory, written atomically and protected by an exclusive process lease.
 
-In `AVITO_MCP_HTTP_AUTH=oauth` this value is not a display string. It becomes the **issuer identifier** in `/.well-known/oauth-authorization-server`, the `resource` every access token is bound to, and the base of the endpoints clients POST their authorization code to. Three consequences:
+The service account, host administrator and readers of copied backups can use those credentials. Hashing tokens could reduce file-only exposure; it would not protect a compromised running service. Access tokens expire after one hour by default and refresh tokens after 30 days. Storage outside the private host boundary, multi-tenancy or long-lived machine credentials requires a new storage review.
 
-- **It must be `https`.** Cleartext is accepted only for `localhost` / `127.0.0.1` / `[::1]`; startup fails otherwise. The development override `AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL=1` exists, and the SDK's own issuer check still requires `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=true` on top of it. Do not use either in production.
-- **Changing it is changing authorization servers.** A client that recorded the old issuer is required to treat the new one as a different server. Registered clients and issued tokens in `AVITO_MCP_OAUTH_STORE_FILE` are therefore discarded on the first start under a new public URL (logged as `issuer identifier changed`), and every client re-registers and re-authorizes. Plan the change like a credential rotation, not like a rename.
-- **Clients compare it byte for byte.** The `iss` parameter on the authorization response and the `issuer` in the metadata document are the same string, trailing slash included; a conformant client may not normalise either side before comparing. If you put avito-mcp behind a proxy, do not let the proxy rewrite the host or the scheme.
+Wider permissions, another local user's access, credential output or concurrent-store corruption remain reportable. Keep backups private and never commit runtime state.
 
-### Registration is Dynamic Client Registration; CIMD is deliberately not implemented
+## Webhooks and uncertain mutations
 
-Revision 2026-07-28 deprecates DCR in favour of Client ID Metadata Documents, in which the client
-presents a URL and the authorization server fetches the metadata from it. That is a SHOULD, and this
-deployment does not follow it: fetching a URL supplied by an unauthenticated stranger turns our
-authorization server into an SSRF primitive aimed at whatever the host can reach, which on this host
-includes a local network. The decision is recorded as an open item of the migration plan (M8.3)
-rather than as a silence, and it will be revisited when clients actually stop supporting DCR — DCR's
-earliest removal is a revision on or after 2027-07-28.
+Webhook authentication uses the configured secret in the receiver URL. Registration must accept only the operator-configured receiver; buffered events and the secret must not become accessible without the required protection. Reverse-proxy access and error logs need separate review because URL paths can contain that secret. See [operations](docs/operations.md#avito-webhook-receiver).
 
-So `POST /register` stays open, and the hardening is on it (`src/http/oauth/provider.ts`,
-`src/http/oauth/index.ts`):
-
-- The request body is capped at 32 KiB by the JSON parser and the serialized metadata at 32 KiB
-  again before it reaches the store; every string field has its own byte limit.
-- `redirect_uris` must hold between 1 and 10 entries of at most 2048 bytes, each of them `https`, or
-  `http` on a loopback host. No fragments, no wildcards, no private-use URI schemes — a
-  reverse-domain ownership rule cannot be established at an unauthenticated endpoint, so loopback is
-  the supported native-client redirect. At `/authorize` the match is exact.
-- `application_type` is read rather than ignored: `web` requires a non-loopback `https` redirect, and
-  `native` is treated as a public client, so no `client_secret` is minted for a binary that ships to
-  end-user devices and cannot keep one.
-- `POST /authorize/approve` is rate-limited to 10 attempts per 15 minutes per IP, and the owner
-  password is compared in constant time.
-- Registered clients and their secrets are discarded whenever the issuer identifier changes (see
-  above), so a registration never outlives the authorization server it was made against.
-
-A way to register a client whose redirect does not satisfy these rules, to get a `client_secret` for
-a `native` client, or to make `/register` perform an outbound request, is in scope.
-
-### `AVITO_MCP_OAUTH_STORE_FILE` holds tokens in cleartext — accepted risk
-
-If you enable the durable OAuth store, issued access tokens, refresh tokens and self-registered `client_secret` values are written to that file **as they are**: the token strings are object keys, the secret is a plain field. They are not hashed and not encrypted.
-
-The file is created `0600` in a `0700` directory and is written atomically under an exclusive process lease, so the people who can read it are `root`, the service account avito-mcp runs as, and anyone holding a backup or container layer that contains it. The first two can already read `AVITO_MCP_OAUTH_OWNER_PASSWORD` from the process environment and mint fresh tokens whenever they like, so hashing removes nobody from that list. Access tokens expire in an hour by default, refresh tokens in 30 days, all are revocable, and all are discarded when the issuer identifier changes.
-
-The reasoning and the conditions that would reverse this decision are in [`docs/adr/0006-token-storage.md`](docs/adr/0006-token-storage.md) — the short version is that it stops being an accepted risk the moment any long-lived machine-to-machine credential lives in this store, or the file leaves the host's private state directory. **Reports are in scope** if the file is created with wider permissions than described, if its contents reach a log or an MCP resource, or if another local user can read it.
-
-## Disclosure
-
-Standard coordinated disclosure: please give us a reasonable window to ship a fix before discussing the issue publicly. After a patched version is on npm, write about it however you like.
-
----
-
-Not a security issue? Use [regular GitHub Issues](https://github.com/elchin92/avito-mcp/issues).
+A transport failure after dispatch is not proof of a failed mutation. Idempotency and pending-action claims must remain held where the outcome is unknown; automatic replay must not duplicate the action. Recovery procedures are in [the safety guide](docs/safety.md#lost-responses-after-a-mutation-v21).

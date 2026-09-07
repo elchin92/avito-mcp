@@ -1,18 +1,22 @@
 # Release and deployment runbook
 
-[Contributing](../CONTRIBUTING.md) · [Operations](operations.md) · [Migration](../MIGRATION.md)
+[Documentation](README.md) · [Contributing](../CONTRIBUTING.md) · [Operations](operations.md) · [Migration](../MIGRATION.md)
 
 For maintainers. The executable sources of this procedure are [Publish](../.github/workflows/publish.yml), the [version check](../scripts/check-release-version.mjs), and the [service installer](../deploy/install-services.sh).
 
+## Release evidence
+
+A completed release has four independently verified results: the intended commit is in `main` with passing CI, the exact npm version is published, the matching MCP Registry record is visible, and the deployed service reports the intended version. Record links and versions in the release notes. A requested workflow or a successful local build is only an intermediate step.
+
 ## Prepare a release
 
-1. Choose the version using the documented SemVer policy. Update `package.json`, both root version fields in `package-lock.json`, and `server.json` including its npm package version. Update the changelog and both README release markers. Preserve the npm/registry identity mapping: `package.json.mcpName` equals `server.json.name`, and the registry package identifier equals the npm name.
-2. Run `npm ci`, then `npm run verify:release`. This builds and regenerates the manifest before checking version consistency. Run both `npm audit --audit-level=high` and `npm audit --omit=dev --audit-level=high`. Review the actual package contents and try `npm run demo` without Avito credentials.
+1. Choose the version using the documented SemVer policy. Update `package.json`, both root version fields in `package-lock.json`, and `server.json` including its npm package version. Update the changelog, both README release markers and both migration guides. Preserve the npm/registry identity mapping: `package.json.mcpName` equals `server.json.name`, and the registry package identifier equals the npm name.
+2. Run `npm ci`, then `npm run verify:release`. This builds and regenerates the manifest before checking version consistency. Run both `npm audit --audit-level=high` and `npm audit --omit=dev --audit-level=high`. Review tracked files and actual package contents for private notes, conversation excerpts, credentials and runtime state. Try `npm run demo` without Avito credentials. The demo uses fictional data; its success does not prove access to a live account.
 3. Merge the reviewed release commit into `main` and wait for successful **push CI on that exact commit**. Create and push the matching `v<version>` tag on that commit. Treat the release tag as immutable; corrections need a new release version, not a moved tag.
 
 ## Publish npm and the MCP Registry
 
-In GitHub Actions, select **Publish → Run workflow**, choose branch **main**, and enter the existing tag in **tag**. For example, the input for package version `2.1.0` is `v2.1.0`.
+In GitHub Actions, select **Publish → Run workflow**, choose branch **main**, and enter the existing tag in **tag**. For example, the input for package version `2.1.1` is `v2.1.1`.
 
 The workflow requires the dispatch commit, current remote `main`, and release tag to match. It rechecks that relationship before publishing; changes to `main` during the run can stop the release. It also checks the tag/version relationship and successful CI for the dispatched commit.
 
@@ -45,3 +49,9 @@ When starting or restarting, the installer polls `/readyz`, then checks that `/h
 During the deployment transaction, errors or handled termination signals trigger restoration of the prior release link, environment, units and previous service state, including managed Caddy settings. Inspect the installer output and service status: recovery can itself encounter an operating-system failure. A deployment rollback does not undo actions already applied to the Avito account.
 
 For a later rollback, review migration and runtime-state compatibility, then redeploy a known-good checkout with its intended configuration through the same installer. Preserve the runtime state and idempotency records; rebuilding or renaming an installed release is not a rollback procedure.
+
+## Public documentation and credentials
+
+Keep release notes factual: problem, resulting behavior, validation and material limits. Use example hostnames and fictional account data. Do not include chat quotations, task transcripts, private deployment inventory or raw account responses. Scan both Git history and the npm tarball: an ignored local file and an untracked file are different from an artifact exclusion.
+
+Repository, npm and MCP Registry publication are separate surfaces. Third-party catalogues may refresh later; verify their displayed version independently rather than treating a submitted refresh as a completed update.
