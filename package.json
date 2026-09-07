@@ -83,7 +83,7 @@
     "pretest": "npm run generate:manifest",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "npm run generate:manifest && vitest run --coverage",
+    "test:coverage": "npm run generate:manifest && vitest run --coverage --maxWorkers=2",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
