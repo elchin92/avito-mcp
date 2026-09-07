@@ -59,6 +59,7 @@ for path in \
   "$SOURCE_ROOT/.remote.env" \
   "$SOURCE_ROOT/package.json" \
   "$SOURCE_ROOT/package-lock.json" \
+  "$SOURCE_ROOT/deploy/verify-webhook-secret.mjs" \
   "$SOURCE_ROOT/dist/server.js"; do
   if [[ ! -e "$path" ]]; then
     printf 'Required release file is missing: %s\n' "$path" >&2
@@ -318,6 +319,37 @@ if [[ ! -d "$release_dir" ]]; then
   mv "$STAGING_DIR" "$release_dir"
   STAGING_DIR=
 fi
+
+# The receiver's public URL is <public url><path>/<secret>, so re-rendering the
+# service environment from a checkout whose AVITO_MCP_WEBHOOK_SECRET is stale moves
+# that address out from under the live Avito subscription. Nothing downstream
+# notices: the receiver answers 200 to ANY secret on purpose (uniform response, so
+# the address cannot be probed), Avito therefore records every delivery as a success
+# and never unsubscribes, the service logs no error, and the access log skips the
+# receiver path. The only symptom is the event log quietly ceasing to grow. That is
+# exactly how 2026-09-07 lost 6 h 49 min of incoming messages: this installer put a
+# July secret back while the subscription still pointed at the August one.
+#
+# Checked BEFORE the transaction opens, so a refusal changes nothing at all. Exit
+# codes and the two opt-outs are documented in deploy/verify-webhook-secret.mjs.
+webhook_check_status=0
+node "$SOURCE_ROOT/deploy/verify-webhook-secret.mjs" \
+  "$release_dir/package.json" "$SOURCE_ROOT/.env" "$SOURCE_ROOT/.remote.env" \
+  "$SERVICE_ENV" || webhook_check_status=$?
+case $webhook_check_status in
+  0) ;;
+  4)
+    if [[ "${AVITO_MCP_DEPLOY_REQUIRE_SUBSCRIPTION_CHECK:-0}" == "1" ]]; then
+      printf 'Refusing to deploy: the live webhook subscription could not be verified\n' >&2
+      exit 1
+    fi
+    printf 'Warning: the live webhook subscription could not be verified; continuing\n' >&2
+    ;;
+  *)
+    printf 'Refusing to deploy: it would move the webhook receiver address\n' >&2
+    exit 1
+    ;;
+esac
 
 previous_release=
 if [[ -L "$CURRENT_LINK" ]]; then
