@@ -1,31 +1,23 @@
-<!--
-Спасибо за PR! / Thanks for the PR!
-Пожалуйста, заполните секции ниже. / Please fill in the sections below.
--->
+<!-- English or Russian is welcome. / Можно заполнить на русском или английском. -->
 
-## What & why / Что и зачем
+## Problem and result / Проблема и результат
 
-<!-- 1-3 предложения: что меняется и зачем. Если фиксит issue — "Fixes #123". -->
+<!-- What happens before and after this change? Why does it matter? Link the issue with "Fixes #123" when appropriate. -->
+<!-- Что происходило до изменения и что происходит теперь? При необходимости укажите "Fixes #123". -->
 
-## Type of change
+## Validation / Проверка
 
-- [ ] Bug fix (не ломает существующее поведение)
-- [ ] New Avito domain / tool (новый swagger или новый endpoint)
-- [ ] Tool description improvement (улучшение описаний для LLM)
-- [ ] Docs only (README / CHANGELOG / CONTRIBUTING)
-- [ ] Refactor / internal change (без изменения публичного API)
-- [ ] Breaking change (ломает обратную совместимость — опишите миграцию)
+<!-- List checks actually run and their result. For docs, verify examples, links and EN/RU consistency. For code, run npm run verify:release and meaningful tests for the affected behavior. -->
+<!-- Укажите выполненные проверки и результат. Для документации проверьте примеры, ссылки и согласованность EN/RU. Для кода запустите npm run verify:release и тесты изменённого поведения. -->
 
-## Checklist
+## Review checklist / Перед ревью
 
-- [ ] Code changes: `npm run verify:release` passes; relevant behavior is covered by meaningful tests.
-- [ ] Docs/examples: client format, internal links and EN/RU guidance are consistent.
-- [ ] Updated `CHANGELOG.md` for user-visible changes.
-- [ ] No real credentials, tokens, customer data or business identifiers in code, tests or examples.
-- [ ] New domains are registered in `src/meta/domain-registry.ts`; tool titles and descriptions are in English.
-- [ ] New tools have an explicit `risk` (`read`, `write`, `money`, `public`, or `sensitive`).
-- [ ] Business tools use `defineTool`, including custom execution, so policy, confirmation, dry-run, idempotency and error handling stay shared. See [CONTRIBUTING](../CONTRIBUTING.md#conventions).
+- [ ] No real credentials, tokens, customer data, private conversations or deployment details are included.
+- [ ] User-visible changes are documented in `CHANGELOG.md` and relevant guides.
+- [ ] Breaking changes, if any, include migration instructions.
+- [ ] New or changed tools follow [CONTRIBUTING](../CONTRIBUTING.md#conventions): English descriptions, explicit risk, and the shared `defineTool` execution path.
 
-## Notes for reviewer / Заметки для ревьюера
+## Risks or limitations / Риски и ограничения
 
-<!-- Что-то нестандартное? Trade-offs? Open questions? -->
+<!-- Mention known limitations, release steps or follow-up work relevant to this patch. Remove this section if none. -->
+<!-- Укажите ограничения, необходимые шаги релиза или связанные задачи. Если их нет, удалите раздел. -->

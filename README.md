@@ -1,19 +1,26 @@
 # avito-mcp
 
 [![npm](https://img.shields.io/npm/v/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
-[![downloads](https://img.shields.io/npm/dm/avito-mcp.svg)](https://www.npmjs.com/package/avito-mcp)
 [![tests](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/elchin92/avito-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/node/v/avito-mcp.svg)](package.json)
-[![Glama](https://glama.ai/mcp/servers/elchin92/avito-mcp/badges/score.svg)](https://glama.ai/mcp/servers/elchin92/avito-mcp)
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Connect your AI client to your Avito account: read chats and statistics, prepare replies, and manage listings and orders.**
 
-An open-source MCP server with **148 tools across 18 official Avito APIs**. Runs locally with Node.js or on your own server over authenticated HTTP. Your chosen AI client supplies the model and decides which tools to call. Scheduled jobs and automatic replies require a separately configured agent or scheduler.
+Ask your AI client in plain language; it uses this MCP server to call the official Avito APIs. **148 tools across 18 APIs** cover buyer chats, listings, statistics, promotion and orders. Run it on your computer or your own server.
 
-**[Русская версия →](README.ru.md)** · [Client setup](docs/clients.md) · [Workflows](docs/workflows.md) · [Troubleshooting](docs/troubleshooting.md)
+You bring an AI client and an Avito account with API access. The client provides the model; this project provides the connection and tools. Automatic replies and scheduled reports need an agent or scheduler configured separately.
 
-> **New in v2.1.0:** a credential-free local demo, focused setup profiles, and clearer recovery when an upstream result is unknown.
+**[Русская версия →](README.ru.md)** · [Documentation](docs/README.md) · [Client setup](docs/clients.md) · [Workflows](docs/workflows.md) · [Troubleshooting](docs/troubleshooting.md)
+
+> **New in v2.1.1:** step-by-step setup, complete English and Russian workflow and troubleshooting guides, and explicit demo versus live-account instructions. [Release notes](CHANGELOG.md).
+
+| Your next step                       | Guide                                                              |
+| ------------------------------------ | ------------------------------------------------------------------ |
+| See it work without an Avito account | [Run the demo](#try-without-avito-credentials)                     |
+| Connect your own account             | [Quick start](#quick-start)                                        |
+| Set up a client you already use      | [Client configurations](docs/clients.md)                           |
+| Deploy or contribute                 | [Operations](docs/operations.md) · [Contributing](CONTRIBUTING.md) |
 
 ## Try without Avito credentials
 
@@ -21,7 +28,9 @@ An open-source MCP server with **148 tools across 18 official Avito APIs**. Runs
 npx -y avito-mcp@2 --demo
 ```
 
-The demo runs real MCP calls against fictional Avito data on loopback: report, unread chats, price preview, confirmation and an idempotent retry. It uses no Avito credentials and sends no requests to Avito. The first `npx` run downloads the npm package. From source, use `npm run demo`.
+**The demo uses fictional data: 53 listings and 2 unread chats.** It runs locally, needs no Avito keys and sends no requests to Avito. It walks through a report, a price preview, confirmation and a repeated request that changes the price only once. The first `npx` run downloads the npm package; from source, use `npm run demo`.
+
+**To use your own Avito account, follow the quick start and omit `--demo`.** Normal server calls use your configured account; demo data never replaces it.
 
 ![Local demo output: 53 fictional listings, 2 unread chats, and one confirmed price change despite a retry](docs/assets/demo.svg)
 
@@ -31,13 +40,17 @@ The demo runs real MCP calls against fictional Avito data on loopback: report, u
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | Check how your listings are doing | [Morning report](docs/workflows.md#morning-report), [analytics profile](examples/profiles/analytics.env.json)                    | Balance, listing activity and spending, with dates and source IDs           |
 | Work through buyer messages       | [Unread-chat triage](docs/workflows.md#unread-chat-triage), [messenger profile](examples/profiles/messenger.env.json)            | Prioritised chats and draft replies; sending is a separate confirmed action |
-| Change a listing price            | [Preview and confirm](docs/workflows.md#preview-and-confirm-a-price-change), [seller profile](examples/profiles/seller.env.json) | Exact request preview, pending action, then a verified result               |
+| Change a listing price            | [Preview and confirm](docs/workflows.md#preview-and-confirm-a-price-change), [seller profile](examples/profiles/seller.env.json) | Request preview, pending action, then a result to check                     |
 
 Profiles use existing environment variables to expose a focused tool set. The recipes explain what to ask, which tools are involved, and how to check the result.
 
 ## Quick start
 
+### 1. Prepare your account
+
 You need **Node.js 22.12+**, an MCP-capable AI client, and Avito API credentials for your account. Obtain `Client_id`, `Client_secret`, and numeric `Profile_id` through [Avito's API account page](https://www.avito.ru/professionals/api). Available methods depend on your account's API access; installing this server does not grant additional Avito permissions.
+
+### 2. Add the server to your client
 
 For **Claude Desktop**, merge this into its MCP config using Settings → Developer → Edit Config. For **Cursor**, use your personal `~/.cursor/mcp.json`. Replace the three placeholders locally and keep the filled config out of Git.
 
@@ -58,7 +71,9 @@ For **Claude Desktop**, merge this into its MCP config using Settings → Develo
 }
 ```
 
-Restart the client and ask: **“Use Avito to show my account balance and the first page of active listings. Do not change anything.”** The example starts in `read_only`; without this setting the server's default remains `full_access`.
+### 3. Check a real read
+
+Restart the client and ask: **“Use Avito to show my account balance and the first page of active listings. Do not change anything.”** A successful answer should show your real balance and listing IDs, or an empty list if the account has no listings. The example starts in `read_only`; without this setting the server's default remains `full_access`.
 
 **VS Code, Zed, Codex and ChatGPT use their own setup formats.** Copy the [client-specific config](docs/clients.md), then try a [workflow](docs/workflows.md). The examples pin major version 2; pin an exact published version for controlled deployments.
 
@@ -145,6 +160,6 @@ Contributors: [CONTRIBUTING](CONTRIBUTING.md) explains the shared tool factory a
 
 The Auction, Autostrategy, Autoteka, Jobs, Realty reports and Short-term rent API specifications are not bundled. This project also does not provide a model, a hosted agent service, or a scheduler. See the [roadmap](ROADMAP.md) for concrete contribution opportunities.
 
-Questions and bug reports: [GitHub Issues](https://github.com/elchin92/avito-mcp/issues/new/choose) · [Support](SUPPORT.md). Share a reproducible use case or improve a recipe through a pull request.
+Questions and bug reports: [GitHub Issues](https://github.com/elchin92/avito-mcp/issues/new/choose) · [Support](SUPPORT.md). Useful contributions include a reproducible bug, a tested client configuration, or a clearer workflow. If the project helps you, a GitHub star helps other Avito users find it.
 
 [MIT](LICENSE). Independent project; not affiliated with Avito. See [NOTICE](NOTICE) for the trademark and API-terms notice.

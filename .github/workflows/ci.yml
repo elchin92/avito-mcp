@@ -28,6 +28,7 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run lint
+      - run: npm run check:docs
       - run: npm run typecheck
       - run: npm run typecheck:scripts
       - run: npm run typecheck:tests
@@ -46,6 +47,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:release
+      - run: npm run check:docs
+      - run: npm run check:publication
       - run: node dist/server.js --version
       - run: node dist/server.js --health
       # The demo starts a real stdio child and exercises discovery, a read,
@@ -74,6 +77,7 @@ jobs:
       - run: npm ci
       - run: npm run build:release
       - run: npm run check:registry
+      - run: npm run check:publication
       - name: Verify npm tarball contents
         run: |
           npm pack --json >/tmp/npm-pack.json

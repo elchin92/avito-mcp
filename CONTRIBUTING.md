@@ -1,8 +1,20 @@
 # Contributing to avito-mcp
 
-Thank you for considering contributing! This project's main goal is to give AI agents the maximum useful coverage of Avito's public API. Contributions can improve tools, documentation, recipes, client setup, or bug fixes. For bounded starter tasks, see [ROADMAP.md](ROADMAP.md).
+Contributions should help a seller complete a real task or help a maintainer keep the server reliable. Useful changes include client examples, clearer errors, missing Avito operations, regression fixes and documentation.
 
-> **Before you start:** for help or questions see [SUPPORT.md](./SUPPORT.md). For security issues use the private channel in [SECURITY.md](./SECURITY.md) — **not** a public issue.
+[Documentation](docs/README.md) · [Roadmap](ROADMAP.md) · [Support](SUPPORT.md) · [Private security reporting](SECURITY.md#how-to-report)
+
+## Development setup
+
+Use Node.js 22.12 or later and a supported npm version. Work on a branch from `main`:
+
+```bash
+npm ci
+npm run demo
+npm run verify:release
+```
+
+The demo and ordinary tests use fictional local fixtures. They need no Avito account. Keep real credentials in ignored local environment files and use explicit read-only authorization for a live smoke check.
 
 ## First contribution
 
@@ -10,7 +22,7 @@ Reproduce a [workflow](docs/workflows.md), improve a [client configuration](docs
 
 For code changes, use the shared factory below and run the release checks. For a new Avito domain, discuss the official specification and the user task in an issue before starting a large implementation.
 
-## Architecture in 30 seconds
+## Where code belongs
 
 ```
 swaggers/<name>.json                   ← Avito OpenAPI spec (source of truth)
@@ -26,7 +38,7 @@ served over stdio or Streamable HTTP
 Run `npm run generate:manifest` to produce an up-to-date `dist/manifest.json` with the
 authoritative list, including the `risk` classification of every tool.
 
-The heart of the project is `src/core/tool-factory.ts` — `defineTool(server, ctx, spec)`. It turns a 7-line declarative spec into a full MCP tool with HTTP, OAuth, retry, error mapping and Profile_id auto-injection. **You should never write a `fetch()` call inside a tool handler.**
+The heart of the project is `src/core/tool-factory.ts` — `defineTool(server, ctx, spec)`. It applies HTTP, OAuth, retries, error mapping and Profile_id injection consistently. Business tools must use this pipeline; do not add a separate `fetch()` inside a handler.
 
 ## Adding a new Avito swagger (4 steps)
 
@@ -39,7 +51,7 @@ If your domain has a read-only endpoint safe for smoke-testing, add a call in `s
 
 ## Adding a single tool to an existing domain
 
-One `defineTool(server, ctx, { ... })` call in the appropriate `src/domains/<name>.ts`. That's it.
+Add a `defineTool(server, ctx, { ... })` definition in the relevant domain. Include an explicit risk, accurate schemas and a description explaining the task and side effects. Update contract tests and the manifest snapshot when the public catalogue changes.
 
 ## Conventions
 
@@ -47,7 +59,7 @@ One `defineTool(server, ctx, { ... })` call in the appropriate `src/domains/<nam
 - **Versioned operations within a domain:** suffix with `_v1`/`_v2` (e.g. `cpa_chats_by_time_v1`, `cpa_chats_by_time_v2`).
 - **Tool definitions are in English** (titles, descriptions, parameter docs) — the audience is global and includes the AI agents themselves. Follow the existing description style: front-load a clear verb + resource, state when (and when not) to use the tool, flag side effects and money/public visibility.
 - **Every tool gets a human-readable `title`** — the manifest snapshot test enforces full title coverage; a new tool without a title fails CI. Prefix destructive titles with `⚠️`.
-- **`risk` field is required** on every new tool. Without it, the tool defaults to `'write'` and is hidden under `AVITO_MCP_MODE=read_only` — which is the right fail-closed behaviour, but you should be explicit:
+- **`risk` field is required** on every new tool. Without it, the tool defaults to `'write'` and is hidden under `AVITO_MCP_MODE=read_only` — but every new definition should state its risk explicitly:
   - `'sensitive'` — returns secrets/tokens (auth-style tools). Hidden by default even in `full_access`; opt-in via `AVITO_MCP_EXPOSE_AUTH_TOOLS=1`.
   - `'read'` — GETs and POST-as-query (analytics, statistics, balance, info). No side effects on the server.
   - `'write'` — modifies your own data without immediate customer impact or money spent (drafts, settings, internal stock, marking chats as read).
@@ -56,31 +68,31 @@ One `defineTool(server, ctx, { ... })` call in the appropriate `src/domains/<nam
 
   The factory derives the MCP `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`) from `risk` automatically — well-behaved MCP clients use these to warn users before destructive calls.
 
-- **Warn on write methods in the description** — prefix with `⚠️` for `money`/`public` tools as a belt-and-suspenders signal alongside the annotations.
+- **Warn on write methods in the description** — prefix with `⚠️` for `money`/`public` tools alongside the annotations.
 - **Path parameters with `{user_id}` or `{userId}`** — use `injectProfileId: 'user_id' | 'userId'` so the user's profile id is auto-filled if the agent doesn't pass it.
 - **Complex nested bodies** — model the bundled OpenAPI contract with explicit Zod schemas. Use `z.unknown()` only when the upstream schema is genuinely unconstrained, and document that exception in `test/openapi-contract.test.ts`.
 - **Custom execution still goes through `defineTool`** via `customExecute` / `buildDryRunPreview`. Do not register a business tool directly with `server.registerTool`: that bypasses the shared policy, confirmation, dry-run, idempotency, and error pipeline.
 
 ## Deprecated MCP surfaces
 
-The MCP revision `2026-07-28` publishes a [registry of Deprecated features](https://modelcontextprotocol.io/specification/2026-07-28/deprecated). Four rows of it are features this server has never used — and **must not start using**. Each already has a published removal horizon and a migration path, so adopting one now means writing code with an expiry date. A fifth rule, listed last, guards the SDK package line itself.
+The MCP revision `2026-07-28` publishes a [registry of Deprecated features](https://modelcontextprotocol.io/specification/2026-07-28/deprecated). Four rows of it are features this server has never used — and **must not start using**. Use the supported replacement for new code and keep existing compatibility changes deliberate. A fifth rule, listed last, guards the SDK package line itself.
 
 - **Sampling** — `sampling/createMessage`, `server.createMessage()`. Deprecated in `2026-07-28` (SEP-2577). Call an LLM provider directly; a server that needs an answer back from its caller uses the multi round-trip request pattern, not a server-initiated request.
 - **Roots** — `roots/list`, `listRoots()`, `notifications/roots/list_changed` (the notification is already removed, not just deprecated). Deprecated in `2026-07-28` (SEP-2577). Take directories and files as tool parameters, resource URIs, or configuration — `AVITO_MCP_ALLOWED_UPLOAD_DIRS` is exactly that.
 - **`includeContext: "thisServer"` / `"allServers"`** — deprecated by SEP-2596, removed no later than Sampling itself. Nothing to migrate: the field only exists on Sampling requests, which this server never sends.
 - **HTTP+SSE transport** — `SSEServerTransport`, the `/sse` subpath (`@modelcontextprotocol/server-legacy/sse` in the v2 line). Deprecated by SEP-2596 (soft-deprecated since `2025-03-26`). Use Streamable HTTP, already wired in `src/http/mcp-http.ts`.
-- **The retired v1 SDK package** — `@modelcontextprotocol/sdk` and any of its subpaths. The server is on the `@modelcontextprotocol/*@2` line: import from `@modelcontextprotocol/{core,server,node,express}` (and `client` in tests and scripts). The one deliberate exception is the frozen authorization-server layer, which `@modelcontextprotocol/server@2` does not ship at all: `mcpAuthRouter`, `OAuthServerProvider` and `redirectUriMatches` come from the deprecated `@modelcontextprotocol/server-legacy/auth` and stay there until an external IdP is chosen. Note the two do **not** share an error hierarchy — see the header comment in `src/http/oauth/provider.ts` before touching a `throw` there.
+- **The retired v1 SDK package** — `@modelcontextprotocol/sdk` and any of its subpaths. The server is on the `@modelcontextprotocol/*@2` line: import from `@modelcontextprotocol/{core,server,node,express}` (and `client` in tests and scripts). The transitional exception is the authorization-server layer: `mcpAuthRouter`, `OAuthServerProvider` and `redirectUriMatches` come from the deprecated `@modelcontextprotocol/server-legacy/auth` remain there in 2.1.1 to preserve existing installations; see [ADR 0004](docs/adr/0004-own-authorization-server.md). Note the two do **not** share an error hierarchy — see the header comment in `src/http/oauth/provider.ts` before touching a `throw` there.
 
 `test/deprecated-surface.test.ts` enforces this: it parses every `src/**/*.ts` with the TypeScript parser and fails on any of those identifiers, string literals or module specifiers. It looks at **code tokens only** — comments are trivia and are not scanned, so you can (and should) name a deprecated feature in a comment when explaining why it is absent.
 
 Two clarifications, since the registry is easy to misread:
 
 - Deprecated is not removed. Features already present in `src/` (Logging, Dynamic Client Registration) stay; the rule is only that no _new_ code path may depend on them. Widening their use is a review question, not an automatic no.
-- If an exception ever becomes genuinely necessary, change the rule list in `test/deprecated-surface.test.ts` in the same PR and state the reason — do not delete the test or skip the case.
+- If an exception is necessary, change the rule list in `test/deprecated-surface.test.ts` in the same PR and state the reason — do not delete the test or skip the case.
 
 ## Tests
 
-- Unit tests (`vitest`) are required for anything in `src/core/`. Run: `npm test`.
+- Add meaningful regression tests for execution, policy, transport and state changes. Run `npm test`; documentation-only changes need accurate examples and link checks.
 - Every Swagger wrapper is checked against its bundled OpenAPI operation by `test/openapi-contract.test.ts`; update schemas and the reviewed exception list deliberately.
 - `npm run smoke` uses the real Avito API, is read-only, and refuses production unless `AVITO_MCP_SMOKE_ALLOW_PRODUCTION=true` is explicit. The manual `live-smoke.yml` workflow owns this check; normal CI never calls Avito.
 
@@ -88,6 +100,7 @@ Two clarifications, since the registry is easy to misread:
 
 ```bash
 npm run verify:release
+npm audit --audit-level=high
 npm audit --omit=dev --audit-level=high
 ```
 
@@ -97,13 +110,13 @@ Maintainers preparing a release or production rollout: follow the [release and d
 
 ## Filing issues
 
-- **Bug:** include MCP client + version, Node version, exact tool name + arguments, full error from logs (stderr).
+- **Bug:** include MCP client + version, Node version, exact tool name + arguments, redacted error from logs (stderr).
 - **New domain request:** link to the Avito OpenAPI spec.
 - **Tool description improvement:** paste the current text + your suggestion + why it helps the LLM pick this tool.
 
-## Don't
+## Publication hygiene
 
 - Don't add HTTP client logic outside `src/core/client.ts`.
 - Don't add telemetry, analytics, or any outbound calls except to `api.avito.ru`.
-- Don't bundle credentials, tokens, real item IDs, or business data in commits, examples, or tests.
+- Keep credentials, tokens, customer data, conversation transcripts and private work notes out of commits, examples, tests and release artifacts. Use fictional IDs and redact logs before sharing them.
 - Don't add dependencies without justification — keep the install footprint minimal.

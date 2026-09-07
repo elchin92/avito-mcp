@@ -1,9 +1,28 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
+User-visible changes by release. Start with the latest entry; use the [migration guide](MIGRATION.md) when upgrading from an older major version.
+
+Versions follow [SemVer](https://semver.org/spec/v2.0.0.html). Dates use UTC. Historical entries describe the behavior of that release; the current reference is in [docs](docs/README.md).
 
 ## [Unreleased]
+
+## [2.1.1] - 2026-09-07
+
+### Documentation
+
+- Rebuilt the English and Russian READMEs around a first successful connection, practical tasks and clear configuration choices.
+- Reorganized setup, workflows, operations, safety and architecture references. Demo data is explicitly fictional; normal connections use the operator's Avito account.
+- Removed personal approval excerpts and internal working commentary from public architecture notes.
+
+### Release checks
+
+- Added checks for local documentation links and section anchors.
+- Added publication checks for private notes, transcript exports and unexpected package files. Public documentation and examples are explicitly listed in the npm package.
+- Updated development dependencies and the HTTP rate limiter while preserving the existing Zod schema representation.
+
+### Compatibility
+
+This patch preserves tool names, schemas, configuration defaults and runtime-state formats. The default `legacy` mode serves MCP 2025-11-25 only. For protocol selection, nothing changes for an existing client until `AVITO_MCP_PROTOCOL_ERA` enables `dual` or `modern` for MCP 2026-07-28. Restore `AVITO_MCP_PROTOCOL_ERA=legacy` to roll back that protocol choice. No account reconnection is required when upgrading from 2.1.0.
 
 ## [2.1.0] - 2026-09-07
 
@@ -28,115 +47,41 @@ Protocol negotiation remains unchanged: the default `legacy` mode serves MCP 202
 
 ## [2.0.0] - 2026-08-02
 
-**This server now speaks MCP revision 2026-07-28 — switched off by default — and enforces three authorization-surface validations that 1.3.3 skipped.** The tool catalogue did not move: still 148 tools, still `schema_hash` `9c52d4c3f39300d267fba9bdcfb9a7aef9cb9664d325484f2a3967327f5f505f`, byte-identical to 1.3.3's manifest. No environment variable was renamed, no default changed, no resource URI or prompt moved. The major is bought by the three OAuth tightenings under **Compatibility**, not by the revision work — the 2026-07-28 wire is additive and inert until you set `AVITO_MCP_PROTOCOL_ERA`. One thing that came with the SDK v2 substrate is **not** gated by that variable and is not inert: this release starts honouring `notifications/cancelled`, which 1.3.3 ignored, on both revisions. It is the first entry under **Compatibility** and the reason for the second entry under **Fixed**. The release gate passes **915 tests across 54 files** with **84.08% statements / 77.05% branches / 85.69% functions / 87.06% lines** coverage, including 151 assertions that replay this build's legacy leg against a wire baseline captured from a real running 1.3.3 process.
+Added optional MCP 2026-07-28 support and tightened OAuth validation. The manifest remained at 148 tools with unchanged input schemas. See the [migration guide](MIGRATION.md) for the affected configurations.
 
-> **Upgrading?** [`MIGRATION.md`](MIGRATION.md) ([по-русски](MIGRATION.ru.md)) is the short version of everything below: who has to change something, what breaks, and how to roll back. This section is the long one.
+### Compatibility and upgrade
 
-### Compatibility
+- `AVITO_MCP_PROTOCOL_ERA=legacy` remains the default and serves MCP 2025-11-25. `dual` serves both revisions; `modern` serves 2026-07-28. Invalid values fail startup.
+- Cancellation is now honored on both revisions. A cancellation after a destructive request was dispatched holds its idempotency key for the configured retention period; reconcile the upstream result before repeating it.
+- OAuth HTTP deployments require an HTTPS public URL, except for loopback development. Client redirects require HTTPS or HTTP loopback; URI fragments and unsupported private-use schemes are rejected.
+- Native clients use `token_endpoint_auth_method: none` and receive no client secret. Web clients cannot register loopback callbacks.
+- Runtime-state and token-cache formats remain compatible with 1.3.3. OAuth stores gain an issuer binding; changing the issuer invalidates credentials from the old issuer.
 
-- **If you run stdio — the default, and what `npx avito-mcp` in Claude Desktop, Cursor or Cline gives you — the request/response surface is unchanged, and there is exactly one behaviour change you can observe: this release starts honouring `notifications/cancelled`.** Same 148 tools with the same schemas, same 6 resources, same 5 prompts, same error codes, messages and `data` shapes, same environment contract. Three request/response differences exist and all three are additive or strictly more permissive: `avito://state/config` reports three new keys (`protocolEra`, `maxInflight`, `maxStreams`), `tools/call` sent without an `arguments` member now succeeds where 1.3.3 wrongly refused it, and `avito://docs/safety` has new sections so its digest changed. The same holds for HTTP with `AVITO_MCP_HTTP_AUTH=none` or `bearer`.
+### Protocol
 
-  > ⚠️ **The cancellation change is not confined to revision 2026-07-28, and it reaches a default install.** `notifications/cancelled` is defined on revision 2025-11-25 too; 1.3.3 parsed it and did nothing, and the move to SDK v2 makes this release act on it, because the handler that turns it into `abort()` is registered in the base `Protocol` constructor before any revision is known and `src/core/tool-factory.ts` reads the caller's signal without consulting the era. **If your client never sends the notification, nothing here applies to you.** If it does, two things are new on the 2025-11-25 wire: a tool call the client walks away from is now interrupted instead of running to completion, and a cancellation that caught a money call already on the wire puts its `idempotencyKey` into a bounded hold, so the retry answers `IDEMPOTENCY_HELD` rather than charging a second time. That second half is the point — see **Fixed** below, [`docs/safety.md`](docs/safety.md) and [ADR 0008](docs/adr/0008-idempotency-hold-on-cancelled-dispatch.md) — and there is no switch that restores the 1.3.3 behaviour, because restoring it would restore the duplicate charge with it. The 1.3.3 wire baseline stayed green through all of this and could not have done otherwise: it replays recorded request/response pairs, and a cancellation is an unsolicited notification that is never answered.
+- Added discovery, per-request metadata, subscriptions, modern error codes, resource cache hints and paginated tool discovery for MCP 2026-07-28.
+- Modern prompt arguments are validated before rendering. Legacy argument parsing is preserved.
+- Added modern limits `AVITO_MCP_HTTP_MAX_INFLIGHT` and `AVITO_MCP_HTTP_MAX_STREAMS`. Legacy session limits retain their existing names and defaults.
+- Omitted `tools/call.arguments` is accepted. Legacy error payloads retain their captured shapes; malformed modern JSON and mirrored headers return protocol-specific errors.
+- stdio selects an era from the first classifiable message and retains it for the connection, following SDK behavior.
 
-- **One configuration that started on 1.3.3 refuses to start on 2.0.0: `AVITO_MCP_TRANSPORT=http` or `both`, plus `AVITO_MCP_HTTP_AUTH=oauth` (the default auth mode), plus a cleartext `AVITO_MCP_HTTP_PUBLIC_URL` on a routable host** — `http://mcp.example.com`, `http://203.0.113.5:3000`. Startup now fails with an `EnvValidationError` naming the fix. This is the entire hard-break surface. **What to do:** put the deployment behind TLS and set `AVITO_MCP_HTTP_PUBLIC_URL=https://…` — the value is the OAuth issuer identifier, the `resource` every token is bound to, and the base of the endpoint clients POST their authorization code and `code_verifier` to, so cleartext exposes all three in transit. If you genuinely need cleartext for development, set `AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL=1` **and** `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=true`; the SDK requires the second one separately. The default public URL is `http://127.0.0.1:3000`, which is loopback and exempt, so a default install is not affected.
-- **Dynamic Client Registration now refuses `redirect_uris` that 1.3.3 accepted**, and because the default store is in memory, this lands on the next restart rather than someday: without `AVITO_MCP_OAUTH_STORE_FILE` every client re-registers when the process comes back. A callback must now be `https`, or `http` on a loopback address, and must carry no fragment. Clients already written to a persisted store are **not** re-validated on load and keep working. A client whose callback is `http://` on a routable host, or carries a fragment, or uses a private-use scheme like `com.example.app:/cb`, must move to a loopback redirect (supported since v0.9.1) or to `https`.
-- **A client that declares `application_type: "native"` is no longer issued a `client_secret`.** It is registered as public with `token_endpoint_auth_method: "none"`; declaring `native` together with any secret-bearing auth method is now rejected outright, and a `web` client is refused a loopback or non-`https` callback. Clients that omit `application_type` are unaffected. A native client that previously received a secret and authenticated with `client_secret_post` will fail on its next registration and must switch to public-client PKCE.
-- **The npm tarball ships fewer files.** `files` narrowed `docs/` to `docs/safety.md`, so `docs/adr/*` and `docs/conformance.md` are no longer inside the published package. Nothing at runtime reads them — `avito://docs/safety` is the only doc the server serves — but if you were reading ADRs out of `node_modules`, read them in the repository instead. The links to them in both READMEs resolve on GitHub and on npmjs.com, which rewrites relative links; they do not resolve inside an installed tree.
-- **The dependency substrate was replaced:** `@modelcontextprotocol/sdk ^1.29` is gone, in favour of `@modelcontextprotocol/{server,server-legacy,node,express} ^2.0.0` and `hono ^4.12`. This package has no `exports` map and is consumed through its `bin`, so there is no public-API break — but anyone importing `dist/*` paths directly, or pinning the old SDK as a peer, is affected. `engines` (`node >=22.12.0`), `bin` and `main` are unchanged.
-- **Rolling back is `npm install avito-mcp@1.3.3`, and there is nothing to undo first.** 2.0.0 writes no new on-disk state format: the runtime state, token cache and OAuth store files are the 1.3.3 shapes. The one exception is the OAuth store, which gains an `issuer` field on first write under 2.0.0 — 1.3.3 ignores unknown fields, so downgrading over it is safe. If you only want to back out the new protocol revision, unset `AVITO_MCP_PROTOCOL_ERA` (or set it to `legacy`) and restart; that is a full rollback of everything under **Added** below, with no reinstall.
+### Authorization and verification
 
-### Upgrade notes
-
-- **Turning on revision 2026-07-28.** Set `AVITO_MCP_PROTOCOL_ERA=dual` to serve both revisions from one process — a 2025-11-25 client keeps calling `initialize` and sees exactly what it saw before, a 2026-07-28 client calls `server/discover` instead. `modern` serves 2026-07-28 alone and will strand every 2025 client, so it is for a deployment whose clients you control. Roll out with `dual`, watch, then narrow. What changes for a client that moves to 2026-07-28: no handshake (`server/discover` plus a `_meta` envelope on every request); `subscriptions/listen` with `resourceSubscriptions` instead of `resources/subscribe`; `listChanged` advertised **`false`** on tools, prompts and resources, which is the truth for this server and lets a client stop waiting for notifications that never come; log level declared per request in `_meta["io.modelcontextprotocol/logLevel"]` instead of `logging/setLevel`; and a second way to cancel a call — closing the response stream — alongside the `notifications/cancelled` both revisions already have. The full matrix is in the README of both locales under **Protocol revisions**.
-
-  Whichever channel a cancellation arrives on, and on either revision, it aborts the outgoing Avito call and returns the rate-limiter slot. **The idempotency lease is released only if the request had not yet been sent to Avito** — cancelled while it queued behind the rate-limit budget or waited on a token, the key is freed exactly as before; cancelled after it left, the key is held and the next call with it answers `IDEMPOTENCY_HELD`. Earlier drafts of these notes said the lease was released unconditionally, and named the closed stream as the only trigger; both were wrong. See **Fixed** below and [ADR 0008](docs/adr/0008-idempotency-hold-on-cancelled-dispatch.md).
-
-- **On stdio, the era is decided once per connection, and this cannot be fixed from here.** There is no header layer on stdio, so the SDK reads a connection's revision from its FIRST classifiable message and holds it for the life of that connection — the rule and the code are the SDK's (`serveStdio`, `classifyOpeningMessage`). Under `dual`, a 2026 client whose opening frame carries no `_meta` envelope is served as a 2025 client until it reconnects, even if every later frame carries one. The server logs one `protocol era pinned to legacy` line to **stderr** when this happens, naming the method that pinned it; grep for it while rolling `dual` out. The fix is client-side — send `io.modelcontextprotocol/protocolVersion` in `params._meta` on the first message. HTTP is unaffected, because there every request is classified on its own. Why we accept this rather than fork the SDK entry point: [`docs/adr/0001-protocol-era-limitations.md`](docs/adr/0001-protocol-era-limitations.md).
-- **`AVITO_MCP_HTTP_MAX_SESSIONS` and `AVITO_MCP_HTTP_SESSION_IDLE_SEC` keep their names, defaults and meaning**, but revision 2026-07-28 has no sessions, so on the modern leg they govern nothing. Two new variables carry the equivalent budget there — `AVITO_MCP_HTTP_MAX_INFLIGHT` (default 64) and `AVITO_MCP_HTTP_MAX_STREAMS` (default 32). They are deliberately not derived from `maxSessions`: a session is idle most of its life and an in-flight exchange is work in progress, and tying them would move the modern budget whenever an operator tuned the legacy one. Both appear in `avito://state/config`.
-- **An unrecognised `AVITO_MCP_PROTOCOL_ERA` fails startup** rather than falling back to `legacy`. A typo in the one variable that decides which protocol your clients get should not be survivable in silence.
-
-### Added
-
-- **This server now speaks two protocol revisions, and `AVITO_MCP_PROTOCOL_ERA` decides which ones a process serves.** `legacy` is the default and is byte-for-byte the 1.3.x wire: revision **2025-11-25** only, negotiated by `initialize`. `dual` also answers revision **2026-07-28** — no handshake, a `_meta` envelope on every request, `server/discover` in place of `initialize`. `modern` serves 2026-07-28 alone. Nothing changes for an existing client until the variable is set, and setting it back is the whole rollback. The revision matrix — handshake, subscriptions, `listChanged`, cancellation, cache hints, and what a `Mcp-*`-stripping proxy breaks — is in the README of both locales under **Protocol revisions**.
-- **The supported revisions are now declared where a registry can read them.** `server.json` gains `AVITO_MCP_PROTOCOL_ERA` in its `environmentVariables` (with `choices` and `default`, the schema's own way of describing a launch option) and a `_meta["io.modelcontextprotocol.registry/publisher-provided"].protocolRevisions` block naming what each value serves. Both live in fields that schema defines — `environmentVariables`, and the reserved `io.modelcontextprotocol.registry/publisher-provided` namespace — and both were checked against the published `2025-12-11` document when they were written. What the suite re-checks on every run is narrower, and worth stating precisely rather than as “validated”: that the `$schema` pin still names the schema that exists, that `description` stays inside the 100-character cap that schema imposes, and that every revision the file claims matches `SUPPORTED_PROTOCOL_VERSIONS` and `DEFAULT_PROTOCOL_ERA` in the code. A full JSON-Schema validation is not run — it needs a validator this package does not depend on, and taking one on for a metadata check is the worse trade. `2025-12-11` is still the current schema: there is no revision-aligned successor, `/registry/*` carries no protocol-revision marker, and the registry asks nothing of a 2026-07-28 server, so neither the `$schema` pin nor the stdio-only package declaration moved. A release gate now ties the declaration to `SUPPORTED_PROTOCOL_VERSIONS` in the code, and ties `package.json.mcpName` to `server.json.name` and `server.json.packages[0].identifier` to `package.json.name`, so the four public surfaces cannot drift apart silently. `glama.json` gets nothing: its published schema defines exactly one property (`maintainers`), and a field invented for it would be metadata no consumer reads.
-
-- **`tools/list` is paginated on revision 2026-07-28, and a cursor this server did not issue is now refused instead of ignored.** The catalogue is ~148 tools and one answer was ≈225 KB / ≈56k tokens, which is already enough to exhaust a sub-agent's context before it has done anything; a page is now bounded at 48 KiB of tool descriptors, so the same catalogue arrives in about five answers a client can stop reading early. All four paginated operations of the revision are covered (`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`) — the other three still fit in one page, but they owe the same refusal. The cursor is opaque and self-contained: the revision has no sessions, so it carries the method it was minted for and a fingerprint of the list it was minted against, and a cursor that no longer describes the current catalogue answers `-32602 Invalid cursor` rather than a page of some other list. End of list is the ABSENCE of `nextCursor`; this server never mints an empty cursor, and an incoming `""` is refused like any other cursor it did not issue. **Revision 2025-11-25 is deliberately left alone** — 1.3.3 answered `tools/list` whole and ignored a `cursor`, and paging that wire would hand every existing client ~30 tools instead of 148 with no error to notice.
-
-### Changed
-
-- **Prompt arguments are validated on revision 2026-07-28, and revision 2025-11-25 keeps answering exactly what 1.3.3 answered.** `prompts/get` is the one surface where a caller's string is copied verbatim into text a model reads as instructions — `avito_promote_item` names four tools and explains the confirmation flow that guards the money ones — so on the 2026 wire `tool_name` and `item_id` are now allowlists (`^[a-z][a-z0-9_]{2,63}$` and 1–19 digits), `days` and `limit` are bounded decimal integers (1–365 and 1–100) instead of `parseInt(...) || default`, and every value is swept for control characters and bidi/zero-width formatting at the point it enters the text. Anything outside that is `-32602`, and a blank required argument is refused rather than answered with a SUCCESSFUL stub whose text asks the model to supply the value. **Nothing changes for a 2025 client.** An earlier draft of this work applied the same rules to both revisions, and measuring it against a live 1.3.3 build showed what that cost: seventeen argument forms — an empty value, a newline, bidi or zero-width formatting, a 5000-character value, any `item_id` that is not bare digits, `days=0`, `days=99999`, `limit=500` — went from a rendered prompt to a hard error on a wire this release promises not to move. The validation is therefore installed per era, and the 2025 leg is compared step by step against a captured 1.3.3 process (`test/baselines/legacy-1.3.3-wire.json`, steps 43–61). Nothing about `prompts/list` moved on either revision, and a missing required argument answered `-32602` before and still does on both.
-- **Text handed to the model is now written per revision, because two methods it used to name no longer exist on one of them.** 2026-07-28 removes `initialize`/`notifications/initialized`, `resources/subscribe`/`resources/unsubscribe`, `ping`, `logging/setLevel` and `notifications/roots/list_changed`. The server brief and the descriptions of `avito://state/pending-actions` and `avito://webhook/events` told the model to subscribe via `resources/subscribe`; on a 2026 connection that is an instruction to call a method answering `-32601`, which does not fail loudly — it produces an agent that quietly stops asking for live updates. Each era now gets its own wording (`subscriptions/listen` with `resourceSubscriptions` on the modern one), the legacy strings are unchanged to the byte, and a test walks every string both eras put in front of a model — instructions, `tools/list`, `prompts/list`, `prompts/get`, `resources/list`, `resources/templates/list` and the body of every readable resource — asserting that neither era names a method the other revision removed.
-- **Application-defined JSON-RPC codes on the modern leg moved out of the reserved range, and the legacy leg's did not.** Revision 2026-07-28 closes `-32000…-32019` to new allocations and reserves `-32020…-32099` for the specification, so the modern leg's transport answers now draw from a block at `-31000` and up: `methodNotAllowed` `-31003`, `inflightLimitReached` `-31004`, `streamLimitReached` `-31005`. The three session answers of the 2025-11-25 leg stay exactly where 1.3.3 put them — `-32000` for a missing session id and for the session limit, `-32001` for an unknown one — because they are structurally unreachable from a revision that has no sessions, and because renumbering them would have changed an answer under existing clients for a policy those clients are not governed by. The SDK's own v2 legacy transport still answers the same numbers.
-- **Resource cache decisions are now declared per URI rather than left to a default**, and a load-time guard refuses to start the process if an account-scoped URI is ever marked `cacheScope: 'public'`. `avito://state/pending-actions` and `avito://webhook/events` are `ttlMs: 0` and private, which is the only correct answer for a resource whose whole purpose is to be fresh.
-
-### Fixed
-
-- **A cancellation that arrived after a money request had already been sent no longer frees the idempotency key, and a retry with that key no longer spends the money a second time.** Cancellation is new in this release — 1.3.3 had none — and it brought this with it: `execute` rethrew on abort, the ledger frees a lease on any rejection, so the key went back into circulation while Avito was still executing the mutation. Measured end to end against a real loopback upstream that counted what reached it, on `items_put_item_vas` (PUT, "charges money from the balance; irreversible"): cancel-after-dispatch produced **two** outgoing mutations under one `idempotencyKey`, where the same sequence with a 502 instead of a cancel produced one and replayed the remembered failure. The first caller sees nothing at all — a cancelled request is never answered — so nothing tells the agent a charge already happened, and its retry looks to it like a first attempt. The decision is now made by an explicit dispatch latch fired in the statement before `fetch()`, never by `signal.aborted` alone: cancelled **before** the request left — queued behind the shared rate-limit budget, waiting on a token — still frees the key, because nothing reached Avito and refusing there would strand the agent on a key it can never reuse. Cancelled **after** it left puts the key into a bounded _hold_: later calls answer `IDEMPOTENCY_HELD`, with the reason in words rather than an `INTERNAL_ERROR`, until the hold expires with the ledger TTL, is swept by the same pass that removes any other unusable record, or is lifted by an operator who has reconciled the operation with Avito. An `AvitoApiError` is exempt — the upstream answered, so the outcome is known and is remembered like any other definite failure. The outgoing call is still aborted and the rate-limiter slot is still returned; what changed is only whether a key whose fate is unknown may be reused. This **amends the written acceptance criterion** of block A item 11 / M1.4, which required the lease to be released unconditionally — the trade, its normative backing in revision 2026-07-28 (the C-04 MUST is untouched; "free associated resources" is a SHOULD about resources; C-14 and C-16 cover this race; the corpus states the criterion "a repeat `tools/call` with the same idempotency key after a stream break must not spend money twice" literally) and the cost of refusing where a retry used to happen are in [`docs/adr/0008-idempotency-hold-on-cancelled-dispatch.md`](docs/adr/0008-idempotency-hold-on-cancelled-dispatch.md), with the operator procedure in [`docs/safety.md`](docs/safety.md). No tool schema moved: `schema_hash` is unchanged and the legacy 1.3.3 wire bench is untouched — though the bench is not evidence either way here, and the next entry says why.
-
-- **The hold applies on BOTH protocol revisions, the default `legacy` one included, because `notifications/cancelled` is honoured on both — and 1.3.3 honoured it on neither.** This is the observable behaviour change of this release for a deployment that never sets `AVITO_MCP_PROTOCOL_ERA`, and the earlier wording of these notes described it as a 2026-07-28 property, which it is not. 1.3.3 parsed the notification and did nothing with it: `git show 79ed1cb:src/core/tool-factory.ts` contains the word `signal` only inside a comment. On the SDK v2 this release moves to, the handler that turns `notifications/cancelled` into `abort()` is registered in the base `Protocol` constructor — before any revision is known, with no era in the decision — and `src/core/tool-factory.ts` reads `extra.mcpReq.signal` for every tool call without consulting `ToolContext.era`. Revision 2026-07-28 adds a _second_ cancellation channel, the peer closing the response stream; it does not own the first. **Who this affects:** anyone whose 2025-11-25 client sends `notifications/cancelled` — the notification has to actually be sent for any of this to happen, so a client that never cancels sees nothing new. For one that does, two things change: a call that used to run to completion after the caller walked away is now interrupted, and if that interruption caught a money call already on the wire, its `idempotencyKey` is held and the retry answers `IDEMPOTENCY_HELD` instead of charging a second time. **What to do about it:** treat the refusal as designed — check the operation on the Avito side before repeating it, and lift the hold as [`docs/safety.md`](docs/safety.md) describes; there is no flag that restores the 1.3.3 "ignore the cancellation" behaviour, and adding one would restore the duplicate charge with it. Holding on both revisions is deliberate rather than an unfinished era gate: the duplicate charge is reachable wherever the cancellation is, and confining the hold to 2026-07-28 would leave the entire installed base exposed to exactly the failure it exists to prevent. **The legacy wire baseline cannot see this**, which is why it stayed green: `test/support/legacy-wire-bench.ts` replays recorded request/response PAIRS, and a cancellation is an unsolicited notification that is never answered, so it has no pair to record. The assertions that do cover it are live ones in `test/idempotency-cancel-race.test.ts`, on the 2025-11-25 wire as well as the 2026-07-28 one.
-
-- **`tools/call` with the `arguments` member absent now succeeds; 1.3.3 refused it for every tool.** SDK v1 validated `request.params.arguments` exactly as it arrived, so an absent member reached `z.object({})` as `undefined` and failed with `expected object, received undefined` — including on tools that take no arguments at all, such as `meta_capabilities`. `arguments` is optional in `CallToolRequest` on revision 2025-11-25, so 1.3.3 was rejecting a well-formed request. This is the one place where the legacy leg deliberately does not reproduce 1.3.3: accepting more than 1.3.3 accepted cannot break a client that worked, and the difference is declared in the wire baseline rather than hidden.
-- **Four error-shape regressions introduced by the SDK v1 → v2 swap were caught and restored on the legacy leg** — none of which moved a single schema, so `schema_hash` and every self-comparing test stayed green while a 2025 client's experience changed. (1) `tools/call` on an unknown or policy-hidden tool: v2 raises the lookup failure above the handler's `try`, so what used to arrive as a tool result (`isError: true`) began arriving as a JSON-RPC error — which an SDK client turns into a thrown `McpError`, typically abandoning the agent's turn instead of letting it pick another tool. (2) Every `McpError` message lost its `MCP error <code>: ` prefix, because v2's `ProtocolError` no longer builds it into `message`. (3) `resources/read` on an unregistered URI was reworded, gained a `data: { uri }` and began echoing the caller's raw string instead of the parsed one. (4) A malformed `tools/call` frame answered `-32602` under v2's new codec validation step where v1's uncaught `ZodError` produced `-32603` with a pretty-printed issue array. All four are reshaped back to 1.3.3's exact answer on `era=legacy` (`src/core/wire-errors.ts`) and left as v2 emits them on the modern leg.
-- **A malformed JSON body on `POST /mcp` answers `-32700` on the modern and dual legs, and still falls through to 1.3.3's exact `400 {"error":"bad_request"}` on `era=legacy`.** `express.json()`'s parse failure had no era-aware handler, so the framework's default HTML error page was one refactor away from reaching a client that had been getting a stable JSON body for four minor versions.
-- **A mirrored SEP-2243 header whose value carries an invalid byte now answers `-32020` + HTTP 400 on the modern leg, where the request never reaches the application at all.** llhttp refuses the message at the byte, so `node:http` answered `400 Bad Request` with an EMPTY body and nothing downstream of the parser was ever called — the one cell of the header matrix Express cannot see, and the one the conformance suite used to accept a bare 400 for. `src/http/malformed-headers.ts` takes the fault from `server.on('clientError')`, names the corrupted header from `err.bytesParsed`, and answers `-32020` when and only when the request line is `POST` at the MCP endpoint, the header is one of the three mirrors, and this process serves the 2026-07-28 leg; every other client error gets Node's own bytes back (400 by default, 431 for `HPE_HEADER_OVERFLOW`, 408 for a request timeout). On the default `legacy` posture no listener is attached at all, so the frozen 2025 wire answers exactly what 1.3.3 answered. The answer is written with `socket.end(answer)` rather than Node's own `write` + `destroy`: destroying a socket whose receive buffer still holds the unparsed tail of the request forces an RST, which can discard the bytes just written before the peer's application reads them — an oversized request is simply the size at which that becomes likely.
-
-### Security
-
-- **The authorization response now carries `iss` (RFC 9207), and the metadata claim that it does is pinned to the code that emits it.** The callback redirect is issued from the owner consent POST, which the SDK's authorization router never sees, so the router's own `iss` handling did not cover it: the deployment advertised `authorization_response_iss_parameter_supported: true` and then omitted the parameter — the one combination the validation table turns into a mandatory client-side rejection. The value is `new URL(publicUrl).href`, byte-identical to the `issuer` of `/.well-known/oauth-authorization-server`, because a client compares the two by simple string comparison and is forbidden from folding case, eliding a default port or normalising the trailing slash. `publicUrl` itself is one byte away from that value and is not usable for it.
-
-  > ⚠️ **Roll-out order is not negotiable, in either direction.** The emission ships first and reaches production before the claim. A deployment that advertises the parameter without emitting it — including one that rolls the emission back while the claim stays `true` — does not degrade authorization for conformant clients, it stops it. To withdraw `iss`, set `authorizationResponseIssParameterSupported` to `false`, ship that, and only then remove the emission.
-
-- **`AVITO_MCP_HTTP_PUBLIC_URL` must now use `https` in `oauth` mode.** Cleartext is accepted only for `localhost` / `127.0.0.1` / `[::1]`; anything else fails startup with a message naming the fix. In that mode the value is the OAuth issuer identifier, the `resource` every token is bound to, and the base of the endpoint clients POST their authorization code and `code_verifier` to — serving those over cleartext exposes all three in transit. A development-only override exists (`AVITO_MCP_HTTP_ALLOW_INSECURE_PUBLIC_URL=1`) and the SDK's own issuer check still requires `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=true` alongside it.
-- **Dynamic Client Registration now validates `redirect_uris`.** Registration is unauthenticated, so the callback target is chosen by a stranger, and the only previous checks were the count (1–10) and the length. `http://evil.example.com/cb` passed both, which put an owner-approved authorization code on the network in the clear to an unknown host. A redirect URI must now be `https`, or `http` on a loopback address, and must carry no fragment. Private-use URI schemes (`com.example.app:/cb`) are refused rather than half-supported — accepting them safely needs the RFC 8252 §7.1 reverse-domain ownership rule, which an endpoint that never authenticated its caller cannot establish. Native clients use the loopback redirect, supported since v0.9.1.
-- **`application_type` is honoured when a client declares it.** Registering without it stays valid. A `native` client is treated as public — it defaults to `token_endpoint_auth_method: none` and is issued no `client_secret`, rather than being handed one that ships to end-user devices. A `web` client must use an `https` non-loopback callback, since a loopback one resolves on whatever machine the browser is on rather than on the client that registered.
-- **Persisted OAuth credentials are keyed to the issuer that minted them.** Changing `AVITO_MCP_HTTP_PUBLIC_URL` changes the issuer identifier, which means clients are facing a different authorization server; the store now discards clients and tokens from the previous issuer on first start under a new public URL, logged as `issuer identifier changed`. Snapshots written before this field existed are kept as they are, so upgrading logs nobody out. Plan a public-URL change like a credential rotation — every client re-registers and re-authorizes.
-- **The consent screen leads with the redirect hostname.** `client_name` is attacker-supplied text and proves nothing; the hostname is the only field on that page that says where the authorization code is going, and it now has its own row instead of being buried in a full URI. A loopback callback carries an explicit note that the receiving program cannot be identified. The registration line is derived from the client record rather than being the constant "Dynamically registered client".
-- **The secret scan gets its first exemption, and a test that keeps it from growing.** `test/baselines/legacy-1.3.3-wire.json` pins a truncated `sha256` of every tool definition; on tools whose names contain `auth` or `api`, gitleaks' `generic-api-key` rule reads the digest next to that keyword as a credential. `.gitleaks.toml` now extends the default ruleset with one allowlist that ANDs three conditions — that rule, that one path, and the exact known key/digest pairs — so another 32-hex value under a credential-like key in the same file is still reported. No rule is disabled and no directory is ignored; a release gate re-runs both shipped regexes against path lookalikes, every baseline digest, and credential-shaped keys so a later widening fails the suite.
-
-### Documentation
-
-- **`AVITO_MCP_HTTP_AUTH=bearer` and `none` are now documented as not claiming conformance with the MCP authorization specification.** Neither publishes RFC 9728 protected-resource metadata, neither runs an authorization server, and the challenge on a rejected request is a bare `Bearer realm="avito-mcp"` — so an MCP client built for revision 2026-07-28 cannot discover where to authorize. This is a scope decision, not a gap to be filled: use `oauth` for MCP clients. README, README.ru and `SECURITY.md` say so, and the behaviour of all three modes is asserted by tests.
-- **Three decisions that were previously silences are now ADRs.** `docs/adr/0004-own-authorization-server.md` — we remain our own authorization server on the frozen `server-legacy` package, with what that costs and what would reopen it. `docs/adr/0005-scopes.md` — one scope for this major, and the two-release order any future split must follow, because the current check is set equality and a second scope would log out the entire installed base at once. `docs/adr/0006-token-storage.md` — tokens and self-registered client secrets stay in cleartext in the durable store as an accepted risk, with the triggers that turn that into a defect. `SECURITY.md` carries the operator-facing summary of the last two.
-- **`docs/safety.md` records why no tool argument is annotated `x-mcp-header`**, and a test enforces it. There is no routing intermediary in front of this server, and the arguments hold phone numbers, chat ids and sums of money — the class of value the specification says must not be moved into a header. The guard exists because an invalid annotation makes a conformant client drop the tool from `tools/list` silently.
-- **`docs/conformance.md` states, per revision, what this server claims and what it does not** — including the two `bearer`/`none` non-claims above — so a client author can decide compatibility without reading the source. Three further ADRs land alongside the ones listed above: `docs/adr/0001-protocol-era-limitations.md` (the stdio pinning, and why forking the SDK entry point is the worse trade) and `docs/adr/0002-canary-protocol.md` (the five read-only tools to re-run against the live account after a risky rollout).
-- **`SECURITY.md` describes the threat model this release actually has, and each of its claims is now derived from `src/` by a test rather than asserted in prose.** It was the one public-contract document no migration change had touched: it still listed _session hijacking_ in scope and never mentioned the state handle that replaced it, which on the sessionless leg made it not merely stale but wrong. It now enumerates the four principal forms `callerPrincipal()` can return — `oauth:<client_id>` from a verified token, `bearer:<sha256>` fingerprinting a shared secret, `session:local-stdio` for a request carrying no credential, and `session:<Mcp-Session-Id>` on the 2025 leg of a `dual` process under `AVITO_MCP_HTTP_AUTH=none`, where the per-principal confirmation budget therefore bounds a CONNECTION rather than a caller. It states the `confirmation_id` / `meta_confirm_action` bounds with the numbers the code uses (128 bits from `randomBytes(16)`, the `AVITO_MCP_CONFIRMATION_TTL_SEC` default, the atomic one-shot claim, the per-principal budget) and the bound this server does NOT have: the confirming principal is not required to be the one that minted the handle, which is what makes a handle minted on the modern leg confirmable on the legacy leg of the same process. The four MUSTs of the specification sit in a table beside the module that carries each one. `test/conformance/public-contract.test.ts` and `test/conformance/dual-matrix.test.ts` compare the enumerated forms for SET EQUALITY against every `return` in `callerPrincipal()`, drive two legacy sessions and one modern session against one rig to read the principals back out of the pending store, and read each documented default out of the sentence that names its variable — the previous checks were a three-way alternation and a bare `toContain('64')` over eighteen kilobytes of prose, both of which stayed green through a mutation.
-- **The rollback criteria now carry numbers, and the runbook that states them is checked against the code.** `docs/adr/0007-rollback-criteria.md` gives each of the seven criteria a threshold, an observation window and the command that computes it, and writes out the two rollback levels this host can perform: the era, by removing `AVITO_MCP_PROTOCOL_ERA` and restarting one service; and the release, by moving `/opt/avito-mcp/current` — which **two** units execute from, so both are restarted and both are verified through `/proc/<pid>/cwd` rather than through the symlink, which only says what the next start will pick up. Writing it turned up why the previous list was unusable: the process emits no per-request log at any level — the service journal holds 17 lines for seven days — so four of the six criteria the plan listed could not be computed from anything. The instrument is now an access log on the reverse proxy (`deploy/Caddyfile.example`), spelled out with `output stderr` and `format json` because Caddy's shared default logger samples: 30 requests produced 3 lines on v2.11.3, which would have made every ratio in the document a fiction. The criteria phrased in JSON-RPC error codes are restated in the HTTP statuses that are actually recorded; the one about a money operation executing twice under a single `idempotencyKey` is removed from the triggers outright and assigned to the durable audit trail, because `idempotent_replay` is a field of the response and of no log line. `test/conformance/rollback-runbook.test.ts` re-derives every `msg` and every field from the `logger.*` call that writes it, and recomputes the status set R1 treats as normal from the recorded 1.3.3 wire, so a criterion cannot quietly start measuring something nobody emits. Block F of `docs/conformance.md` stops being one paragraph of prose and becomes seven rows.
-
-### Testing
-
-- **The legacy wire is now pinned against a real 1.3.3 process instead of against this branch.** `test/baselines/legacy-1.3.3-wire.json` holds 61 captured exchanges — handshake, `tools/list`, `prompts/*`, `resources/*`, every error path, the HTTP-transport answers, and nineteen prompt-argument forms the era-split validation must keep answering unchanged — recorded from an actual pre-migration 1.x build by `npm run capture:legacy-baseline`, which refuses to capture from anything else. Four guards enforce that: the entry point must lie outside this checkout, the booted process must report `1.3.3` on `/healthz`, the reference checkout must not depend on the v2 packages or carry the era switch (which is what tells a migration build wearing the old version number apart from a real 1.3.3), and every difference this branch has declared is replayed against the fresh capture so the branch's own value appearing in it aborts the write before the file is touched. `test/legacy-wire-regression.test.ts` then replays all 61 against this branch's `era=legacy` leg through raw JSON-RPC rather than an SDK client, one assertion per step so a failure names the exchange that moved. This is the test that caught all four error-shape regressions under **Fixed**; a self-comparing suite could not have.
-- Differences from 1.3.3 are declared in three narrow forms that each fail when they stop being true, so an exemption cannot outlive its argument: a `KnownAddition` names one field and the value it must hold (the three new `avito://state/config` keys), a `DeclaredDivergence` names both sides' values at every path it checks (the `arguments`-absent call), and a `RebasedValue` re-derives a reference value that belongs to the repository or to the clock rather than to the wire — the `avito://docs/safety` digest, which is documentation; the release number at the three places the wire reports it plainly, which is a property of `package.json`; and the reporting window `avito_daily_overview` renders from today's date. Each rebase is stricter than the frozen value it replaced: this build must serve that document byte for byte, must report the version it actually ships, and must still render a seven-day window ending today. A separate assertion fails if this branch ever stops differing from 1.3.3 on exactly the declared steps and no others.
-- **The baseline stopped expiring at midnight, without being re-captured.** `avito_daily_overview` renders a seven-day reporting window ending TODAY (`src/prompts.ts`), so the literal dates the 1.3.3 capture pinned were true for the rest of the UTC day they were taken on and false every day after it: the suite was green at 23:29Z and latently red an hour later, on a branch that had touched nothing, reporting _the legacy wire moved_. The tempting fix is to re-capture, and it is the wrong one — it redefines "compatible with 1.3.3" once a day, on a schedule, which is the exact pressure the baseline exists to resist. So the capture stays byte for byte and the comparison stopped depending on the calendar: `RebasedValue.value` now receives the captured leaf, which lets a rebase RE-ANCHOR a clock-derived value instead of recomputing it, and `reanchorDates` shifts every ISO day in the captured text so the latest of them lands on today, preserving every interval between them. What the step still asserts is everything it ever asserted about this server — the same prose around the dates, a window of exactly seven days, the window still ending today — and nothing about which day it is; a branch that narrows the window to six days, or dates it to yesterday, still fails, and that is checked in both directions rather than assumed.
-- **The documentation-table guard no longer races the scratch directories it walks.** `everyFileUnder` runs at module load, while every other suite in the run is executing, and `test/.sandbox/<random>` is created and deleted constantly by those suites; an entry removed between the `readdirSync` and the `statSync` threw ENOENT, which is not a failed assertion but a COLLECTION error — the whole file reported as failed with no test having run, intermittently, on whichever CI leg lost the race, presenting as a Node 22 failure beside a Node 24 pass in the same run. Dot-directories are now skipped at the source (a task claim, an accepted ADR and a suite title are all committed files), the walk reads its answer from the directory entry itself (`withFileTypes`) so there is no second syscall to lose a race with, and the ENOENT tolerance stays, because "skipped the one directory we know about" is not the same as "cannot be raced".
-- **`.gitleaks.toml` gets the secret scan's first exemption, and a test that keeps it from growing.** The wire baseline pins a truncated `sha256` per tool definition, and on the three tools whose names contain `auth` or `api`, gitleaks' `generic-api-key` rule reads the digest next to that keyword as a credential. The allowlist ANDs three conditions — that rule, that one path, and a value of exactly 32 lowercase hex characters — so a real credential planted in the same file is still reported, which was verified by planting one. No rule is disabled and no directory is ignored, and a release gate re-runs both shipped regexes against a directory path, a sibling file and four credential shapes so a later widening fails the suite.
-
-### Dependencies
-
-- **`@modelcontextprotocol/sdk ^1.29` was replaced by the v2 package split** — `@modelcontextprotocol/server`, `@modelcontextprotocol/server-legacy`, `@modelcontextprotocol/node` and `@modelcontextprotocol/express`, all `^2.0.0` — with `hono ^4.12` arriving as the modern transport's HTTP layer. `server-legacy` is the frozen 2025-11-25 implementation and is what the legacy leg runs on; the legacy stdio leg stays a hand-wired `StdioServerTransport` rather than `serveStdio`, deliberately, so that `AVITO_MCP_PROTOCOL_ERA=legacy` cannot become advisory. `express`, `express-rate-limit`, `pino`, `zod` and `dotenv` are unchanged.
+- Authorization responses include RFC 9207 `iss`, matching published metadata. The consent page shows the redirect hostname separately from the client-supplied name.
+- Added regression coverage against an immutable wire capture from a running 1.3.3 server, plus conformance and rollback checks.
+- Added explicit authorization, token-storage and protocol-limitation decisions. Bearer and unauthenticated modes do not claim MCP OAuth conformance.
+- Migrated to the SDK v2 package split. The built-in authorization-server helpers remain a transitional dependency in `@modelcontextprotocol/server-legacy`; the maintained Express middleware verifies MCP bearer tokens.
+- Narrowed npm documentation packaging to the runtime safety resource. The 2.1.0 release later restored public guides and architecture documents.
 
 ## [1.3.3] - 2026-07-27
 
-Availability patch for a permanent cross-process lock deadlock: a lease directory left behind by a process killed at the wrong moment could block its domain indefinitely, failing every call in it until the directory was removed by hand. Tool names, schemas, and configuration are unchanged. Upgrading is strongly recommended for every deployment that runs more than one avito-mcp process against the same runtime state. The release gate passes **382 tests across 33 files** with **81.41% statements / 73.61% branches / 82.06% functions / 84.34% lines** coverage.
+Fixed abandoned cross-process locks that could make an endpoint unavailable after a process stopped unexpectedly. Tool names, schemas and configuration are unchanged.
 
-### Fixed
-
-- **A lease directory whose owner died before writing its marker no longer wedges its domain forever.** `mkdir {file}.lock` publishes a lease generation and the owner marker is written into it a moment later. A process killed inside that window — OOM killer, `SIGTERM`, or a parent terminating a short-lived stdio server — left an empty directory. `staleSnapshot()` could not identify an owner for it, so it was never eligible for cleanup, and every later acquirer waited out its full timeout and failed with `Request timeout: deadline exceeded before network attempt` — a message that names the network although the deadline expires before any request is attempted. Because the lease is keyed per method and path, a wedged directory takes out one endpoint at a time and leaves the rest of the domain working, which makes the failure easy to mistake for an upstream problem.
-- **The same reclaim now covers every lease directory that cannot name an owner**, not only the empty one: two owner markers (left when a writer stalls past the stale threshold, its directory is reclaimed, and its marker then lands inside the successor's directory) and directories holding only unrecognized leftovers were equally unrecoverable. A reclaim requires that no marker names a live process and that neither the directory nor any entry has been touched for the stale grace period, so a lease held by a running process is never taken. Each reclaim is logged with the lease name, its age and the shape that made it unadjudicable.
-- **Rate-limit snapshots are no longer persisted with an unawaited lock acquisition.** `RateLimiter.observe()` fired a detached `withFileLock()` per response, so a burst kept many lease windows open at once and any kill could land inside one of them — this is what produced the abandoned directories. Writes now pass through a per-file queue that keeps at most one lease open and always persists the newest snapshot, `observe()` stays synchronous and off the request path, and responses carrying no `X-RateLimit-*` headers no longer take a lease to record nothing.
-- **Queued state is flushed before exit.** `SIGTERM`/`SIGINT` now drain pending rate-limit writes in stdio mode as well, where previously no handler existed at all and the default disposition killed the process outright — the exact shape that abandoned a lease on every restart of a per-call stdio server.
-- **A process whose own lease was reclaimed while it was stalled no longer deletes its successor's directory** and no longer surfaces a raw `ENOENT`; it verifies the directory is still the same generation — device, inode and modification time, the last of which is what actually distinguishes them on a filesystem that recycles inodes — before cleaning up, and otherwise retries acquisition as ordinary contention.
-- **A newly published lease now proves ownership by its marker set rather than by inode**, which is the only proof that holds: ext4 returns a freed directory inode to the very next `mkdir` at the same path, so the previous `dev`/`ino` comparison could not tell an owner's own generation from a replacement that took the path after the owner's was reclaimed. Two processes could therefore both consider the lease theirs and run their critical sections concurrently — reproduced in 9 of 10 runs once a stall was introduced between `mkdir` and the marker write, which is what memory pressure does to a process. An acquirer that finds any marker other than its own now releases only its own marker, never the directory, and retries.
-
-- **The OAuth store lease reclaims the same abandoned shapes instead of refusing to start.** `{store}.process.lock` is published by `mkdir` with its owner marker written a moment later, exactly like the runtime-state lease, so a process killed inside that window left a directory `inspectLease()` could not adjudicate. It threw, and the HTTP transport failed to start until an operator deleted the directory by hand. A marker that exists but cannot be parsed counts as unadjudicable too — `writeFileSync` creates the file before it writes it, so a zero-byte marker is the likeliest residue of all. The same two gates apply as for the runtime-state lease: nothing is reclaimed while any marker names a live process, or before the initialization grace has passed. This lease now also proves its own ownership by reading the marker set back after publishing, so a reclaim that lands between its `mkdir` and its marker write can no longer leave two processes owning one store file.
-- **Runtime-state writes no longer leave temp files behind.** `writeJsonAtomic()` closed its handle in a `finally` but removed the temp only when the _rename_ failed, so a write that failed with the file already created — `ENOSPC` and `EIO` reach this far more often than a kill does — leaked it. Temps abandoned by a killed process are now cleared as well, once per directory per process and only when older than an hour, which no live write ever is.
-
-### Dependencies
-
-- Transitive dependencies carrying high-severity advisories were lifted without any breaking change: `fast-uri` 3.1.2 → 3.1.4 (host confusion), `brace-expansion` 5.0.6 → 5.0.8 and `postcss` 8.5.16 → 8.5.23 (denial of service), plus `body-parser` 2.2.2 → 2.3.0, `@hono/node-server` 1.19.14 → 1.19.17 and `nanoid` 3.3.15 → 3.3.16. `package.json` ranges are unchanged. Two moderate advisories remain, reachable only by downgrading `@modelcontextprotocol/sdk` below 1.25.0, which is not worth a breaking change for their severity.
-
-### Testing
-
-- Every suite that exercises a lease now runs in a scratch directory on the repository's own filesystem instead of `os.tmpdir()`, through one helper in `test/support/sandbox.ts`. The lease protocol depends on how the filesystem recycles directory inodes, and tmpdir is frequently tmpfs, which never reuses a freed inode — the one filesystem on which an ownership check based on `dev`/`ino` looks correct. A relocation alone proves nothing, so a test now recreates a lock path, asserts the inode really was recycled, and fails with an explicit wrong-filesystem message where it was not.
+- Reclaim abandoned lease directories only after the grace period and when no owner marker names a live process, including incomplete or ambiguous owner records.
+- Verify lease generations before cleanup so a delayed writer cannot remove a successor's lock. Apply the same ownership rules to OAuth-store leases.
+- Serialize rate-limit snapshot writes, skip unnecessary snapshots and flush pending writes on shutdown.
+- Remove failed-write temporary files and reclaim old abandoned temporary files.
+- Updated affected transitive dependencies. Lease regression tests run on the repository filesystem so inode-reuse behavior is exercised.
 
 ## [1.3.2] - 2026-07-17
 
@@ -166,7 +111,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [1.3.0] - 2026-07-14
 
-**Reliability release for autonomous Avito agents.** The destructive-operation pipeline now has durable, account-scoped coordination across stdio processes; the generated contract surface exposes a reproducible schema hash; and BBIP purchases return a verified item-level outcome instead of trusting the order-level HTTP/status alone. Existing 1.x tool names remain unchanged (148 tools). The release gate passes **335 tests across 31 files** with **80.89% statements / 71.74% branches / 81.83% functions / 83.81% lines** coverage.
+Added durable coordination for Avito operations across MCP processes. The destructive-operation pipeline now has durable, account-scoped coordination across stdio processes; the generated contract surface exposes a reproducible schema hash; and BBIP purchases return a verified item-level outcome instead of trusting the order-level HTTP/status alone. Existing 1.x tool names remain unchanged (148 tools). The release gate passes **335 tests across 31 files** with **80.89% statements / 71.74% branches / 81.83% functions / 83.81% lines** coverage.
 
 ### Reliability and safety
 
@@ -192,7 +137,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [1.2.0] - 2026-07-10
 
-**End-to-end audit remediation release.** A multi-agent review covered the token client, destructive-operation pipeline, OAuth 2.1/HTTP transport, webhook receiver, all bundled OpenAPI contracts, tests, packaging, CI, Docker and systemd deployment. The implementation was then cross-reviewed with deterministic race reproductions. The resulting suite has **331 tests** across 30 files; whole-source coverage is **82.32% statements / 72.79% branches / 83.59% functions / 85.04% lines**. The manifest remains 148 tools, with corrected risk totals: `read:80 / write:40 / money:9 / public:16 / sensitive:3`.
+Security and reliability fixes across API calls, confirmations, OAuth, webhooks and deployment, verified with deterministic regression tests. The resulting suite has **331 tests** across 30 files; whole-source coverage is **82.32% statements / 72.79% branches / 83.59% functions / 85.04% lines**. The manifest remains 148 tools, with corrected risk totals: `read:80 / write:40 / money:9 / public:16 / sensitive:3`.
 
 ### Security
 
@@ -262,7 +207,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [1.1.0] - 2026-06-18
 
-**Security sweep.** An automated audit ("Codex Cyber") surfaced seven medium-severity issues across the destructive-operation, credential, webhook and binary surfaces; each was fixed in its own PR, then independently re-reviewed (adversarial multi-agent pass) before merge. The re-review found one real regression in a fix and a minor leak, both corrected here. Minor bump (not patch) because two fixes change behaviour: arbitrary webhook URL overrides are removed, and `AVITO_MCP_CONFIRMATION_SECRET` now requires ≥32 characters. `tsc`, `eslint` and 212 tests pass; the manifest stays at 148 tools with unchanged `counts_by_risk`.
+Fixed seven security issues in destructive calls, credentials, webhooks and binary responses, plus an idempotency regression and confirmation-counter cleanup. This minor release changes two configuration contracts: webhook URL overrides must match the configured receiver, and `AVITO_MCP_CONFIRMATION_SECRET` requires at least 32 characters. `tsc`, `eslint` and 212 tests pass; the manifest remains at 148 tools with unchanged risk counts.
 
 ### Security (fixed)
 
@@ -274,7 +219,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 - **Hard-confirmation hardening** — `meta_confirm_action` secret checks are tightened (constant-time compare; 5 wrong/missing attempts delete the pending action to blunt brute-forcing). `AVITO_MCP_CONFIRMATION_SECRET` must now be **≥32 characters** (the server refuses to start otherwise). (`src/domains/meta.ts`, `src/config.ts`) **Breaking:** a deployment using a shorter secret must lengthen it.
 - **Unconfirmed image uploads** — `messenger_upload_images` (a custom, non-`defineTool` handler) now also routes through the confirmation flow in `all_destructive` mode, closing a gap where it executed immediately. (`src/domains/messenger.ts`)
 
-### Fixed (review findings on the above)
+### Fixed
 
 - **Stale-replay wedge** introduced by the idempotency change: a remembered `requires_confirmation` payload was never evicted when its pending action was cancelled or expired, so (because the pending TTL is shorter than the idempotency TTL) a retry with the same key replayed a dead `confirmation_id` for up to ~45 min. The ledger entry is now evicted on lookup when its pending action is gone, so the retry creates a fresh, confirmable pending action. Regression test added. (`src/core/idempotency.ts`, `src/core/tool-factory.ts`, `test/confirmation.test.ts`)
 - **Failed-attempt counter leak**: the per-id confirmation-attempt counter is now cleared on `meta_cancel_action` and on a confirm against a missing pending, so the lockout map cannot grow unbounded. (`src/domains/meta.ts`)
@@ -287,15 +232,15 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [1.0.3] - 2026-06-18
 
-**Tool-definition polish on the lowest-scoring tools (Glama TDQS).** After v1.0.2 the server reached a 4.5/5 TDQS average (grade A); this release lifts the bottom tier — the tools that drag the score via the 40%-weighted minimum. Pure metadata: no tools added/removed/renamed, no schema or behaviour change; manifest stays at 148 and `counts_by_risk` is unchanged. `tsc`, `eslint` and 200 tests pass.
+Corrected tool descriptions for upload controls and delivery endpoints. No tools, schemas or runtime behavior changed; the manifest remains at 148 tools with unchanged risk counts. `tsc`, `eslint` and 200 tests pass.
 
 ### Fixed
 
-- **`autoload_upload` no longer claims "No parameters".** It is a destructive tool, so the factory adds the optional `dryRun` / `idempotencyKey` controls — the old "No parameters" line contradicted the input schema and cost the tool points on three TDQS dimensions (it was the joint-lowest at 3.6/5). The description now states it takes no business inputs, only the standard `dryRun` (preview) and `idempotencyKey` (duplicate protection). Verified that the other "no parameters" tools are genuinely parameterless reads (no contradiction).
+- **`autoload_upload` no longer claims "No parameters".** It is a destructive tool, so the factory adds the optional `dryRun` / `idempotencyKey` controls — the old "No parameters" line contradicted the input schema. The description now states it takes no business inputs, only the standard `dryRun` (preview) and `idempotencyKey` (duplicate protection).
 
 ### Changed
 
-- **Lower-tier delivery tools enriched** per the TDQS rubric (return values, when-to-use, and sibling disambiguation, kept concise): `delivery_change_parcels`, `delivery_prohibit_order_acceptance`, `delivery_v1_create_announcement`, `delivery_create_sandbox_parcel_v2`, `delivery_sandbox_cancel_parcel`, `delivery_set_order_real_address`, `delivery_v1_change_parcel`. Each now discloses its result, states it is for delivery-service partners (a regular account gets 403/404), and points at its bulk/single or sandbox/production sibling.
+- **Delivery descriptions clarified** with results, intended use and related methods: `delivery_change_parcels`, `delivery_prohibit_order_acceptance`, `delivery_v1_create_announcement`, `delivery_create_sandbox_parcel_v2`, `delivery_sandbox_cancel_parcel`, `delivery_set_order_real_address`, `delivery_v1_change_parcel`. Each now discloses its result, states it is for delivery-service partners (a regular account gets 403/404), and points at its bulk/single or sandbox/production sibling.
 
 ### Compatibility
 
@@ -303,18 +248,18 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [1.0.2] - 2026-06-18
 
-**Tool-definition consistency pass (annotation ↔ description).** A Glama [TDQS](https://glama.ai/blog/2026-04-03-tool-definition-quality-score-tdqs) re-score flagged that several tools' descriptions used destructive wording ("replaces the tariff's terminal set", "overwrites…") while their `destructiveHint` MCP annotation was `false` — a contradiction the scorer penalizes with 1/5 on the side-effects dimension. Ironically the v1.0.1 wording pass introduced some of these by prefixing delivery tools with `WRITE (replaces…)`. This release makes every tool's description and its `destructiveHint` hint tell the same story. Pure metadata: no tools added/removed/renamed, no schema or behaviour change; the manifest stays at 148 tools and `counts_by_risk` is unchanged. `tsc`, `eslint` and 200 tests pass.
+Aligned `destructiveHint` annotations with the effects described by delivery, autoload, messenger and confirmation tools. No tools or schemas changed; the manifest remains at 148 tools with unchanged risk counts. `tsc`, `eslint` and 200 tests pass.
 
 ### Fixed
 
-- **`destructiveHint` now matches the described effect on every tool.** A sweep across all 18 domains aligned the annotation with the wording:
-  - Tools that genuinely **replace/overwrite existing state** now declare `destructiveHint: true`: `delivery_add_terminals_sandbox` (the tool Glama scored 1/5 — "replaces the tariff's terminal set"), `delivery_set_order_properties`, `delivery_add_tariff_sandbox_v2`, `delivery_custom_area_schedule`, `autoload_create_or_update_profile`, `autoload_create_or_update_profile_v2` (upsert overwrites profile settings), `autoload_upload` (re-publishes/updates live listings), and `meta_cancel_action`.
+- **`destructiveHint` annotations aligned with documented effects:**
+  - Tools that **replace existing state** now declare `destructiveHint: true`: `delivery_add_terminals_sandbox`, `delivery_set_order_properties`, `delivery_add_tariff_sandbox_v2`, `delivery_custom_area_schedule`, `autoload_create_or_update_profile`, `autoload_create_or_update_profile_v2` (upsert overwrites profile settings), `autoload_upload` (re-publishes/updates live listings), and `meta_cancel_action`.
   - Tools that only **append/record an event** keep `destructiveHint: false` and no longer use destructive-sounding wording: `delivery_tracking` and `delivery_sandbox_track_announcement` had their `WRITE (records state…)` prefix removed and now read "Appends one event; does not modify existing history"; `messenger_chat_read` reworded to make its additive, non-message-mutating nature explicit.
 - **`messenger_register_webhook` kept consistent with its sibling.** It subscribes the same `/messenger/v3/webhook` endpoint as `messenger_post_webhook_v3` (an additive subscription), so it stays `destructiveHint: false` with additive wording, rather than being mislabeled as a destructive "replace".
 
 ### Changed
 
-- Removed the awkward `WRITE (…)` pseudo-prefixes added in v1.0.1; descriptions now lead with a plain accurate verb (Glama also scores conciseness).
+- Removed the `WRITE (…)` prefixes added in v1.0.1; descriptions now state the operation directly.
 
 ### Compatibility
 
@@ -322,7 +267,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [1.0.1] - 2026-06-10
 
-**Risk-classification fix + tool-definition polish.** A Glama [TDQS](https://glama.ai/blog/2026-04-03-tool-definition-quality-score-tdqs) re-score surfaced one tool whose annotations contradicted its description; an audit of every `risk: 'read'` tool across all 17 domains found a second instance of the same bug, and both are fixed here. No tools added/removed/renamed; the manifest stays at 148. `tsc`, `eslint` and 200 tests pass.
+Corrected the risk classification of two delivery tracking tools and clarified related descriptions. No tools were added, removed or renamed; the manifest remains at 148. `tsc`, `eslint` and 200 tests pass.
 
 ### Fixed
 
@@ -331,7 +276,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ### Changed
 
-- **Tool-definition quality pass on the lowest-scoring tools** (Glama TDQS rubric): `delivery_tracking`, `delivery_sandbox_track_announcement`, `delivery_set_order_properties`, `delivery_add_terminals_sandbox` and `delivery_add_tariff_sandbox_v2` had their descriptions rewritten to front-load the WRITE/side-effect nature, state the return value and idempotency, and disambiguate each from its sibling tools. Pure metadata — no schema or behaviour change.
+- **Delivery descriptions clarified:** `delivery_tracking`, `delivery_sandbox_track_announcement`, `delivery_set_order_properties`, `delivery_add_terminals_sandbox` and `delivery_add_tariff_sandbox_v2` had their descriptions rewritten to front-load the WRITE/side-effect nature, state the return value and idempotency, and disambiguate each from its sibling tools. Pure metadata — no schema or behaviour change.
 
 ### Compatibility
 
@@ -339,7 +284,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [1.0.0] - 2026-06-09
 
-**Security-hardening pass over the v0.9.0 surface + the 1.0 stability commitment.** A 33-finding multi-agent audit of the new remote-MCP / OAuth 2.1 / webhook code was run right after v0.9.0 shipped; every confirmed finding is fixed here, with 28 new tests pinning the fixes (172 → **200 passing**). With the surface audited and the public API stable since v0.7.x, this release declares **1.0**: tool names, env vars, resource URIs and the safety model are now covered by SemVer — breaking changes only with a major bump. `tsc`, `eslint` and the full suite pass.
+Introduced the 1.0 stability commitment and fixed authorization, HTTP and webhook issues identified after 0.9.0, with 28 additional regression tests (200 passing). Tool names, env vars, resource URIs and the safety model are now covered by SemVer — breaking changes only with a major bump. `tsc`, `eslint` and the full suite pass.
 
 ### Security (fixed)
 
@@ -380,7 +325,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [0.9.0] - 2026-06-09
 
-**Remote MCP + webhook receiver.** Two big additive capabilities: the server can now be served over the network as a **remote MCP** (Streamable HTTP) secured by **OAuth 2.1**, and it can **receive Avito webhooks** (real-time chat/message events) instead of only polling. stdio remains the default and is unchanged — every existing local deployment keeps working byte-for-byte. `tsc`, `eslint` and the full suite pass.
+**Remote MCP + webhook receiver.** Added two capabilities: the server can now be served over the network as a **remote MCP** (Streamable HTTP) secured by **OAuth 2.1**, and it can **receive Avito webhooks** (real-time chat/message events) instead of only polling. stdio remains the default and is unchanged — existing local deployments keep the same configuration and transport. `tsc`, `eslint` and the full suite pass.
 
 ### Added
 
@@ -426,13 +371,13 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [0.7.5] - 2026-05-29
 
-**Tool-definition quality pass.** Every one of the 137 API tools had its description and parameter docs rewritten for agent legibility, following Glama's Tool Definition Quality rubric (purpose → usage → behaviour/side-effects → parameter semantics → disambiguation). Pure metadata: no tool added/removed/renamed, no schema/behaviour change. `tsc`, `eslint` and 144/144 tests all pass.
+Rewrote descriptions and parameter documentation for 137 API tools to explain purpose, usage, effects, constraints and related methods. Pure metadata: no tool added/removed/renamed, no schema/behaviour change. `tsc`, `eslint` and 144/144 tests all pass.
 
 ### Changed
 
-- **Enriched all tool descriptions** — each now front-loads a clear verb + resource, states when (and when _not_) to use it, flags side effects and visibility (money / public-to-buyer / irreversible), and disambiguates version-suffixed or sandbox-vs-prod siblings (`_v1`/`_v2`/`_v3`, `[SANDBOX]` vs `[3PL]`).
-- **Every input parameter now has a meaningful `.describe()`** — formats, units, constraints and enum values sourced from the bundled swagger snapshot. Previously-opaque params (e.g. `announcementID`, delivery nested bodies) are explained.
-- **Honest `destructiveHint` annotations** — cancellations, deletions, removals, unsubscribes and account re-links are policy-`write` but irreversible, so they now report `destructiveHint: true` to MCP clients instead of inheriting `false`. New optional `ToolSpec.destructiveHint` override drives this; risk classification and confirmation policy are unchanged.
+- **Expanded tool descriptions** — each now front-loads a clear verb + resource, states when (and when _not_) to use it, flags side effects and visibility (money / public-to-buyer / irreversible), and disambiguates version-suffixed or sandbox-vs-prod siblings (`_v1`/`_v2`/`_v3`, `[SANDBOX]` vs `[3PL]`).
+- **Added parameter `.describe()` documentation** — formats, units, constraints and enum values sourced from the bundled swagger snapshot. Previously-opaque params (e.g. `announcementID`, delivery nested bodies) are explained.
+- **Corrected `destructiveHint` annotations** — cancellations, deletions, removals, unsubscribes and account re-links are policy-`write` but irreversible, so they now report `destructiveHint: true` to MCP clients instead of inheriting `false`. New optional `ToolSpec.destructiveHint` override drives this; risk classification and confirmation policy are unchanged.
 
 ### Added
 
@@ -444,7 +389,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [0.7.4] - 2026-05-28
 
-**Introspection without credentials + Docker.** The server now starts and serves `tools/list`, resources and prompts even when `Client_id` / `Client_secret` / `Profile_id` are absent — needed by registry indexers (Glama) to score the server, by MCP inspectors, and so `npx avito-mcp` can preview the catalogue before configuration. Credentials are enforced lazily.
+**Introspection without credentials + Docker.** The server now starts and serves `tools/list`, resources and prompts even when `Client_id` / `Client_secret` / `Profile_id` are absent. Registry indexers, MCP inspectors and `npx avito-mcp` can inspect the catalogue before configuration. Credentials are enforced lazily.
 
 ### Changed
 
@@ -457,7 +402,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 - **`Dockerfile`** (multi-stage, `node:20-alpine`) + **`.dockerignore`** — builds and runs the stdio server; verified to start and answer `tools/list` (141 tools) with no credentials. Registry indexers can build + introspect it. Run: `docker run --rm -i -e Client_id=… -e Client_secret=… -e Profile_id=… avito-mcp`.
 - **New error type `CONFIG_ERROR`** in the structured taxonomy, with `MissingCredentialsError`.
 - Tests: `test/no-credentials.test.ts` (3) — tools/list without creds, tool call → `CONFIG_ERROR` (no fetch), full registry loads unconfigured. **Total: 144 passing (was 141).**
-- The registry `server.json` description is now agent-focused ("for autonomous AI agents … not a scraper") and ships to the official MCP Registry with this version.
+- Updated the registry description and published this version to the official MCP Registry.
 
 ### Compatibility
 
@@ -475,7 +420,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [0.7.2] - 2026-05-28
 
-**Bugfix sweep.** Five more tools had input schemas that didn't match the real Avito request body (same class as the v0.7.1 BBIP-create bug) plus a docs-count correction. All six fixes verified against the bundled swagger snapshot. No new features, no tool added/removed/renamed; manifest stays at 145 tools and 141/141 tests pass.
+Fixed input schemas in five tools and corrected a documentation count. All six fixes verified against the bundled swagger snapshot. No new features, no tool added/removed/renamed; manifest stays at 145 tools and 141/141 tests pass.
 
 ### Fixed
 
@@ -501,7 +446,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [0.7.0] - 2026-05-26
 
-**Universal package hardening.** Pure-additive defaults: every change is opt-in via env or CLI flag, no existing user-facing tool surface changed. Brings five public-package primitives: cross-process token lock, structured error taxonomy, idempotency ledger, dry-run middleware, and health/auth/capabilities meta-tools — without any tie-in to a specific user, business, or backend.
+Added cross-process token locking, structured errors, idempotency keys, dry-run controls, and health/auth/capabilities tools. Existing tool names remain unchanged; the new controls are configured through environment variables and tool arguments.
 
 ### Added
 
@@ -543,7 +488,7 @@ Patch release for runtime-state placement and deployment readiness. The release 
 
 ## [0.6.0] - 2026-05-25
 
-MCP **2025-11-25 alignment release**. Adds first-class **Resources**, **Prompts**, **structured tool outputs**, **MCP logging** and a richer **server `Implementation`**. Pure additive on the protocol layer — every v0.5.x client continues to work unchanged; clients that understand the new MCP fields just see more.
+Added resources, prompts, structured tool outputs, MCP logging and server implementation metadata for MCP 2025-11-25. Existing v0.5.x client calls remain supported.
 
 ### Added
 
@@ -586,66 +531,58 @@ MCP **2025-11-25 alignment release**. Adds first-class **Resources**, **Prompts*
 
 ## [0.5.1] - 2026-05-25
 
-External audit pass. Closes the four remaining polish items the v0.5.0 reviewer flagged.
+Fixed confirmation-tool policy checks, startup diagnostics, manifest metadata and documentation counts.
 
 ### Fixed
 
 - **Policy was not applied to `meta_confirm_action`, `meta_cancel_action`, `meta_list_pending_actions`.** They bypassed `AVITO_MCP_ALLOW_TOOLS` / `AVITO_MCP_DENY_TOOLS`, breaking the documented "deny wins" / "allowlist is literal" contract. Each confirmation tool now goes through `evaluatePolicy` individually. Tests added for: allowlist excludes confirm tools, denylist hides them (deny wins), `read_only` mode hides write meta tools but keeps the read-class `meta_list_pending_actions`.
 - **DX warning at startup**: if confirmation is enabled but `meta_confirm_action` is hidden by policy, the server logs a warning that pending actions will be unconfirmable, with the fix recipe (add to allowlist or set `AVITO_MCP_CONFIRMATION_MODE=off`).
-- **`dist/manifest.json` now includes `environment` and `accessesLocalFiles`** on every tool entry. Previously these were only in runtime `_meta` but the manifest had only `risk`. Now `messenger_upload_images` shows `environment: "prod", accessesLocalFiles: true`; `meta_*` tools show `environment: "local"`. CHANGELOG claim ↔ artifact now match.
+- **`dist/manifest.json` now includes `environment` and `accessesLocalFiles`** on every tool entry. Previously these were only in runtime `_meta` but the manifest had only `risk`. Now `messenger_upload_images` shows `environment: "prod", accessesLocalFiles: true`; `meta_*` tools show `environment: "local"`. The generated manifest now matches the documented fields.
 - **CHANGELOG v0.4.0 typo**: "24 new tests (74 → 98 total)" → "24 new tests (50 → 74 total)".
-- **README counts**: replaced the imprecise "139 tools" with an honest breakdown — "138 Avito API tools + 4 local/meta = up to 142 MCP tools" — plus a configuration→count table.
+- **README counts**: replaced the imprecise "139 tools" with a breakdown — "138 Avito API tools + 4 local/meta = up to 142 MCP tools" — plus a configuration→count table.
 - **`docs/` added to npm `files` whitelist** so the README link to `docs/safety.md` resolves inside the published package, not just on GitHub.
 
 ### Added
 
-- **`AVITO_MCP_MAX_BINARY_MB`** (default `20`) — caps the size of binary responses (PDF labels, audio recordings). Fails fast on `Content-Length` header if available; falls back to checking actual body size. Drains the response to avoid lingering sockets. Audit-recommended production hardening for `orders_download_label` and `calltracking_get_record_by_call_id`.
+- **`AVITO_MCP_MAX_BINARY_MB`** (default `20`) — caps the size of binary responses (PDF labels, audio recordings). Fails fast on `Content-Length` header if available; falls back to checking actual body size. Drains the response to avoid lingering sockets. Applies to `orders_download_label` and `calltracking_get_record_by_call_id`.
 - 7 new tests (95 total, +7 from v0.5.0): 4 for meta-tool policy gating, 3 for binary size limit (Content-Length reject, body-size reject, accepts under-limit).
 
 ## [0.5.0] - 2026-05-25
 
-Final hardening pass. Closes the last items on the v0.3.0 audit's path to 10/10: hard-confirmation, binary endpoint UX, richer safety metadata. No breaking changes for default configs.
+Added confirmation secrets, binary response envelopes and tool safety metadata. Default configurations retain their existing behavior.
 
 ### Added
 
-- **`AVITO_MCP_CONFIRMATION_SECRET`** — turns the confirmation flow from soft (any caller can confirm) into **hard** (caller must supply the secret). When set, `meta_confirm_action` requires a `confirmation_secret` parameter, compared in constant time via `crypto.timingSafeEqual`. Wrong or missing secret returns `isError: true` and **does not delete the pending action** — agent can retry within TTL with the correct secret. Bridges the gap between two-step UX and actual human-in-the-loop guarantees when paired with an MCP client that asks the user to type the secret.
+- **`AVITO_MCP_CONFIRMATION_SECRET`** — turns the confirmation flow from soft (any caller can confirm) into **hard** (caller must supply the secret). When set, `meta_confirm_action` requires a `confirmation_secret` parameter, compared in constant time via `crypto.timingSafeEqual`. Wrong or missing secret returns `isError: true` and **does not delete the pending action** — agent can retry within TTL with the correct secret. A client can request the secret from a person before confirming; possession of the secret is the server-side check.
 - **Binary endpoint UX** — `safeParseResponse` in `src/core/client.ts` now detects non-JSON, non-text content-types (PDF, audio, octet-stream) and returns a structured envelope: `{ __binary: true, mimeType, sizeBytes, base64 }`. Affects `orders_download_label` (PDF labels) and `calltracking_get_record_by_call_id` (audio recordings). `formatResponse` renders binaries as a clean readable block instead of dumping bytes-as-text. Agents can now decode `base64` to save the file locally or upload elsewhere.
 - **Richer ToolSpec safety metadata** — two new optional fields:
   - `accessesLocalFiles?: boolean` — currently set on `messenger_upload_images`.
-  - `environment?: 'prod' | 'sandbox' | 'local'` — `meta_*` tools tagged `'local'`. Default `'prod'`. Surfaces in `_meta` and `dist/manifest.json`. Doesn't change runtime behaviour — it's analytics + auditable signal for clients.
+  - `environment?: 'prod' | 'sandbox' | 'local'` — `meta_*` tools tagged `'local'`. Default `'prod'`. Surfaces in `_meta` and `dist/manifest.json`. Exposes metadata to clients without changing execution.
 - New tests (88 total, +9 from v0.4.1): 4 hard-confirmation (no secret rejected, wrong secret rejected, correct secret executes, length-mismatch rejected), 5 binary-response (PDF, audio, JSON-not-affected, text-not-affected, empty body).
 
 ### Changed
 
-- Server startup log adds `hardConfirmation: true/false` so the active safety profile is fully auditable in one line.
+- Server startup log adds `hardConfirmation: true/false` to show whether a confirmation secret is configured.
 - `--help` documents `AVITO_MCP_CONFIRMATION_SECRET` and all v0.4.x env vars (some were missing from earlier help output).
 - `.env.example` documents `AVITO_MCP_CONFIRMATION_SECRET` with explanation of soft vs hard confirmation.
 - `orders_download_label` and `calltracking_get_record_by_call_id` descriptions updated — they now correctly describe the structured `{mimeType, sizeBytes, base64}` envelope instead of the old "raw bytes as text" warning.
 
-### Notes on the audit
+### Not included in this release
 
-This release closes the last items on the path to 10/10 from the v0.3.0 audit:
-
-- ✅ Confirmation secret (audit's "10/10 safety" recommendation)
-- ✅ Binary endpoint UX (audit P2)
-- ✅ Richer safety metadata as first-class fields (audit P3)
-
-Still deferred to future minor releases (none are 10/10-blockers — they're polish):
-
-- Per-tool spending caps (requires Avito price oracle we don't have)
-- Persist manifest to repo (vs. ship-only — current approach is sufficient)
+- Per-tool spending caps
+- Committing the generated manifest to the repository; this release ships it in the package
 - `delivery_*` sandbox tools manually tagged `environment: 'sandbox'`
 
 ## [0.4.1] - 2026-05-25
 
-CI hygiene release. No code changes, no breaking changes.
+Added CI checks and manifest validation. No code changes, no breaking changes.
 
 ### Added
 
 - **`npm audit` job in CI** (`audit-level=high`, `--omit=dev`, `continue-on-error: true`). Runs only on push to main — non-blocking by design, just a warning signal in the Actions tab.
-- **`gitleaks` job in CI** — scans every push and PR for committed secrets. Uses the official `gitleaks/gitleaks-action@v2`. `continue-on-error` so it doesn't block obviously-clean PRs but always reports.
+- **`gitleaks` job in CI** — scans every push and PR for committed secrets. Uses the official `gitleaks/gitleaks-action@v2`. `continue-on-error` makes this check non-blocking in this release.
 - **`tsconfig.scripts.json`** + `npm run typecheck:scripts` — type-checks `scripts/` (was excluded from the main `tsconfig.json`). Now wired into CI before `npm run build`. Catches type errors in `scripts/generate-manifest.ts` which is critical for the publish pipeline.
-- **Manifest snapshot test** (`test/manifest-snapshot.test.ts`) — asserts exact `tool_count`, `counts_by_risk` (sensitive: 3, read: 77, write: 43, money: 9, public: 10, unknown: 0) and snapshots the full tool roster. Silent drift now fails CI loudly. Re-snapshot with `npm test -- -u` after intentional tool additions/reclassifications.
+- **Manifest snapshot test** (`test/manifest-snapshot.test.ts`) — asserts exact `tool_count`, `counts_by_risk` (sensitive: 3, read: 77, write: 43, money: 9, public: 10, unknown: 0) and snapshots the full tool roster. Unexpected manifest changes now fail CI. Re-snapshot with `npm test -- -u` after intentional tool additions/reclassifications.
 - **CI now generates the manifest** before tests, and the tarball-verify step **fails if `dist/manifest.json` is missing** from the published artifact.
 
 ### Tests
@@ -654,8 +591,7 @@ CI hygiene release. No code changes, no breaking changes.
 
 ## [0.4.0] - 2026-05-25
 
-"Sensitive surface + upload guard + confirmation flow" — the safety hardening pass recommended by the v0.3.0 audit. Three new gates added on top of v0.3.0's mode + allow/deny system:
-sensitive-class hiding for auth tools, fail-closed file-access guard for the multipart upload tool, and runtime confirmation flow for destructive operations.
+Added three controls to the existing mode and allow/deny system: opt-in access to token-returning tools, local upload validation, and confirmation for destructive calls.
 
 ### Breaking changes
 
@@ -710,9 +646,7 @@ sensitive-class hiding for auth tools, fail-closed file-access guard for the mul
 - `dist/manifest.json` generator now correctly counts `sensitive` (previously crashed on unknown risk).
 - `.github/ISSUE_TEMPLATE/bug_report.md` added — was missing in v0.3.x. Now asks reporters for their active safety env vars.
 
-### Notes on the audit
-
-This release closes the high-priority items from the v0.3.0 audit: sensitive surface, upload hardening, confirmation. P1 items kept for follow-ups (v0.4.1 / v0.5.0):
+### Not included in this release
 
 - `gitleaks` / secret scanning in CI
 - `npm audit` warning gate in CI
@@ -724,17 +658,17 @@ This release closes the high-priority items from the v0.3.0 audit: sensitive sur
 
 ## [0.3.0] - 2026-05-25
 
-"Defence in depth" — three safety modes, per-tool allowlist/denylist, generated tool manifest, and registry-invariant tests. Plus a `docs/safety.md` with ready-to-paste configurations for common agent personas.
+Added three access modes, per-tool allowlists and denylists, a generated tool manifest, registry tests and example safety configurations.
 
 ### Added
 
 - **`AVITO_MCP_MODE`** env var with three values, replacing the binary `AVITO_SAFE_MODE`:
-  - `read_only` — registers only `risk='read'` tools (~79 tools). Agent literally cannot see anything else in `tools/list`.
+  - `read_only` — registers only `risk='read'` tools (~79 tools). Other tool classes are hidden from `tools/list`.
   - `guarded` — registers `read` + `write` (~120 tools); hides `money` and `public`. Agent can edit own data but can't spend or talk to customers.
   - `full_access` — all 139 tools; legacy behaviour. **Default.**
 - **`AVITO_MCP_ALLOW_TOOLS`** — comma-separated tool names; if set, only these register, regardless of mode. Lets you build narrow agent personas.
 - **`AVITO_MCP_DENY_TOOLS`** — comma-separated tool names that are always hidden. Deny wins over allow.
-- **Policy hides tools at registration time, not at call time** — they don't appear in `tools/list` at all. Removes the temptation for an agent to attempt the call. (v0.2.x blocked at call time with an isError response; v0.3.0 hides entirely.)
+- **Policy hides tools at registration time, not at call time** — they don't appear in `tools/list` at all. (v0.2.x blocked at call time with an isError response; v0.3.0 hides entirely.)
 - **`dist/manifest.json`** — generated catalogue of every tool with name, domain, risk, description and annotations. Built by `npm run generate:manifest` (now part of `prepack` so it ships in every published tarball). Useful for documentation, programmatic agent runtimes, and CI invariant checks.
 - **Tool `_meta.risk` field** — every tool exposes its risk classification via MCP `_meta` in addition to the derived `ToolAnnotations`. MCP-aware clients can read it for fine-grained UI.
 - **Registry invariant tests** (`test/registry.test.ts`) — mount the full domain registry against an InMemoryTransport and assert:
@@ -783,7 +717,7 @@ Hotfix release: v0.2.0 missed one tool, plus several doc tune-ups.
 
 ## [0.2.0] - 2026-05-25
 
-"Safe by default" — risk classification, safe-mode, and a real CLI.
+Added tool risk classification, an opt-in read-only mode and CLI help/version commands.
 
 ### Added
 
@@ -796,7 +730,7 @@ Hotfix release: v0.2.0 missed one tool, plus several doc tune-ups.
 
 ### Changed
 
-- **Breaking-ish: default OAuth token file location moved out of `process.cwd()`.** Previously `./.avito-token.json`, which leaked tokens into whatever directory the MCP client happened to spawn the server in (project dirs, IDE workspaces, sync folders). New default is a per-user state directory:
+- **Default OAuth token file location moved out of `process.cwd()`.** Previously `./.avito-token.json`, which leaked tokens into whatever directory the MCP client happened to spawn the server in (project dirs, IDE workspaces, sync folders). New default is a per-user state directory:
   - Linux: `$XDG_STATE_HOME/avito-mcp/token.json` (defaults to `~/.local/state/avito-mcp/token.json`)
   - macOS: `~/Library/Application Support/avito-mcp/token.json`
   - Windows: `%APPDATA%\avito-mcp\token.json`
@@ -833,36 +767,13 @@ Community health files.
 
 - No code, swagger, or test changes — community-files-only release. All 31 unit tests still pass; 139 tools still exposed.
 
-## [0.1.0] - 2026-05-25
-
-Initial public release.
-
-### Added
-
-- **139 MCP tools** covering 18 Avito API domains (138 endpoints + `meta_get_rate_limits`).
-- OAuth `client_credentials` flow with automatic token refresh on 401, exponential backoff on 429/5xx.
-- stdio transport — compatible with Claude Desktop, Claude Code, Cursor, Cline, Continue, Windsurf, Zed and any MCP-compatible client.
-- Rate-limit observability via `meta_get_rate_limits`.
-- npm distribution: `npx -y avito-mcp` for zero-install setup.
-- Declarative `tool-factory.ts` — adding a new Avito swagger requires one file in `src/domains/` plus one line in `src/meta/domain-registry.ts`.
-- Multipart upload support (`messenger_upload_images`).
-- 31 unit tests (vitest) covering core HTTP client, OAuth token store, URL builder.
-
-### Domains covered (139 tools total)
-
-`auth` (3) · `user` (3) · `items` (11) · `messenger` (14) · `autoload` (17) · `orders` (12) · `delivery` (31) · `promotion` (7) · `cpa` (11) · `cpa_target` (5) · `cpa_auction` (2) · `stock` (2) · `hierarchy` (5) · `reviews` (4) · `tariffs` (1) · `trxpromo` (3) · `calltracking` (3) · `msg_discounts` (5) · `meta` (1).
-
-### Not supported in this release
-
-Avito provides separate APIs for the following verticals; their swagger specs are not bundled: Auction, Autostrategy, Autoteka, Jobs/Vacancies, Realty Reports, Short-term rent (STR).
-
 ## [0.1.3] - 2026-05-25
 
 ### Changed
 
-- **README major rewrite (EN + RU)** for adoption. New collapsible `<details>` sections for every tool group and every supported AI client. Less technical jargon, more concrete use cases.
-- **Expanded AI client coverage from 8 to 16+**: added ChatGPT Desktop (Connectors), Codex CLI, VS Code (Copilot Chat), JetBrains AI Assistant, Goose, Roo Code, Kilo Code, LibreChat, Cherry Studio. Generic stdio fallback still listed.
-- Added **"Built for autonomous workflows"** section pointing at multi-agent runtimes and cron-scheduled agents as the intended deployment pattern.
+- **README rewrite (EN + RU).** New collapsible `<details>` sections for every tool group and every supported AI client. Less technical jargon, more concrete use cases.
+- **Expanded client setup documentation from 8 to 16+ clients**: added ChatGPT Desktop (Connectors), Codex CLI, VS Code (Copilot Chat), JetBrains AI Assistant, Goose, Roo Code, Kilo Code, LibreChat, Cherry Studio. Generic stdio fallback still listed.
+- Documented using the server from external agents and schedulers.
 - Added **12+ example prompts** organised by use case (analyse, communicate, promote, fulfil, automate) to help users see what's possible at a glance.
 - Reworded tool descriptions to be action-oriented rather than implementation-oriented.
 
@@ -885,6 +796,29 @@ Avito provides separate APIs for the following verticals; their swagger specs ar
 ### Fixed
 
 - README: corrected links in the "Not supported" section. Replaced placeholder URLs (auto/, realty/) with the actual Avito API documentation URLs for the six unbundled verticals: auction, autostrategy, autoteka, job, realty-reports, str.
+
+## [0.1.0] - 2026-05-25
+
+Initial public release.
+
+### Added
+
+- **139 MCP tools** covering 18 Avito API domains (138 endpoints + `meta_get_rate_limits`).
+- OAuth `client_credentials` flow with automatic token refresh on 401, exponential backoff on 429/5xx.
+- stdio transport — compatible with Claude Desktop, Claude Code, Cursor, Cline, Continue, Windsurf, Zed and any MCP-compatible client.
+- Rate-limit observability via `meta_get_rate_limits`.
+- npm distribution: `npx -y avito-mcp` without a separate global installation.
+- Declarative `tool-factory.ts` — adding a new Avito swagger requires one file in `src/domains/` plus one line in `src/meta/domain-registry.ts`.
+- Multipart upload support (`messenger_upload_images`).
+- 31 unit tests (vitest) covering core HTTP client, OAuth token store, URL builder.
+
+### Domains covered (139 tools total)
+
+`auth` (3) · `user` (3) · `items` (11) · `messenger` (14) · `autoload` (17) · `orders` (12) · `delivery` (31) · `promotion` (7) · `cpa` (11) · `cpa_target` (5) · `cpa_auction` (2) · `stock` (2) · `hierarchy` (5) · `reviews` (4) · `tariffs` (1) · `trxpromo` (3) · `calltracking` (3) · `msg_discounts` (5) · `meta` (1).
+
+### Not supported in this release
+
+Avito provides separate APIs for the following verticals; their swagger specs are not bundled: Auction, Autostrategy, Autoteka, Jobs/Vacancies, Realty Reports, Short-term rent (STR).
 
 [0.9.0]: https://github.com/elchin92/avito-mcp/releases/tag/v0.9.0
 [0.5.1]: https://github.com/elchin92/avito-mcp/releases/tag/v0.5.1

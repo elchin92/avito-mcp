@@ -1,46 +1,42 @@
 ---
-name: Bug report
-about: Something does not work as expected
-title: '[bug] '
+name: Bug report / Ошибка
+about: Report a reproducible server or tool error / Ошибка сервера или инструмента
 labels: bug
 ---
 
-<!-- Before submitting, check existing issues and docs/troubleshooting.md. Перед отправкой проверьте существующие issues и docs/troubleshooting.md. Never include secrets or customer data. -->
+<!-- Check existing issues and docs/troubleshooting.md first. English or Russian is welcome. -->
+<!-- Сначала проверьте существующие issues и docs/troubleshooting.ru.md. Можно писать по-русски. -->
+<!-- This issue is public. Remove secrets, account IDs, buyer messages and private conversation exports. -->
+<!-- Это публичный issue. Удалите ключи, ID аккаунтов, сообщения покупателей и экспорты личных разговоров. -->
 
-**MCP client + version / MCP-клиент и его версия**
-e.g. Claude Desktop 0.9.2 on macOS 14, Cursor 0.46, Claude Code 1.x
+## What happened / Что произошло
 
-**Node version**
-Output of `node --version`
+Describe the error and what you expected instead.
+Опишите ошибку и ожидаемый результат.
 
-**avito-mcp version**
-The version actually run by your MCP client. `npm view avito-mcp version` shows the latest published version and may differ.
+## Reproduce / Как воспроизвести
 
-**Connection / Подключение**
+1. Client prompt or exact tool name / Запрос клиенту или точное имя инструмента:
+2. Arguments with private values replaced / Аргументы с заменой частных значений:
+3. Result or structured error / Результат или структурированная ошибка:
 
-- Transport = (stdio | http | both)
-- AVITO_MCP_PROTOCOL_ERA = (legacy | dual | modern)
-- Operating system / ОС =
+If this involved a change, did it reach Avito? Include a redacted confirmation or idempotency status if known.
+Если запрос менял данные, выполнилось ли действие в Avito? Если известно, приложите статус подтверждения или идемпотентности без частных данных.
 
-**Active env safety / Активная safety-конфигурация**
+## Environment / Окружение
 
-- AVITO_MCP_MODE = (read_only | guarded | full_access)
-- AVITO_MCP_CONFIRMATION_MODE = (off | money_public | all_destructive)
-- AVITO_MCP_EXPOSE_AUTH_TOOLS = (0 | 1)
-- AVITO_MCP_ALLOW_TOOLS / AVITO_MCP_DENY_TOOLS = (tool names or empty)
-- AVITO_MCP_ALLOWED_UPLOAD_DIRS = (enabled / disabled; redact private paths)
+- Installed `avito-mcp` version / Установленная версия:
+- MCP client and version / Клиент и версия:
+- OS / ОС:
+- Node version (`node --version`):
+- Transport: `stdio` / `http` / `both`
+- `AVITO_MCP_PROTOCOL_ERA`: `legacy` / `dual` / `modern`
+- Profile or `AVITO_MCP_MODE` / Профиль или режим:
 
-**Tool name + arguments / Имя tool и аргументы**
-The exact tool you called and the arguments you passed. **Redact** real IDs, prices, message texts, customer names.
+Use the running server's `meta_health` result for its version. `npm view avito-mcp version` shows the latest published release and may differ.
+Версию работающего сервера смотрите в `meta_health`. `npm view avito-mcp version` показывает последний опубликованный релиз и может отличаться.
 
-**What happened / Что произошло**
-Error message, stack trace, or unexpected output. The server logs to stderr; in Claude Desktop on macOS that's at `~/Library/Logs/Claude/mcp-server-avito.log`.
+## Relevant configuration and logs / Настройки и журнал
 
-**Expected / Ожидаемое поведение**
-What you thought would happen.
-
-**Reproduction / Воспроизведение**
-Steps or a minimal MCP-client prompt that triggers the bug. If the bug is in confirmation flow or upload guard, include relevant non-secret env settings; never include Client_secret, tokens, confirmation secrets or webhook URLs containing secrets.
-
-**Additional context / Дополнительный контекст**
-Anything else: was it a fresh `npx -y avito-mcp` run, did this work in a previous version, did Avito rate-limit kick in (`meta_get_rate_limits`), etc.
+Include only settings that affect the issue: tool allowlist/denylist, confirmation mode, upload enabled/disabled, or HTTP auth mode. Paste the relevant error with secrets removed. Do not attach a filled `.env`, access tokens, confirmation secrets or secret-bearing webhook URLs.
+Приложите только настройки, связанные с ошибкой: списки инструментов, режим подтверждений, включена ли загрузка, режим HTTP-авторизации. Приведите нужный фрагмент ошибки без секретов. Не прикладывайте заполненный `.env`, токены, секрет подтверждения или webhook-URL с секретом.

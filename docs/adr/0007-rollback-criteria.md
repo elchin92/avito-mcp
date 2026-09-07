@@ -1,248 +1,92 @@
-# ADR 0007 — Rollback criteria with numbers, and the procedure that acts on them
+# ADR 0007 — Deployment checks and rollback
 
 Status: accepted
 Date: 2026-08-02
-Context: migration to MCP revision 2026-07-28, stage M6.8
-Supersedes: nothing
+Updated: 2026-09-07
+Context: observable rollout criteria, stage M6.8
 
-Block F of the readiness criterion (`MIGRATION_PLAN.md` §1.2) is one sentence:
-`AVITO_MCP_PROTOCOL_ERA=dual` is on in production, the rollback is one
-environment variable, and the rollback criteria are **written down and
-measurable**. The first two are release work. The third is what blocks the
-other two today: §7.3 of the plan lists six criteria, and until this document
-none of them named a threshold, a window, or a command. "Roll back if the error
-rate grows" is not a criterion, because at 02:00 nobody agrees on *grew by how
-much, over what, compared to when*.
+[Release runbook](../releases.md) · [Operations](../operations.md) · [Migration](../../MIGRATION.md)
 
-This document supplies the missing three columns, and it does one thing more,
-which is the part that changed the answer: it checks each criterion against the
-code that would have to produce the number. Four of the six criteria of §7.3
-turned out not to be computable at all with what this deployment writes. §5 says
-which, and what replaced them.
+Use this runbook when enabling a different protocol era or deploying a release. The thresholds below are rollout criteria, not universal service-level objectives. Record the release, configuration, baseline and affected clients before starting.
 
-**Scope.** This closes M6.8 in full. Of M7.8 it delivers the procedure half —
-the three rollback levels, step by step, with the verification after each step.
-The other half of M7.8, an observation of at least seven days against these
-metrics, cannot be performed before `dual` is actually on in production (M7.7,
-an owner-run release). §7 states the form that observation takes; §8 records
-that it has not been run.
+Commands assume Linux, systemd, Caddy and `jq`. Replace example hostnames, paths and optional unit names with the deployment's values. Public reports should contain redacted measurements, never credentials or raw customer data.
 
----
+## 1. Available measurements
 
-## 1. What this deployment actually logs
+The application emits lifecycle, error and capacity events, but no complete per-request access or durable mutation audit log. Use the reverse proxy for HTTP status and duration. A proxy cannot see JSON-RPC errors inside a successful HTTP response.
 
-Checked by reading `src/`, and confirmed against the live journal, not assumed.
+The following messages and fields are checked against source by `test/conformance/rollback-runbook.test.ts`:
 
-**The Node process writes no per-request log.** There is no access log, no
-request id, no status code, no duration — not at `LOG_LEVEL=info`, and not at
-`debug` either, where the only additional per-request lines are legacy session
-open/close. The whole journal of `avito-mcp.service` for the seven days before
-this document was written is **17 lines**: two starts, two shutdowns, and the
-mounting notices in between.
-
-```bash
-journalctl -u avito-mcp --since "7 days ago" --no-pager -o cat | wc -l
-```
-
-So every criterion phrased as a *share of requests* — non-200 handshakes, error
-rate on `/mcp`, latency — has, today, nothing to be computed from. That is the
-finding M6.8 exists to force: a criterion that cannot be computed is either
-given an instrument or struck off the list.
-
-These are the lines the process does write and that this document reads. The
-`msg` values and field names below are re-derived from `src/` by
-`test/conformance/rollback-runbook.test.ts`, so a rename in the code turns this
-table red rather than turning a criterion silently unmeasurable.
-
-| `msg` | Fields | Where it is written |
-| --- | --- | --- |
-| `avito-mcp started` | `version`, `transport`, `mode` | `src/server.ts` |
-| `avito-mcp shutting down` | `signal` | `src/server.ts` |
-| `mcp http modern in-flight limit reached` | `era`, `inflight`, `max` | `src/http/mcp-http.ts` |
-| `mcp http modern stream limit reached` | `era`, `openStreams`, `max` | `src/http/mcp-http.ts` |
-| `mcp http session limit reached` | `active`, `initializing`, `max` | `src/http/mcp-http.ts` |
-| `mcp http modern adapter error` | `era`, `err` | `src/http/mcp-http.ts` |
-| `mcp http era dispatch failed` | `err` | `src/http/mcp-http.ts` |
-| `mcp http request handling failed` | `err` | `src/http/mcp-http.ts` |
-| `http request error` | `path`, `status`, `err` | `src/http/app.ts` |
-| `malformed JSON-RPC body on /mcp` | `err` | `src/http/app.ts` |
-| `5xx from avito, retrying` | `url`, `status`, `retries5xx` | `src/core/client.ts` |
-
-Two properties of this set matter for what follows. It is **event-driven**:
-every line is a failure or a limit, so a count of zero is the healthy value and
-no baseline is needed for any of them. And it carries **`era`** on exactly the
-three modern-leg lines, which is the only place in the process where a log line
-says which leg produced it.
+| `msg`                                     | Fields                          | Where it is written    |
+| ----------------------------------------- | ------------------------------- | ---------------------- |
+| `avito-mcp started`                       | `version`, `transport`, `mode`  | `src/server.ts`        |
+| `avito-mcp shutting down`                 | `signal`                        | `src/server.ts`        |
+| `mcp http modern in-flight limit reached` | `era`, `inflight`, `max`        | `src/http/mcp-http.ts` |
+| `mcp http modern stream limit reached`    | `era`, `openStreams`, `max`     | `src/http/mcp-http.ts` |
+| `mcp http session limit reached`          | `active`, `initializing`, `max` | `src/http/mcp-http.ts` |
+| `mcp http modern adapter error`           | `era`, `err`                    | `src/http/mcp-http.ts` |
+| `mcp http era dispatch failed`            | `err`                           | `src/http/mcp-http.ts` |
+| `mcp http request handling failed`        | `err`                           | `src/http/mcp-http.ts` |
+| `http request error`                      | `path`, `status`, `err`         | `src/http/app.ts`      |
+| `malformed JSON-RPC body on /mcp`         | `err`                           | `src/http/app.ts`      |
+| `5xx from avito, retrying`                | `url`, `status`, `retries5xx`   | `src/core/client.ts`   |
 
 ### 1.1 stdio processes
 
-M6.8 asks specifically how logs are collected from ephemeral stdio processes,
-because a stdio server is started and killed by its host and its stderr is not
-anybody's journal by default. Two cases, and only two:
+A client starts and stops its stdio child. Capture stderr through that client or supervisor; stdout carries MCP messages and must remain untouched. For a systemd-managed child, read its journal. The optional example unit in this runbook is `avito-mcp-second.service`; it is a placeholder, not a required installation component.
 
-- **On this host, a stdio process is a systemd unit.** A second unit —
-  `avito-mcp-second.service` in this document, see the naming note in §6.0 —
-  runs `AVITO_MCP_TRANSPORT=stdio` with the webhook receiver keeping it alive;
-  its stderr is journald like any other unit, and the same commands work with
-  `-u avito-mcp-second`. It exposes no `/mcp`, so no traffic criterion applies
-  to it — but §6.2 does, because it runs from the same release symlink.
+A durable server-owned mutation audit trail remains open as M1.15. Process logs do not establish that a business action executed exactly once.
 
-  ```bash
-  journalctl -u avito-mcp-second --since "-1h" --no-pager -o cat \
-    | jq -Rc 'fromjson? | select(.level >= 40)'
-  ```
+### 1.2 Caddy access log
 
-- **For an npm/npx consumer there is no answer this repository can give**, and
-  that is recorded rather than papered over. The process writes pino JSON to
-  stderr (fd 2, never stdout — stdout is the protocol) and the host application
-  decides whether that is kept. A durable audit trail written by the server
-  itself is stage **M1.15** and does not exist. Until it does, the only advice
-  that is true is: raise `LOG_LEVEL`, and capture the child's stderr in the host.
-
-### 1.2 The instrument: a Caddy access log
-
-Everything phrased as a share or a percentile is computed from the reverse
-proxy, because that is the only component in this deployment that sees a request
-and its outcome. `deploy/Caddyfile.example` now enables it:
+The [Caddy example](../../deploy/Caddyfile.example) enables explicit JSON access logging:
 
 ```caddyfile
 log {
-	output stderr
-	format json
+    output stderr
+    format json
 }
 log_skip /avito/webhook*
 ```
 
-Four things about that block, all measured on the Caddy actually installed here
-(v2.11.3):
+Keep credential logging disabled. Webhook secrets are part of the URL path, so header redaction does not protect them. The prefix skip covers paths under `/avito/webhook`; add equivalent coverage before changing `AVITO_MCP_WEBHOOK_PATH`.
 
-- **`output stderr` and `format json` are written out on purpose.** A bare `log`
-  inherits Caddy's shared default logger, and that logger drops entries under
-  even light load: 30 requests produced **3** log lines. With both directives
-  given, 30 of 30 were recorded. A sampled access log makes every ratio in §4
-  a fiction, so the explicit form is not style.
-- **Header credentials do not enter it — and the webhook has none.**
-  `Authorization` and `Cookie` are recorded as `REDACTED`, verified by sending
-  both, because `log_credentials` is off and stays off. That redaction protects
-  nothing the receiver uses: Avito's webhook protocol carries no signature
-  header, so the only authentication is the secret in the URL path
-  (`src/http/webhook.ts`), and Caddy records `request.uri` verbatim.
-  `log_skip /avito/webhook*` is what keeps those requests out of the log, and
-  the bare-**prefix** form is the one that was measured. One request per path,
-  three matchers, same site:
+`log_skip` affects access logs only. Caddy `http.log.error` entries can still include the path when the upstream is unavailable. Keep journals private, check error logging separately, and rotate a webhook secret if its URL was exposed.
 
-  | request | `/avito/webhook/*` | `/avito/webhook*/*` | `/avito/webhook*` |
-  | --- | --- | --- | --- |
-  | `/mcp` | logged | logged | logged |
-  | `/healthz` | logged | logged | logged |
-  | `/avito/webhook/<secret>` | skipped | skipped | skipped |
-  | `/avito/webhook-second/<secret>` | **logged** | skipped | skipped |
-  | `/avito/webhook/nested/<secret>` | skipped | **logged** | skipped |
-  | `/avito/webhook` | **logged** | **logged** | skipped |
+For era attribution, the proxy can inspect `Mcp-Protocol-Version`. A request naming `2026-07-28` is modern; other requests, including legacy initialization without a version header, are classified as legacy for these measurements.
 
-  The trailing-slash form leaks a receiver mounted *beside* the first one, and
-  `*/*` leaks nested paths; only the bare prefix covers this host as deployed,
-  and it leaves `/mcp` and `/healthz` — everything §4 counts — logged.
-- **A host with more than one receiver must cover every one of them.** This host
-  runs two: `avito-mcp.service` on `:3000` and `avito-mcp-second.service` on
-  `:3001`, the same pair §6.0 names for the shared release symlink, and the
-  second one is a webhook receiver too (§1.1). A single matcher covers both only
-  because both mount under `/avito/webhook`. If `AVITO_MCP_WEBHOOK_PATH` moves
-  either receiver off that prefix, add a matcher for the new path before logging
-  is enabled — the same way §6.2 restarts both services rather than assuming one
-  procedure reaches both.
-- **`log_skip` silences the access log and nothing else.** With the matcher
-  active and the upstream down, a request to `/avito/webhook/<secret>` produced
-  no access entry and one `http.log.error.*` entry carrying the full `uri`,
-  secret intact, into journald. The restarts in §6.1 and §6.2 are exactly when
-  the upstream is down. This is a defect that predates the matcher and is not
-  closed by it: do not read `log_skip` as a guarantee that the journal never
-  holds the secret. If the journal has been read across a restart, rotate
-  `AVITO_MCP_WEBHOOK_SECRET` and re-register the webhook.
-- **The request headers are recorded**, which is what makes era attribution
-  possible at the edge: `Mcp-Protocol-Version` is the field the server's own
-  classifier reads, so the log can be split the same way the process splits it.
+### 1.3 Logging and retention prerequisites
 
-What it cannot see, stated so that no criterion below pretends otherwise: the
-JSON-RPC body. An MCP error carried inside HTTP 200 is invisible to it, and so
-are the error *codes* — `-32020`, `-32021`, `-32022`, `-32602`. §5 deals with
-that.
-
-**Era, at the edge.** Used verbatim by every command in §4:
-
-```bash
-# modern iff the request names revision 2026-07-28; anything else is legacy,
-# including an initialize POST that carries no version header at all.
-ERA='(if ((.request.headers["Mcp-Protocol-Version"] // [])[0]) == "2026-07-28"
-      then "modern" else "legacy" end)'
-```
-
-### 1.3 Two preconditions the owner must satisfy before `dual` goes on
-
-Neither is optional, and neither is something this document can do for itself.
-
-1. **The access log must be enabled in `/etc/caddy/avito-mcp.Caddyfile`** — the
-   file this repository ships is an example, not the running config. Add the
-   same `log { output stderr / format json }` block **and** the
-   `log_skip /avito/webhook*` line to the site — the skip is part of the block,
-   not an optional addition to it — then:
+1. Enable the reviewed logging configuration in the running proxy and verify actual `/mcp` entries. The repository example alone does not configure a host.
 
    ```bash
-   caddy validate --config /etc/caddy/avito-mcp.Caddyfile --adapter caddyfile \
-     && systemctl reload caddy \
-     && journalctl -u caddy --since "-1min" --no-pager -o cat \
-        | jq -Rc 'fromjson? | select(.msg == "handled request") | .request.uri' | head
+   caddy validate --config /etc/caddy/avito-mcp.Caddyfile --adapter caddyfile
+   systemctl reload caddy
+   journalctl -u caddy --since "-1min" --no-pager -o cat \
+     | jq -Rc 'fromjson? | select(.msg == "handled request") | .request.uri' | head
    ```
 
-   `.request.uri` is what R1–R4 select on, so the check has to print it; with
-   `log_skip` in place no URI that reaches the log carries a secret. Until it
-   prints something, §4 is not computable and `dual` must not be turned on.
-
-   Then, before the webhook is registered with Avito, POST a probe to each
-   receiver's path and confirm neither path appears in the journal. **Each
-   receiver needs its own coverage**: this host runs `avito-mcp.service` on
-   `:3000` and `avito-mcp-second.service` on `:3001`, both of them webhook
-   receivers, so probe both — the single prefix matcher covers them only while
-   both stay under `/avito/webhook`. A logged webhook URL discloses the
-   receiver's only authentication credential.
-
-   ```bash
-   # both receivers, wrong secrets on purpose — the point is the log, not the 200
-   curl -s -o /dev/null -X POST -d '{}' https://mcp.example.com/avito/webhook/probe-not-a-secret
-   curl -s -o /dev/null -X POST -d '{}' https://mcp.example.com/avito/webhook-<second>/probe-not-a-secret
-   journalctl -u caddy --since "-1min" --no-pager -o cat | grep -c probe-not-a-secret   # must print 0
-   ```
-
-   One caveat the matcher does not remove: `log_skip` suppresses the access log
-   only. An `http.log.error.*` entry — written whenever the upstream is down,
-   which is every restart in §6.1 and §6.2 — still records the full URI in
-   journald. Verify the probe with the upstream **up**, and read §1.2 for what
-   to do if the journal was read across a restart.
-
-2. **journald must keep the observation window.** `/etc/systemd/journald.conf`
-   on this host is empty — defaults only — and the journal currently reaches
-   back about **two days**, against the seven that M7.8 requires. Check it, and
-   raise `MaxRetentionSec` / `SystemMaxUse` before starting the window, not
-   during it:
+2. Probe every configured webhook receiver with a fictional path secret while its upstream is healthy. For the example topology, check both `avito-mcp.service` and `avito-mcp-second.service`. Neither probe path should appear in the access log. Check `http.log.error` separately during controlled failure testing; an access-log skip does not suppress it.
+3. Keep logs for at least the full observation window and check for suppressed entries before starting.
 
    ```bash
    journalctl --disk-usage
-   journalctl --no-pager -o short-iso | head -1     # oldest entry still held
-   journalctl --since "7 days ago" --no-pager | grep -c 'Suppressed'   # rate-limit drops
+   journalctl --no-pager -o short-iso | head -1
+   journalctl --since "7 days ago" --no-pager | rg 'Suppressed'
    ```
 
----
+An empty or sampled log is missing evidence, not evidence of a healthy service.
 
-## 2. The baseline
+## 2. Establish a baseline
 
-Three of the criteria in §4 are comparisons, so there has to be something to
-compare with. The baseline is **24 hours of traffic with the access log on and
-`era=legacy` still in force** — that is, the last day before the flip, on the
-same release. Capture it once, keep the output next to the deployment note:
+Capture 24 hours on the same release before switching protocol era. Keep the result in a private deployment record. Use ordinary POST calls for latency; exclude modern subscription streams from both baseline and comparison.
 
 ```bash
 journalctl -u caddy --since "-24h" --no-pager -o cat \
-| jq -Rc 'fromjson? | select(.msg == "handled request" and .request.uri == "/mcp")' \
+| jq -Rc 'fromjson?
+    | select(.msg == "handled request" and .request.uri == "/mcp")
+    | select(.request.method == "POST")
+    | select(((.request.headers["Mcp-Method"] // [])[0]) != "subscriptions/listen")' \
 | jq -s '{
     total: length,
     refused: (map(select(.status == 400 or .status == 404)) | length),
@@ -250,40 +94,21 @@ journalctl -u caddy --since "-24h" --no-pager -o cat \
   }'
 ```
 
-`total` under 50 for the whole day means the ratio criteria (R2, R4) have no
-statistical content on this deployment and are decided by their absolute arms
-alone. Write that down when it happens; do not lower the sample floor.
+Ratios below require at least 50 requests; extend the observation if traffic is lower. Do not treat an empty sample as a zero error rate. Absolute latency and failure criteria still apply.
 
----
+## 3. Response levels
 
-## 3. What the criteria trigger
+- **Level 1:** restore `legacy` when the regression is caused by the optional modern era.
+- **Level 2:** redeploy a compatible known-good release when the problem persists.
+- **Level 3:** correct npm release discovery when package consumers are affected.
 
-Each criterion names the rollback level it triggers, defined in §6:
+Preserve diagnostic evidence before changing the installation. A rollback does not undo an action already applied to Avito.
 
-- **level 1** — the era variable, seconds;
-- **level 2** — the release symlink, minutes, hits both services;
-- **level 3** — npm dist-tag, hours, owner only, partly irreversible.
-
-Any criterion firing means: roll back at the stated level first, investigate
-after. Nothing here is a "watch it for a while" signal.
-
----
-
-## 4. The criteria
+## 4. Rollout criteria
 
 ### R1 — the legacy leg answered with a status the 1.3.3 wire never produced
 
-The strongest criterion available, because its baseline is not a measurement but
-a recorded artifact. `test/baselines/legacy-1.3.3-wire.json` holds a live 1.3.3
-answering 42 probes, and across all of them it produced exactly five statuses:
-**200, 202, 400, 404, 415**. Add the two the authorization layer contributes
-(**401**, **403**) and the one the body-size limit contributes (**413**), and
-anything else on a legacy-classified `/mcp` request is new — most sharply a
-**405**, which is the modern leg's answer to a non-POST verb, and any **5xx**,
-which the recorded wire never returns at all.
-
-This is the criterion that catches the failure mode the whole dual design exists
-to avoid: a 2025 client being served by the 2026 leg.
+The immutable legacy baseline records **200, 202, 400, 404, 415**. The authorization layer also uses **401** and **403**; the body limit uses **413**. An unexpected status on a legacy-classified request can indicate incorrect revision dispatch.
 
 - **Trigger:** ≥ 1 such request in any 15-minute window. There is no tolerance
   band; the correct count is 0.
@@ -296,17 +121,13 @@ journalctl -u caddy --since "-15min" --no-pager -o cat \
 | jq -Rc 'fromjson?
   | select(.msg == "handled request" and .request.uri == "/mcp")
   | select(((.request.headers["Mcp-Protocol-Version"] // [])[0]) != "2026-07-28")
-  | select([200, 202, 400, 401, 403, 404, 413, 415] | index(.status) | not)
+  | select(.status as $status | [200, 202, 400, 401, 403, 404, 413, 415] | index($status) | not)
   | {ts, status, method: .request.method, ua: (.request.headers["User-Agent"] // [])[0]}'
 ```
 
 ### R2 — the legacy leg started refusing more than it did
 
-`400` and `404` are statuses 1.3.3 does return (a malformed body, a missing or
-unknown session id), so their *presence* proves nothing and only their *rate*
-does. A rise here is the signature of modern validation leaking into the legacy
-path — which is what `-32602` growth on the legacy branch meant in §7.3 of the
-plan, expressed in something that is actually recorded.
+Compare the share of legacy HTTP refusals with the baseline. Individual 400/404 responses can be valid responses to malformed requests or missing sessions.
 
 - **Trigger:** the share of `400`/`404` among legacy-classified `/mcp` requests
   exceeds **2×** the baseline share of §2, or grows by more than **5**
@@ -327,10 +148,7 @@ journalctl -u caddy --since "-1h" --no-pager -o cat \
 
 ### R3 — any 5xx on `/mcp`, on either leg
 
-The recorded 1.3.3 wire contains no 5xx on any of its 42 probes, and the modern
-leg answers its own refusals with 400/404/405/503. A 5xx is therefore always a
-defect, never a shape difference — including the specific regression §7.3 names
-first, an invalid Bearer token answered 500 instead of 401.
+Investigate every 5xx during rollout. A 500 can indicate a server error; a 503 can indicate intentional capacity rejection. Check R5 to distinguish saturation from a crash or dispatch regression.
 
 - **Trigger:** ≥ 1 in any 15-minute window; independently, > **0.5 %** of
   `/mcp` requests in any 1-hour window.
@@ -346,19 +164,13 @@ journalctl -u caddy --since "-15min" --no-pager -o cat \
                        then "modern" else "legacy" end)}'
 ```
 
-The `500`-instead-of-`401` regression additionally gets an active probe, because
-waiting for a real client to hit it is waiting for the incident. It is
-read-only, costs nothing, and its answer today (2026-08-02, release 1.3.3) is
-`401` with a `WWW-Authenticate` challenge naming the resource metadata:
+Probe OAuth with a newly generated, never-issued token. The expected status is `401` with the resource metadata challenge. Substitute your deployment hostname.
 
 ```bash
-# The value is deliberately built rather than written out: the secret scan
-# refuses a literal bearer credential in a curl invocation, and it is right to,
-# even when the credential is a joke. What is under test is that the token was
-# never issued, not what it says.
+# Generate a deliberately invalid token; never use a real credential.
 bogus="never-issued-$(date +%s)"
 curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 \
-  -X POST https://mcp.mhand.store/mcp \
+  -X POST https://mcp.example.com/mcp \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${bogus}" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
@@ -371,10 +183,7 @@ curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 \
 
 ### R4 — latency grew
 
-Measured on the proxy, over POST requests only, with `subscriptions/listen`
-excluded: that method opens a long-lived stream, so its `duration` is the life
-of the subscription and mixing it in would move the percentile for reasons that
-are not a regression.
+Compute duration for POST requests, excluding modern subscription streams. Use the same selection for the baseline; a long-lived subscription duration is not tool-call latency.
 
 - **Trigger:** p95 exceeds **2×** the baseline p95 of §2 over a window holding
   at least **50** requests, or exceeds **5 s** in absolute terms regardless of
@@ -398,16 +207,12 @@ journalctl -u caddy --since "-1h" --no-pager -o cat \
 
 ### R5 — the concurrency limits that replaced sessions are being hit
 
-`AVITO_MCP_HTTP_MAX_INFLIGHT` and `AVITO_MCP_HTTP_MAX_STREAMS` are what M3.8 put
-in place of the legacy session cap, and they are the one part of the modern leg
-that fails by *refusing healthy traffic*. Both refusals are logged by the
-process itself, so this criterion needs no proxy and no baseline: the healthy
-count is 0.
+Modern in-flight and stream limits produce explicit process log entries. Track these with the legacy session limit and compare against traffic volume.
 
 - **Trigger:** ≥ 1 occurrence in an hour is investigated; ≥ **10** in an hour, or
   any occurrence at all while `/mcp` traffic is below the baseline volume of §2,
   is a rollback. The second arm is the one that matters: hitting a concurrency
-  limit on *less* traffic than before means slots are leaking, not that load
+  limit on _less_ traffic than before means slots are leaking, not that load
   grew.
 - **Window:** 1 hour.
 - **Rollback level:** 1.
@@ -433,8 +238,7 @@ journalctl -u caddy --since "-1h" --no-pager -o cat \
 
 ### R6 — the process is restarting
 
-A crash loop is the failure that makes every other criterion read as healthy —
-few requests arrive, so few fail. It costs one command and needs no instrument.
+Inspect process restarts independently of request counts; a crash can reduce traffic enough to hide error rates.
 
 - **Trigger:** ≥ **3** starts in an hour, or any `NRestarts` increase at all
   within the first hour after the flip.
@@ -451,261 +255,117 @@ journalctl -u avito-mcp --since "-1h" --no-pager -o cat \
 
 ### R7 — the 2025 wire moved
 
-Not a traffic metric, and deliberately so: the shape of a response is not
-visible to a proxy, and §7.3's "any divergence of the M1.1 wire snapshot" is a
-claim about bytes. The instrument is the recorded bench, run against the tag
-that is being deployed, in a checkout — not on the production host.
+Run the immutable legacy wire baseline against the intended build. Declared correctness and safety differences are explicit in the harness; an undeclared mismatch fails the gate.
 
-- **Trigger:** **0** tolerated failing steps — any one of the 42 is enough. Not
+- **Trigger:** **0** tolerated failing steps — any one of the recorded is enough. Not
   a rate, and there is no window over which a failure averages out: the bench
   replays a recorded conversation, so a step either matches the bytes 1.3.3
   answered or it does not. The bench declares each intended difference by name
   (`KnownAddition`, `DeclaredDivergence`, `RebasedValue`, `DUAL_ERA_DELTAS`), so
-  a failure is by construction an *undeclared* difference.
+  a failure is by construction an _undeclared_ difference.
 - **Window:** once before the flip and once after; not continuous.
 - **Rollback level:** 2 before the flip (the release itself moved the wire), 1
   after (only the era changed).
 
 ```bash
-git -C <checkout> switch --detach v<version> && npm ci
+# Run from the checked-out release directory after npm ci.
 npx vitest run test/legacy-wire-regression.test.ts
 ```
 
 ---
 
-## 5. The criteria of §7.3 that did not survive, and what replaced them
+## 5. Limits of the measurements
 
-M6.8 is explicit that a criterion which cannot be computed is either given an
-instrument or removed. Four of the six were not computable. None of them is
-quietly dropped.
+The original rollout criteria are accounted for below. HTTP status is an observable proxy for some failures, but it cannot identify every protocol-level cause.
 
-| §7.3 criterion | Verdict |
-| --- | --- |
-| HTTP 500 instead of 401 on an invalid Bearer token | **Kept**, as the active probe in R3. It cannot be found by mining logs — the log holds no token and no auth outcome — so it is measured by asking. |
-| Rise in the share of 5xx on `/mcp` against the previous release | **Kept** as R3, with the baseline strengthened: the recorded 1.3.3 wire has no 5xx at all, so the comparison is against zero rather than against a remembered rate. |
+| Original criterion                                                     | Verdict                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| HTTP 500 instead of 401 on an invalid Bearer token                     | **Kept**, as the active probe in R3. It cannot be found by mining logs — the log holds no token and no auth outcome — so it is measured by asking.                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Rise in the share of 5xx on `/mcp` against the previous release        | **Kept** as R3, with the baseline strengthened: the recorded 1.3.3 wire has no 5xx at all, so the comparison is against zero rather than against a remembered rate.                                                                                                                                                                                                                                                                                                                                                                                    |
 | `-32020` / `-32021` / `-32022` appearing for clients that used to work | **Replaced** by R1 and R2. The codes themselves are unobtainable: no log line carries a JSON-RPC code, and the proxy sees only the envelope. All three are answered with HTTP 400 on the modern leg, and none of them exists on the legacy leg — so "a legacy request answered 400/404 more often than before" is the same event, observed where it is actually recorded. The exact form needs a per-request log inside the server, which nothing in the plan currently asks for; it is written down here as debt rather than as a metric that exists. |
-| Rise in `-32602` on the legacy branch | **Replaced** by R2, for the same reason and by the same mapping. |
-| Any divergence of the M1.1 wire snapshot | **Kept** as R7, moved out of the traffic metrics: it is a gate run against a build, not a number read off production. |
-| A money/public operation executed twice under one `idempotencyKey` | **Removed from the automatic triggers**, and assigned to **M1.15**. `idempotent_replay` is a field of the *response*, not of any log line; the durable audit trail that would record an execution does not exist. Nothing this deployment writes can distinguish one execution from two. |
+| Rise in `-32602` on the legacy branch                                  | **Replaced** by R2, for the same reason and by the same mapping.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Any divergence of the M1.1 wire snapshot                               | **Kept** as R7, moved out of the traffic metrics: it is a gate run against a build, not a number read off production.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| A money/public operation executed twice under one `idempotencyKey`     | **Removed from the automatic triggers**, and assigned to **M1.15**. `idempotent_replay` is a field of the _response_, not of any log line; the durable audit trail that would record an execution does not exist. Nothing this deployment writes can distinguish one execution from two.                                                                                                                                                                                                                                                               |
 
-The compensating control for the last row, since removing a criterion is not the
-same as removing the risk: the idempotency ledger is durable, so a *broken*
-ledger — the precondition for a double execution — is visible as an empty or
-stale record directory while money tools are being called. This is a manual
-check with no threshold, not a criterion:
+Keep confirmations enabled and preserve the durable idempotency ledger. Neither a nonempty ledger nor a confirmation proves that every upstream mutation executed exactly once. Investigate reported duplicate actions against the Avito account; this remains manual until M1.15 supplies a durable execution audit.
 
-```bash
-sudo -u avito-mcp find /var/lib/avito-mcp/avito-mcp/runtime -type f -name '*.json' \
-  -newermt '-1 hour' | wc -l
-```
+## 6. Rollback procedure
 
-`AVITO_MCP_CONFIRMATION_MODE=money_public` remains on, so every money/public
-call still passes through a human confirmation; that, and not a log metric, is
-what bounds the cost of this gap until M1.15.
+### 6.0 Deployment facts to verify
 
----
+- In the example topology, `avito-mcp.service` and the optional `avito-mcp-second.service` execute `/opt/avito-mcp/current/dist/server.js`. Identify every actual unit using that path before a release rollback.
+- `deploy/install-services.sh` manages `avito-mcp.service` and `caddy.service`. Any additional server unit needs an explicit restart and verification.
+- Extra units may read different private environment files. Preserve each unit's intended configuration.
+- A running process keeps its original release directory after a symlink change. Verify `/proc/<pid>/cwd` and `/healthz`, not just the link.
+- `AVITO_MCP_PROTOCOL_ERA` passes through the installer's allowed environment settings.
 
-## 6. The rollback procedure
+Substitute actual unit names for `avito-mcp-second.service`. If there is only one server unit, omit the second-unit commands; if there are more, include all of them.
 
-### 6.0 Facts the procedure depends on
+### 6.1 Level 1 — restore the legacy era
 
-Verified on this host, because two of them are the reason the naive version of
-this procedure is wrong:
-
-- Both `avito-mcp.service` and `avito-mcp-second.service` execute
-  `/opt/avito-mcp/current/dist/server.js`. **One symlink, two services.**
-- `deploy/install-services.sh` manages `avito-mcp.service` and `caddy.service`
-  and **does not know that `avito-mcp-second.service` exists**. Its automatic
-  `rollback_release` therefore restarts one of the two processes running from
-  the path it just moved.
-- The two services read **different** environment files:
-  `/etc/avito-mcp/avito-mcp.env` and `/etc/avito-mcp-second/avito-mcp-second.env`.
-- A running process keeps the release directory it started from, even after the
-  symlink is moved. `readlink -f /proc/<pid>/cwd` is what proves which release
-  is actually executing; `readlink -f /opt/avito-mcp/current` only says what the
-  next start will pick up.
-- `AVITO_MCP_PROTOCOL_ERA` matches the `AVITO_MCP_*` allowlist in
-  `deploy/render-service-env.mjs`, so it survives a re-render of the service
-  environment file and does not have to be re-added after a deploy.
-
-> **On the name `avito-mcp-second`.** `avito-mcp.service` and the paths under
-> `/opt/avito-mcp`, `/etc/avito-mcp` and `/var/lib/avito-mcp` are what
-> `deploy/install-services.sh` creates, so they are the same on every install
-> and are written out here. The *second* unit is not: it is whatever else the
-> operator has mounted on the same release, its real name says which other
-> deployment shares this host, and this repository is public. So it is written
-> as `avito-mcp-second.service` throughout, with its environment file under
-> `/etc/avito-mcp-second/` — a stand-in, not a unit name to paste. Read the real
-> list off the host instead of remembering it; this is also the only form that
-> stays correct if a third unit is added:
->
-> ```bash
-> # every unit executing the release this symlink points at
-> for u in $(systemctl list-units --type=service --all --no-legend 'avito-mcp*' \
->              | awk '{print $1}'); do
->   pid=$(systemctl show -p MainPID --value "$u")
->   [ "$pid" != 0 ] && [ "$(readlink -f /proc/$pid/cwd)" = "$(readlink -f /opt/avito-mcp/current)" ] \
->     && printf '%s\n' "$u"
-> done
-> ```
->
-> Substitute what that prints wherever `avito-mcp-second.service` appears below.
-> If it prints one unit, §6.2 is simpler than it is written; if it prints three,
-> §6.2 as written is *wrong* and the third one has to be restarted too.
-
-### 6.1 Level 1 — the era, seconds
-
-Applies to everything M3, M4 and M7.7 introduce. This is the rollback the whole
-dual design is for: nothing is rebuilt, nothing is re-deployed, and the legacy
-leg is the same code it was.
+Update the source configuration and the running unit's environment consistently so the next deployment does not restore the unwanted value.
 
 ```bash
-# 1. Remove the variable (or set it to legacy — removing it is preferred, so the
-#    file states nothing rather than stating the default twice).
-sudoedit /etc/avito-mcp/avito-mcp.env      # delete the AVITO_MCP_PROTOCOL_ERA line
-
-# 2. Restart the one service that serves /mcp.
+sudoedit /etc/avito-mcp/avito-mcp.env  # set AVITO_MCP_PROTOCOL_ERA=legacy
 systemctl restart avito-mcp.service
-
-# 3. Verify on the PROCESS, not on the file: the file says what the next start
-#    will read, /proc says what this start did read.
 pid=$(systemctl show -p MainPID --value avito-mcp.service)
-tr '\0' '\n' < /proc/$pid/environ | grep '^AVITO_MCP_PROTOCOL_ERA=' \
-  || echo 'unset -> legacy (the default of src/config.ts)'
-
-# 4. Verify it serves.
-curl -s --max-time 3 http://127.0.0.1:3000/healthz
-curl -s --max-time 3 http://127.0.0.1:3000/readyz
-systemctl is-active avito-mcp avito-mcp-second caddy
+tr '\0' '\n' < /proc/$pid/environ | rg '^AVITO_MCP_PROTOCOL_ERA='
+curl -fsS --max-time 3 http://127.0.0.1:3000/healthz
+curl -fsS --max-time 3 http://127.0.0.1:3000/readyz
 ```
 
-**Do not touch `avito-mcp-second.service` here.** It is `transport=stdio` with
-a webhook receiver and exposes no `/mcp`; the era flag changes nothing for it,
-and restarting it drops the webhook listener for no reason. If the variable was
-ever added to `/etc/avito-mcp-second/avito-mcp-second.env`, remove it there too
-and restart that unit as well — but the default is that it is not there.
+An unset variable also selects legacy. Apply the same change to any other unit that enabled the affected era. Re-run R1, R3 and the OAuth probe before closing the incident.
 
-Expected duration: under 10 seconds. Then re-run R1, R3 and the R3 probe; all
-three must read zero / `401` before the incident is called closed.
+### 6.2 Level 2 — redeploy a known-good release
 
-### 6.2 Level 2 — the release symlink, minutes, both services
-
-Applies to anything level 1 does not fix, and to any release that moved the wire
-(M2, M5). **This changes the code under both services at once**, which is why
-both restarts are in the procedure and not in a footnote.
+Review [migration and state compatibility](../../MIGRATION.md#verify-and-recover) first. Preserve runtime state, pending claims and idempotency records; an older release may not enforce a newer hold reason. Use a checkout of the selected release and the normal [transactional installer](../releases.md#deploy-the-released-version).
 
 ```bash
-# 1. Record where you are, so the roll-forward is a symmetrical operation.
-readlink -f /opt/avito-mcp/current
-ls -1 /opt/avito-mcp/releases
+# In the selected release checkout, with its private deployment configuration:
+npm ci
+npm run verify:release
+sudo deploy/install-services.sh --start
 
-# 2. Move the symlink atomically. `mv -Tf` replaces the link in one rename;
-#    `rm` + `ln` leaves a window in which /opt/avito-mcp/current does not exist,
-#    and a service restarting in that window fails to start at all.
-ln -s /opt/avito-mcp/releases/<previous-version> /opt/avito-mcp/.rollback.$$
-mv -Tf /opt/avito-mcp/.rollback.$$ /opt/avito-mcp/current
-readlink -f /opt/avito-mcp/current
-
-# 3. Restart BOTH services. Neither picks the new target up on its own, and the
-#    installer's own rollback path restarts only the first of the two.
+# Ensure every actual server unit using the shared release has restarted.
 systemctl restart avito-mcp.service
 systemctl restart avito-mcp-second.service
 
-# 4. Verify that each process is really executing the release you selected.
-for u in avito-mcp avito-mcp-second; do
-  pid=$(systemctl show -p MainPID --value $u.service)
-  printf '%s pid=%s release=%s\n' "$u" "$pid" "$(readlink -f /proc/$pid/cwd)"
+for unit in avito-mcp.service avito-mcp-second.service; do
+  pid=$(systemctl show -p MainPID --value "$unit")
+  printf '%s release=%s\n' "$unit" "$(readlink -f /proc/$pid/cwd)"
 done
-curl -s --max-time 3 http://127.0.0.1:3000/healthz   # {"version":"<previous>"}
-curl -s --max-time 3 http://127.0.0.1:3001/healthz   # the second unit, same version
-systemctl is-active avito-mcp avito-mcp-second caddy
+curl -fsS --max-time 3 http://127.0.0.1:3000/healthz
+curl -fsS --max-time 3 http://127.0.0.1:3000/readyz
 ```
 
-Step 4 is the step that is skipped and should not be: a service whose restart
-failed stays `active` on the *old* main PID under `Restart=on-failure` timing,
-and `/healthz` on a stale process reports the version you were rolling back
-from. If the two `release=` lines disagree with each other, or with
-`readlink -f /opt/avito-mcp/current`, stop and fix that before reading any
-metric — every criterion in §4 is meaningless while two processes serve
-different code.
+The installer validates readiness and the installed version for its managed service. Check equivalent endpoints and process directories for additional units. All must report the intended release. Do not manually rewrite an immutable release directory under the same version.
 
-Constraint carried over from plan §7.1: **M5.2 is not rolled back before M5.1.**
-A deployment that advertises `authorization_response_iss_parameter_supported`
-while no longer emitting `iss` does not degrade authorization, it stops it.
+Keep issuer behavior and metadata consistent: advertising issuer-parameter support without returning `iss` breaks authorization. Test the OAuth flow after a downgrade.
 
-Do **not** roll a release back by re-running `deploy/install-services.sh`
-against an older tarball while an incident is open. Its transaction stops the
-service, migrates state ownership and rewrites unit files; that is a deploy, and
-a deploy is not a rollback.
+### 6.3 Level 3 — correct package discovery
 
-### 6.3 Level 3 — the npm dist-tag, hours, owner only, partly irreversible
+Use the repository's release permissions and record the action in release notes.
 
-Only relevant when the defect reaches consumers who install from npm rather than
-from this host. Every step below is a release action and is **outside what an
-agent may do**: it belongs to the owner.
+1. If needed, move npm `latest` to a verified known-good version with `npm dist-tag add avito-mcp@VERSION latest`. This affects future unpinned installs only.
+2. Deprecate an affected version with an explanation and the replacement version. A tag change does not reach consumers pinned to it.
+3. Treat published versions and Git tags as immutable. Publish a correction under a new version rather than replacing an artifact.
+4. Verify npm and MCP Registry state separately. A successful publication to one does not prove publication to the other.
 
-1. **Move `latest` back.** `npm dist-tag add avito-mcp@<previous> latest`. This
-   is the whole rollback for new installs; it does not touch anyone already on
-   the bad version, and it does not remove it.
-2. **The bad version stays published.** `npm publish` is irreversible in the
-   sense that matters here: unpublish is only available in a 72-hour window and
-   is itself a breaking event for anyone who pinned it. Assume the version stays
-   reachable forever and that a lockfile can still resolve it.
-3. **Deprecate rather than delete.** `npm deprecate avito-mcp@<bad> "<why, and
-   which version to use>"` puts a warning in front of every install of that
-   exact version. It is the only mechanism that reaches consumers who already
-   pinned it.
-4. **The MCP Registry entry is equally irreversible.** Publication there cannot
-   be withdrawn. The correction is a new version published with corrected
-   metadata; the registry is in preview and its data may be reset independently,
-   which is a reason to not treat it as a control surface during an incident.
-5. **Record it in `CHANGELOG.md`** under the version that superseded it. A
-   dist-tag move that leaves no written trace is a version that mysteriously
-   stopped being installed.
+Do not assume deletion or unpublishing is available. Review current registry controls before an incident action that affects existing consumers.
 
-Expected duration: minutes for step 1, hours before consumer installs converge,
-and never for steps 2 and 4.
+## 7. Observation window
 
----
+For a protocol-era rollout, record at least 7 consecutive days. Check failures and the OAuth probe frequently during the first hour, then at least hourly during the first day. Evaluate the remaining criteria hourly for the first day and daily thereafter. Run R7 before and after the change.
 
-## 7. The observation window (the outstanding half of M7.8)
+| Day     | Date       | Version | R1    | R2    | R3    | R4 p95  | R5    | R6       | Result               |
+| ------- | ---------- | ------- | ----- | ----- | ----- | ------- | ----- | -------- | -------------------- |
+| Example | YYYY-MM-DD | VERSION | count | share | count | seconds | count | restarts | Pass/fail and action |
 
-After `dual` is on in production, the criteria of §4 are evaluated for **at
-least 7 consecutive days**, and the result is recorded — including a clean run,
-which is the outcome that otherwise leaves no evidence that anything was
-watched.
+Store actual observations with the deployment record. This template contains no production result and does not establish that an observation window has completed.
 
-Cadence: R1, R3 and the R3 probe continuously for the first hour and every 15
-minutes for the first 24 hours; R2, R4, R5, R6 hourly for 24 hours, then daily.
-R7 once before the flip and once after.
+## 8. Remaining work
 
-The record goes in this section, as a table with one row per day:
-
-| Day | Date | R1 | R2 | R3 | R4 (p95) | R5 | R6 | Note |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| — | — | — | — | — | — | — | — | Not started: `dual` is not on in production (M7.7). |
-
-Retention has to be arranged before the window opens, not during it — see §1.3,
-precondition 2. A window whose first three days aged out of the journal is not
-a seven-day observation.
-
----
-
-## 8. What this document does not close
-
-- **The observation itself.** §7 is a form with no data in it. M7.8 stays open
-  until it has seven rows and the criteria of §4 have been evaluated against
-  real `dual` traffic.
-- **`dual` in production.** M7.7 is an owner-run release; nothing here turns
-  anything on.
-- **The two preconditions of §1.3.** Both are edits under `/etc`, both are the
-  owner's, and until both are done §4 computes over an empty log — which reads
-  identical to a healthy deployment. That is the most dangerous state this
-  document can be in, and it is why §1.3 comes before the criteria rather than
-  after them.
-- **Per-request observability inside the server.** JSON-RPC error codes, tool
-  names and principals are not recorded anywhere. Every criterion above works
-  around that by measuring the HTTP envelope instead. It is a real limit and the
-  reason §5 has four rows instead of none.
-- **Double execution of a money/public operation.** Removed from the triggers,
-  assigned to M1.15, compensated but not measured.
+- **M7.7:** verify the selected protocol era, proxy logging and retention on the target deployment.
+- **M7.8:** complete and record the seven-day observation; a runbook is not the result.
+- **M1.15:** add a durable execution audit for investigating duplicate mutations.
+- Protocol error codes inside HTTP 200, complete per-tool latency and caller attribution are not provided by the proxy measurements above.

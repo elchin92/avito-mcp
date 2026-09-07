@@ -491,7 +491,8 @@ describe('release and deployment hardening', () => {
     // Second barrier: the allowlist itself must name files under docs/, never the directory.
     const pkg = JSON.parse(read('package.json')) as { files?: string[] };
     expect(pkg.files).toBeDefined();
-    expect(pkg.files).toContain('docs/*.md');
+    expect(pkg.files).toContain('docs/safety.md');
+    expect(pkg.files).not.toContain('docs/*.md');
     expect(pkg.files?.filter((entry) => /^docs\/?$/.test(entry))).toEqual([]);
 
     // Third barrier: the same paths never enter the build context or the image.
