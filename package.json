@@ -102,7 +102,7 @@
     "express-rate-limit": "^8.7.0",
     "hono": "^4.13.7",
     "pino": "^10.3.1",
-    "zod": "4.5.4"
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
